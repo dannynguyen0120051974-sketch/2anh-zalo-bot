@@ -1082,3 +1082,50 @@ test('người trong nhóm tra được chi tiết nhãn dán qua cầu nối', 
     stopHermesBridge();
   }
 });
+
+test('history_range đọc cả khoảng thời gian từ kho, lật trang không sót tin', async (t) => {
+  const store = testStore(t);
+  // 7 tin, trong đó hai tin trùng đúng một mili-giây — dễ bị sót hoặc lặp ở ranh giới trang.
+  // Mốc gần hiện tại: cầu nối tự dọn tin cũ hơn hạn lưu lúc khởi động, mốc 1970 sẽ bị xoá mất.
+  const base = Date.now() - 60_000;
+  const stamps = [1000, 2000, 3000, 3000, 4000, 5000, 9000].map((offset) => base + offset);
+  stamps.forEach((ts, i) => store.upsertMessage('bot', {
+    threadId: 'group-1', threadType: 1, msgId: `m${i}`, cliMsgId: `c${i}`,
+    senderUid: 'u1', senderName: 'Yến', text: `tin ${i}`, msgType: 'webchat', ts, isSelf: false,
+  }));
+  const server = startHermesBridge({ api: {}, profile: { user_id: 'bot' }, port: 0, store, ownerUids: ['owner'] });
+  await new Promise((resolve) => server.once('listening', resolve));
+  const ws = new WebSocket(`ws://127.0.0.1:${server.address().port}`);
+  try {
+    const hello = onceMessage(ws, (msg) => msg.type === 'hello');
+    await new Promise((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); });
+    await hello;
+
+    const texts = [];
+    let cursor = null;
+    for (let page = 0; page < 5; page += 1) {
+      const reqId = `range-${page}`;
+      ws.send(JSON.stringify({
+        type: 'history_range', reqId, threadId: 'group-1', threadType: 1,
+        sinceMs: base + 1500, untilMs: base + 8000, cursor, limit: 2, auth: auth('group-1', 1),
+      }));
+      const ack = await onceMessage(ws, (msg) => msg.reqId === reqId);
+      assert.equal(ack.ok, true);
+      texts.push(...ack.result.messages.map((m) => m.text));
+      cursor = ack.result.nextCursor;
+      if (!cursor) break;
+    }
+    // Đúng khoảng [1500, 8000): bỏ tin ở 1000 và 9000, giữ đủ hai tin trùng 3000.
+    assert.deepEqual(texts, ['tin 1', 'tin 2', 'tin 3', 'tin 4', 'tin 5']);
+
+    ws.send(JSON.stringify({
+      type: 'history_range', reqId: 'range-public', threadId: 'group-1', threadType: 1, sinceMs: 0,
+      auth: auth('group-1', 1, { actorUid: 'nguoi-trong-nhom' }),
+    }));
+    const denied = await onceMessage(ws, (msg) => msg.reqId === 'range-public');
+    assert.equal(denied.ok, false);
+  } finally {
+    ws.close();
+    stopHermesBridge();
+  }
+});

@@ -1580,6 +1580,30 @@ class ZaloAdapter(BasePlatformAdapter):
             expect_ack=True,
         )
 
+    async def read_history_range(
+        self,
+        chat_id: str,
+        since_ms: int,
+        until_ms: Optional[int] = None,
+        cursor: Optional[str] = None,
+        limit: int = 300,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Một trang tin trong khoảng thời gian, đọc từ kho SQLite của sidecar."""
+        metadata = metadata or {}
+        command: Dict[str, Any] = {
+            "type": "history_range",
+            "threadId": str(chat_id),
+            "threadType": self._guess_thread_type(chat_id, metadata),
+            "sinceMs": int(since_ms),
+            "limit": min(max(int(limit), 1), 500),
+        }
+        if until_ms is not None:
+            command["untilMs"] = int(until_ms)
+        if cursor:
+            command["cursor"] = str(cursor)
+        return await self._command(command, expect_ack=True)
+
     async def group_members(self, chat_id: str) -> Optional[Dict[str, Any]]:
         return await self._command(
             {"type": "group_members", "threadId": str(chat_id), "threadType": THREAD_TYPE_GROUP},

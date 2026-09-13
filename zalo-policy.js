@@ -68,6 +68,8 @@ function classify(command) {
   if (PUBLIC_COMMANDS.has(command.type)) return { minimumRole: 'public', category: 'send', dangerous: false };
   if (command.type === 'group_members') return { minimumRole: 'public', category: 'read', dangerous: false };
   if (command.type === 'history') return { minimumRole: 'public', category: 'read', dangerous: false };
+  // Đọc cả một khoảng thời gian (có thể hàng nghìn tin) chỉ dành cho chủ nhân.
+  if (command.type === 'history_range') return { minimumRole: 'owner', category: 'read', dangerous: false };
   if (command.type === 'undo') return { minimumRole: 'owner', category: 'undo', dangerous: true };
   if (command.type !== 'invoke') return null;
 

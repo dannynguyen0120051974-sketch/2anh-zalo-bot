@@ -203,3 +203,27 @@ test('health counts messages and audit rows without exposing message content', (
   assert.equal(health.auditCount, 1);
   assert.equal(JSON.stringify(health).includes('xin chào'), false);
 });
+
+test('getRange đọc theo khoảng thời gian và lật trang không sót, không lặp', (t) => {
+  const { store } = withStore(t);
+  const stamps = [1000, 2000, 3000, 3000, 3000, 4000, 9000];
+  stamps.forEach((ts, i) => store.upsertMessage('account-1', {
+    ...baseMessage, msgId: `m-${i}`, cliMsgId: `c-${i}`, text: `tin ${i}`, ts,
+  }, 'live'));
+  // Hội thoại khác không được lẫn vào.
+  store.upsertMessage('account-1', { ...baseMessage, threadId: 'group-2', msgId: 'x', cliMsgId: 'x', ts: 2500 }, 'live');
+
+  const seen = [];
+  let cursor = null;
+  let pages = 0;
+  do {
+    const page = store.getRange('account-1', 'group-1', 1, { sinceMs: 1500, untilMs: 8000, cursor, limit: 2 });
+    seen.push(...page.messages.map((m) => m.text));
+    cursor = page.nextCursor;
+    pages += 1;
+  } while (cursor && pages < 10);
+
+  assert.deepEqual(seen, ['tin 1', 'tin 2', 'tin 3', 'tin 4', 'tin 5']);
+  assert.equal(pages, 3);
+  assert.equal(store.getRange('account-1', 'group-1', 1, { sinceMs: 99_999 }).messages.length, 0);
+});

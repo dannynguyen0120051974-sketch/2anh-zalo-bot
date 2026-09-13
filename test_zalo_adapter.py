@@ -1700,6 +1700,65 @@ class ZaloToolContractTest(unittest.IsolatedAsyncioTestCase):
             "9133571695356732407", 20, {"chat_type": "group"},
         ))
 
+    async def test_read_history_since_hours_pages_until_done_and_formats_lines(self):
+        class FakeAdapter:
+            def __init__(self):
+                self.calls = []
+
+            async def read_history_range(self, chat_id, since_ms, until_ms, cursor=None, limit=300, metadata=None):
+                self.calls.append((chat_id, cursor, limit, metadata))
+                pages = {
+                    None: ({"messages": [
+                        {"ts": 1789290000000, "senderName": "Yến", "text": "mai họp mấy giờ", "isSelf": False},
+                        {"ts": 1789290060000, "senderName": "", "senderUid": "u9", "text": "dòng 1\ndòng 2"},
+                    ]}, "1789290060000:2"),
+                    "1789290060000:2": ({"messages": [
+                        {"ts": 1789290120000, "text": "8h nhé", "isSelf": True},
+                        {"ts": 1789290180000, "senderName": "Trang", "text": "", "msgType": "chat.sticker"},
+                    ]}, None),
+                }
+                result, next_cursor = pages[cursor]
+                return {"ok": True, "result": {**result, "nextCursor": next_cursor}}
+
+        fake = FakeAdapter()
+        zalo_tools._ACTIVE_ADAPTER = fake
+        response = json.loads(await zalo_tools.zalo_read_history({
+            "thread_id": 39633293852382968, "thread_kind": "group", "since_hours": 24,
+        }))
+
+        self.assertTrue(response["success"])
+        data = response["data"] if "data" in response else response
+        payload = data.get("result", data)
+        self.assertEqual(payload["count"], 4)
+        self.assertFalse(payload["con_nua"])
+        self.assertEqual([c[1] for c in fake.calls], [None, "1789290060000:2"])
+        self.assertEqual(fake.calls[0][0], "39633293852382968")
+        lines = payload["text"].split("\n")
+        self.assertRegex(lines[0], r"^\[\d\d/\d\d \d\d:\d\d\] Yến: mai họp mấy giờ$")
+        self.assertTrue(lines[1].endswith("u9: dòng 1 / dòng 2"))
+        self.assertTrue(lines[2].endswith("Bot: 8h nhé"))
+        self.assertTrue(lines[3].endswith("Trang: [chat.sticker]"))
+
+    async def test_read_history_range_stops_at_char_budget_and_hands_back_a_cursor(self):
+        class FakeAdapter:
+            async def read_history_range(self, chat_id, since_ms, until_ms, cursor=None, limit=300, metadata=None):
+                n = int(cursor or 0)
+                return {"ok": True, "result": {
+                    "messages": [{"ts": 1789290000000 + i, "senderName": "A", "text": "x" * 900} for i in range(limit)],
+                    "nextCursor": str(n + 1),
+                }}
+
+        zalo_tools._ACTIVE_ADAPTER = FakeAdapter()
+        response = json.loads(await zalo_tools.zalo_read_history({
+            "thread_id": 39633293852382968, "thread_kind": "group", "since_hours": 24,
+        }))
+        payload = response.get("data", response)
+        payload = payload.get("result", payload)
+        self.assertTrue(payload["con_nua"])
+        self.assertTrue(payload["next_cursor"])
+        self.assertIn("cursor", payload["huong_dan"])
+        self.assertLess(len(payload["text"]), zalo_tools.HISTORY_RANGE_CHAR_BUDGET + 300 * 1100)
+
     async def test_undo_without_ids_uses_latest_own_message_contract(self):
         class FakeAdapter:
             async def undo_message(self, chat_id, msg_id=None, cli_msg_id=None, metadata=None, *, confirmed=False):

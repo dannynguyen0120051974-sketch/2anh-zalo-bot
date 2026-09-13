@@ -895,6 +895,20 @@ async function handleCommand(ws, cmd) {
       break;
     }
 
+    case 'history_range': {
+      // Đọc thẳng từ kho SQLite, không gọi Zalo: tin đã được ghi liên tục lúc
+      // nhận, nên tổng hợp cả ngày không tốn lượt gọi và không sợ bị khoá.
+      const page = activeStore
+        ? activeStore.getRange(activeAccountId, String(cmd.threadId), threadType === ThreadType.Group ? 1 : 0, {
+          sinceMs: cmd.sinceMs, untilMs: cmd.untilMs, cursor: cmd.cursor, limit: cmd.limit,
+        })
+        : { messages: [], nextCursor: null };
+      if (cmd.reqId) {
+        send(ws, { type: 'ack', reqId: cmd.reqId, ok: true, result: { count: page.messages.length, ...page } });
+      }
+      break;
+    }
+
     case 'history': {
       const requestedCount = Math.min(Math.max(Number(cmd.count) || 30, 1), 100);
       let messages = getThreadHistory(cmd.threadId, threadType, requestedCount);

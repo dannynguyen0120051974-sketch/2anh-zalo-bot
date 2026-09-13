@@ -24,6 +24,7 @@ import re
 import secrets
 import time
 import unicodedata
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -521,14 +522,88 @@ async def zalo_forward(args: Dict[str, Any], **_kw) -> str:
 #  Nhóm 2 — Đọc ngữ cảnh
 # =====================================================================
 
+HISTORY_RANGE_CHAR_BUDGET = 60_000
+HISTORY_RANGE_MAX_HOURS = 24 * 7
+HISTORY_RANGE_PAGE = 300
+_VN_TZ = timezone(timedelta(hours=7))
+
+
+def _history_line(msg: Dict[str, Any]) -> str:
+    """Một tin thành một dòng gọn "[13/09 17:02] Tên: nội dung" để tiết kiệm token."""
+    try:
+        when = datetime.fromtimestamp(int(msg.get("ts") or 0) / 1000, tz=_VN_TZ).strftime("%d/%m %H:%M")
+    except (TypeError, ValueError, OSError):
+        when = "--/-- --:--"
+    who = "Bot" if msg.get("isSelf") else (msg.get("senderName") or msg.get("senderUid") or "?")
+    text = " / ".join(part.strip() for part in str(msg.get("text") or "").splitlines() if part.strip())
+    if not text:
+        text = f"[{msg.get('msgType') or 'tin không có chữ'}]"
+    return f"[{when}] {who}: {text[:1000]}"
+
+
+async def _read_history_range(adapter: Any, thread_id: str, kind: Any, args: Dict[str, Any]) -> str:
+    """Đọc hết tin trong N giờ qua, lật trang tới khi hết hoặc chạm ngân sách chữ.
+
+    Dành cho việc tổng hợp thảo luận khi chủ nhân yêu cầu: 100 tin gần nhất
+    không đủ cho một nhóm cộng đồng. Chỉ dừng ở ranh giới trang, nên con trỏ trả
+    về luôn đọc tiếp đúng chỗ, không mất tin nào.
+    """
+    try:
+        hours = float(args.get("since_hours") or 24)
+    except (TypeError, ValueError):
+        return _err("since_hours phải là số giờ, ví dụ 24")
+    hours = min(max(hours, 0.1), HISTORY_RANGE_MAX_HOURS)
+    now_ms = int(time.time() * 1000)
+    since_ms = now_ms - int(hours * 3600 * 1000)
+    cursor = str(args.get("cursor") or "").strip() or None
+
+    lines: List[str] = []
+    size = 0
+    next_cursor = None
+    while True:
+        ack = await adapter.read_history_range(
+            thread_id, since_ms, now_ms, cursor=cursor, limit=HISTORY_RANGE_PAGE,
+            metadata={"chat_type": kind},
+        )
+        if not ack or not ack.get("ok"):
+            return _err((ack or {}).get("error", "không đọc được lịch sử Zalo"))
+        result = ack.get("result") or {}
+        for msg in result.get("messages") or []:
+            line = _history_line(msg)
+            lines.append(line)
+            size += len(line) + 1
+        cursor = result.get("nextCursor")
+        if not cursor:
+            break
+        if size >= HISTORY_RANGE_CHAR_BUDGET:
+            next_cursor = cursor
+            break
+
+    return _ok({
+        "thread_id": thread_id,
+        "since_hours": hours,
+        "count": len(lines),
+        "con_nua": bool(next_cursor),
+        "next_cursor": next_cursor,
+        "huong_dan": (
+            "Còn tin chưa đọc: gọi lại zalo_read_history với cùng since_hours và cursor = next_cursor "
+            "cho tới khi con_nua = false, rồi mới tổng hợp."
+            if next_cursor else "Đã đọc hết tin trong khoảng thời gian này."
+        ),
+        "text": "\n".join(lines),
+    })
+
+
 async def zalo_read_history(args: Dict[str, Any], **_kw) -> str:
     thread_id, kind, err = _scoped_thread(args)
     if err:
         return err
-    count = min(int(args.get("count", 30)), 100)
     adapter = _ACTIVE_ADAPTER
     if adapter is None:
         return _err("Zalo chưa kết nối")
+    if args.get("since_hours") is not None or args.get("cursor"):
+        return await _read_history_range(adapter, str(thread_id), kind, args)
+    count = min(int(args.get("count", 30)), 100)
     ack = await adapter.read_history(
         str(thread_id), count, metadata={"chat_type": kind}
     )
@@ -2128,12 +2203,16 @@ TOOLS = [
     # --- Nhóm 2: đọc ngữ cảnh ---
     ("zalo_read_history", "📜", _schema(
         "zalo_read_history",
-        "Đọc các tin gần đây của một DM hoặc nhóm Zalo từ SQLite bền vững; "
-        "sidecar tự backfill nhiều trang từ kết nối Zalo khi cần.",
+        "Đọc tin của một DM hoặc nhóm Zalo từ SQLite bền vững. Mặc định lấy `count` tin gần nhất. "
+        "Muốn tổng hợp thảo luận (vd. 'tổng hợp nhóm hôm nay') thì truyền `since_hours`: công cụ đọc "
+        "HẾT tin trong khoảng đó, trả từng dòng '[ngày giờ] Tên: nội dung'; nếu `con_nua` = true thì gọi "
+        "lại với `cursor` = `next_cursor` cho tới hết rồi mới tổng hợp.",
         {
             "thread_id": _THREAD_ID,
             "thread_kind": _THREAD_KIND,
-            "count": {"type": "integer", "description": "Số tin muốn đọc (tối đa 100, mặc định 30)."},
+            "count": {"type": "integer", "description": "Số tin gần nhất muốn đọc (tối đa 100, mặc định 30)."},
+            "since_hours": {"type": "number", "description": "Đọc hết tin trong N giờ qua (tối đa 168). Dùng khi cần tổng hợp."},
+            "cursor": {"type": "string", "description": "Đọc tiếp từ `next_cursor` của lần gọi trước (giữ nguyên since_hours)."},
         },
         ["thread_id"],
     ), zalo_read_history, TOOLSET_OWNER),

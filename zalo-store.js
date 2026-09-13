@@ -251,6 +251,45 @@ export function openZaloStore({ path, retentionDays = 365, now = Date.now } = {}
     return rows.reverse().map(mapMessage);
   }
 
+  /**
+   * Đọc tin của một hội thoại trong khoảng thời gian, cũ trước mới sau, có con
+   * trỏ để lật trang.
+   *
+   * getHistory chỉ trả 100 tin gần nhất — đủ để trả lời một câu, không đủ để
+   * tổng hợp cả ngày của một nhóm cộng đồng vài trăm người. Con trỏ là cặp
+   * "thời điểm:rowid" của tin cuối trang, nên hai tin trùng mili-giây không bị
+   * bỏ sót hay lặp lại giữa hai trang.
+   */
+  function getRange(accountId, threadId, threadType, { sinceMs = 0, untilMs = null, cursor = null, limit = 300 } = {}) {
+    const safeLimit = Math.min(Math.max(Number(limit) || 300, 1), 500);
+    const until = untilMs == null ? Number.MAX_SAFE_INTEGER : Number(untilMs);
+    let afterTs = -1;
+    let afterRowid = -1;
+    const match = /^(\d+):(\d+)$/.exec(String(cursor ?? ''));
+    if (match) {
+      afterTs = Number(match[1]);
+      afterRowid = Number(match[2]);
+    }
+    const rows = db.prepare(`
+      SELECT rowid AS cursor_rowid, * FROM messages
+      WHERE account_id = ? AND thread_id = ? AND thread_type = ?
+        AND timestamp_ms >= ? AND timestamp_ms < ?
+        AND (timestamp_ms > ? OR (timestamp_ms = ? AND rowid > ?))
+      ORDER BY timestamp_ms ASC, rowid ASC LIMIT ?
+    `).all(
+      String(accountId), String(threadId), Number(threadType),
+      Number(sinceMs) || 0, until,
+      afterTs, afterTs, afterRowid,
+      safeLimit + 1,
+    );
+    const page = rows.slice(0, safeLimit);
+    const last = page[page.length - 1];
+    return {
+      messages: page.map(mapMessage),
+      nextCursor: rows.length > safeLimit && last ? `${last.timestamp_ms}:${last.cursor_rowid}` : null,
+    };
+  }
+
   function findOwnMessage(accountId, threadId, threadType, ids = null) {
     const conditions = [
       'account_id = ?', 'thread_id = ?', 'thread_type = ?', 'is_self = 1',
@@ -378,6 +417,7 @@ export function openZaloStore({ path, retentionDays = 365, now = Date.now } = {}
     upsertMessage,
     insertMessages,
     getHistory,
+    getRange,
     findOwnMessage,
     pruneMessages,
     beginAudit,

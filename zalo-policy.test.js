@@ -123,3 +123,12 @@ test('tra chi tiết nhãn dán là quyền đọc công khai', () => {
     { allowed: true, role: 'public', code: 'allowed', category: 'read' },
   );
 });
+
+test('đọc cả khoảng thời gian chỉ dành cho chủ nhân', () => {
+  const command = { type: 'history_range', threadId: 'group-1', threadType: 1, sinceMs: 0 };
+  assert.equal(authorizeBridgeCommand({ ...command, auth: publicAuth }, policyOptions).code, 'owner_required');
+  assert.deepEqual(
+    authorizeBridgeCommand({ ...command, auth: ownerAuth }, policyOptions),
+    { allowed: true, role: 'owner', code: 'allowed', category: 'read' },
+  );
+});

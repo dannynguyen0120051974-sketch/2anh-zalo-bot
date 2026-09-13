@@ -127,6 +127,12 @@ Hai công cụ web là **bản bọc** của `web_search`/`web_extract` chứ kh
 
 Bọc lại còn bịt được một lỗ hổng: `web_extract` nhận URL tuỳ ý, nên nếu để nguyên thì `http://127.0.0.1:20128/v1/models` hay `file:///…/.env` là đủ để đọc nội bộ qua đường Internet. Bản bọc chỉ cho `http`/`https` trỏ ra địa chỉ công cộng — chặn loopback, dải mạng riêng, link-local, và cả `169.254.169.254` (địa chỉ metadata của máy chủ đám mây).
 
+### Tổng hợp thảo luận nhóm
+
+Sidecar ghi mọi tin trong nhóm vào SQLite, kể cả tin không tag bot. Khi chủ nhân nhờ "tổng hợp nhóm hôm nay", bot gọi `zalo_read_history` với `since_hours`, đọc hết tin trong khoảng đó (lật trang tới hết) rồi mới viết bản tổng hợp theo chủ đề. Bot không tự tổng hợp theo lịch.
+
+Nhóm đông người mà chỉ muốn chủ nhân gọi được bot thì khai ID nhóm vào `owner_only_groups` trong `platforms.zalo.extra` (hoặc biến `ZALO_OWNER_ONLY_GROUPS`): người khác tag bot sẽ không được trả lời, nhưng tin của họ vẫn được lưu để tổng hợp.
+
 ### Nhãn dán (sticker)
 
 Tin sticker của Zalo không mang chữ cũng không mang ảnh, chỉ có id. Cầu nối tra `getStickersDetail` để lấy nhãn chữ và ảnh tĩnh, nên bot đọc được sticker như một tin bình thường: lịch sử ghi `[Nhãn dán]` và model nhìn được chính tấm sticker, kể cả chữ vẽ trong đó. Zalo hầu như chỉ trả mã nội bộ ở phần nhãn chữ nên ý nghĩa nằm ở ảnh. Kết quả tra nhớ theo id trong 7 ngày; tra hỏng thì tin vẫn tới, chỉ mất ảnh.

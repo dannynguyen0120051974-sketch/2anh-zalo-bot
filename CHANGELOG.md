@@ -2,6 +2,18 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [1.10.0] — 2026-09-13
+
+### Thêm
+
+- **Đọc hết tin trong một khoảng thời gian để tổng hợp thảo luận.** `zalo_read_history`
+  nhận thêm `since_hours` (tối đa 168 giờ) và `cursor`: đọc thẳng từ kho SQLite mà
+  sidecar ghi liên tục, không gọi Zalo, lật trang tới hết và trả từng dòng gọn
+  `[ngày giờ] Tên: nội dung`. Trước đây chỉ đọc được 100 tin gần nhất, không đủ cho
+  một nhóm cộng đồng. Lệnh cầu nối mới `history_range` chỉ chủ nhân được dùng.
+- Hướng dẫn trình bày thêm mục "Tổng hợp thảo luận nhóm": chỉ tổng hợp khi chủ
+  nhân yêu cầu, đọc hết mọi trang trước khi viết, gom theo chủ đề.
+
 ## [1.9.4] — 2026-09-13
 
 ### Thêm
