@@ -505,6 +505,57 @@ class ZaloAdapterMediaContextTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(zalo_adapter._is_jxl("https://photo-stal-15.zdn.vn/gr/jpg/864/2aO.jpg"))
         self.assertFalse(zalo_adapter._is_jxl("https://x/jxl-tin-tuc/anh.jpg"))
 
+    async def test_file_pulled_from_group_context_keeps_its_name_and_type(self):
+        # Nhóm y tế 16:26 ngày 13/9: anh Trung gửi PDF (chưa tag bot), sau đó có
+        # người tag bot nhờ đọc. Tệp móc từ ngữ cảnh mất tên và loại, URL không
+        # đuôi nên bị đẩy vào đường ảnh: "Refusing to cache non-image data".
+        adapter = self.make_adapter()
+        handled = []
+
+        async def handle(event):
+            handled.append(event)
+
+        adapter.handle_message = handle
+        url = "https://file-stal-19.dlfl.vn/gr/4944b1f4cb33166d4f22/2aOboQyKriSQ4hH3h5SSgtGR0be"
+        cached = []
+
+        async def fake_download(_url):
+            return b"%PDF-1.7 ban ve"
+
+        async def fake_extract(_path):
+            return "Bản vẽ bố trí khoa khám bệnh"
+
+        def fake_cache(data, *, filename="", mime_type="", default_kind=None):
+            cached.append((filename, mime_type))
+            return SimpleNamespace(path=f"C:/cache/documents/{filename}", media_type=mime_type,
+                                   kind="document", display_name=filename)
+
+        with patch.object(zalo_adapter.ZaloAdapter, "_download_attachment", staticmethod(fake_download)), \
+                patch.object(zalo_adapter.ZaloAdapter, "_document_text", staticmethod(fake_extract)), \
+                patch.object(zalo_adapter, "cache_media_bytes", fake_cache), \
+                patch.object(zalo_adapter, "cache_image_from_url",
+                             side_effect=AssertionError("tệp PDF không được đi đường ảnh")), \
+                patch.object(zalo_adapter, "_zalo_tools", return_value=DummyZaloTools()):
+            await adapter._on_message({
+                "type": "message", "id": "f1", "threadId": "g1",
+                "threadType": zalo_adapter.THREAD_TYPE_GROUP,
+                "senderUid": "u2", "senderName": "Luong Dinh Trung",
+                "text": "090926.pdf", "msgType": "share.file",
+                "mediaUrls": [url],
+                "attachments": [{"url": url, "name": "090926.pdf", "mime": "application/pdf", "kind": "document"}],
+            })
+            await adapter._on_message({
+                "type": "message", "id": "t1", "threadId": "g1",
+                "threadType": zalo_adapter.THREAD_TYPE_GROUP,
+                "senderUid": "u1", "senderName": "Hải Anh",
+                "text": "@Lăng Tiêu xem lại bản này nhé", "mentions": [{"uid": "bot-uid"}],
+            })
+
+        self.assertEqual(len(handled), 1)
+        self.assertEqual(cached, [("090926.pdf", "application/pdf")])
+        self.assertIn("Bản vẽ bố trí khoa khám bệnh", handled[0].text)
+        self.assertNotIn("Không đọc được", handled[0].channel_context or "")
+
     async def test_pdf_attachment_becomes_a_document_not_an_image(self):
         adapter = self.make_adapter()
         handled = []

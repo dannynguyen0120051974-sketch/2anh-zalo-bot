@@ -672,6 +672,9 @@ class ZaloAdapter(BasePlatformAdapter):
             "text": text,
             "media_urls": list(media_urls),
             "quote_media_urls": list(quote_media_urls),
+            # Giữ luôn tên và loại tệp: URL tệp của Zalo không có đuôi, nên tin
+            # này bị móc lại làm ngữ cảnh mà mất thông tin thì PDF bị coi là ảnh.
+            "attachments": self._attachments_for(frame, [*media_urls, *quote_media_urls]),
             "msg_type": str(frame.get("msgType") or ""),
             "ts": frame.get("ts"),
         }
@@ -769,8 +772,14 @@ class ZaloAdapter(BasePlatformAdapter):
 
         context_entries = self._recent_context_for_question(thread_id, recent_entry) if is_group else []
         inbound_urls = self._dedupe_urls([*media_urls, *quote_media_urls, *self._media_urls_from_entries(context_entries)])
+        # Tệp móc từ tin cũ trong nhóm mang theo tên và loại đã lưu lúc nhận,
+        # để PDF, DOCX không đuôi trong URL không bị đoán nhầm thành ảnh.
+        context_attachments = [item for entry in context_entries for item in entry.get("attachments") or []]
         cached_media, media_types, attach_failures, documents = await self._cache_attachments(
-            self._attachments_for(frame, inbound_urls)
+            self._attachments_for(
+                {**frame, "attachments": [*(frame.get("attachments") or []), *context_attachments]},
+                inbound_urls,
+            )
         )
         has_document = bool(documents)
         # Chỉ đếm ảnh cho câu "đã đính kèm cho Vision": tài liệu đi đường khác,

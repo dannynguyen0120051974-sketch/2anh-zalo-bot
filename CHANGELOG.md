@@ -2,6 +2,17 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [1.9.3] — 2026-09-13
+
+### Sửa
+
+- **Tệp PDF, DOCX lấy từ tin cũ trong nhóm không còn bị coi là ảnh.** Ai đó gửi
+  tệp lên nhóm mà chưa tag bot, lúc sau mới tag nhờ đọc, thì bot móc tệp từ ngữ
+  cảnh nhóm ra — nhưng ngữ cảnh chỉ giữ đường dẫn, bỏ mất tên và loại tệp. URL
+  tệp của Zalo không có đuôi nên tệp bị đoán là ảnh rồi Hermes từ chối ("Refusing
+  to cache non-image data"). Gặp thật ở nhóm y tế trên cả hai bot. Nay ngữ cảnh
+  nhóm lưu kèm tên và loại tệp, và tệp móc lại dùng đúng thông tin đó.
+
 ## [1.9.2] — 2026-09-13
 
 ### Thêm
