@@ -505,6 +505,55 @@ class ZaloAdapterMediaContextTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(zalo_adapter._is_jxl("https://photo-stal-15.zdn.vn/gr/jpg/864/2aO.jpg"))
         self.assertFalse(zalo_adapter._is_jxl("https://x/jxl-tin-tuc/anh.jpg"))
 
+    async def test_owner_only_group_answers_only_the_owner_but_keeps_everyone_as_context(self):
+        # Nhóm cộng đồng 994 người: bot vào để nghe và tổng hợp, chỉ chủ nhân gọi được.
+        adapter = self.make_adapter()
+        adapter._owner_only_groups = {"g-cong-dong"}
+        handled = []
+
+        async def handle(event):
+            handled.append(event)
+
+        adapter.handle_message = handle
+
+        def member_msg(msg_id, thread, uid, name, text, tag=True):
+            frame = {
+                "type": "message", "id": msg_id, "threadId": thread,
+                "threadType": zalo_adapter.THREAD_TYPE_GROUP,
+                "senderUid": uid, "senderName": name, "text": text,
+            }
+            if tag:
+                frame["mentions"] = [{"uid": "bot-uid"}]
+            return frame
+
+        with patch.object(adapter, "_is_owner", side_effect=lambda uid: uid == "owner-uid"), \
+                patch.object(zalo_adapter, "_zalo_tools", return_value=DummyZaloTools()):
+            await adapter._on_message(member_msg("m1", "g-cong-dong", "u-la", "Người lạ",
+                                                 "@Lăng Tiêu tóm tắt giúp em với"))
+            await adapter._on_message(member_msg("m2", "g-cong-dong", "u-la2", "Người lạ 2",
+                                                 "mọi người thấy agent này thế nào", tag=False))
+            self.assertEqual(handled, [], "người lạ tag trong nhóm chỉ-chủ-nhân không được đánh thức bot")
+
+            await adapter._on_message(member_msg("m3", "g-cong-dong", "owner-uid", "Hải Anh", "@Lăng Tiêu"))
+            self.assertEqual(len(handled), 1)
+            # Tin của người lạ vẫn nằm trong ngữ cảnh để chủ nhân gọi suông là đọc được.
+            self.assertIn("mọi người thấy agent này thế nào", handled[0].channel_context)
+
+            # Nhóm khác không bị ảnh hưởng.
+            await adapter._on_message(member_msg("m4", "g-khac", "u-la", "Người lạ", "@Lăng Tiêu chào em"))
+            self.assertEqual(len(handled), 2)
+
+    def test_owner_only_groups_is_read_from_config_list_or_env_string(self):
+        from gateway.config import PlatformConfig
+        with patch.object(zalo_adapter, "_zalo_tools", return_value=DummyZaloTools()):
+            from_list = zalo_adapter.ZaloAdapter(PlatformConfig(
+                enabled=True, extra={"owner_only_groups": ["39633293852382968"]}))
+        self.assertEqual(from_list._owner_only_groups, {"39633293852382968"})
+        with patch.dict(os.environ, {"ZALO_OWNER_ONLY_GROUPS": "111111111111111111, 222222222222222222"}), \
+                patch.object(zalo_adapter, "_zalo_tools", return_value=DummyZaloTools()):
+            from_env = zalo_adapter.ZaloAdapter(PlatformConfig(enabled=True, extra={}))
+        self.assertEqual(from_env._owner_only_groups, {"111111111111111111", "222222222222222222"})
+
     async def test_file_pulled_from_group_context_keeps_its_name_and_type(self):
         # Nhóm y tế 16:26 ngày 13/9: anh Trung gửi PDF (chưa tag bot), sau đó có
         # người tag bot nhờ đọc. Tệp móc từ ngữ cảnh mất tên và loại, URL không

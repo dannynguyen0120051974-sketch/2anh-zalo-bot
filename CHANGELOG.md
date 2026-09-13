@@ -2,6 +2,17 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [1.9.4] — 2026-09-13
+
+### Thêm
+
+- **Nhóm chỉ chủ nhân gọi được bot** (`owner_only_groups` trong
+  `platforms.zalo.extra`, hoặc biến `ZALO_OWNER_ONLY_GROUPS`). Dùng cho nhóm cộng
+  đồng đông người mà bot vào để nghe và tổng hợp: người khác tag hay gọi tên
+  bot đều không đánh thức bot, nhưng tin của họ vẫn được lưu và giữ làm ngữ
+  cảnh, nên chủ nhân gọi là bot đọc được cả cuộc thảo luận. Nhóm khác không
+  bị ảnh hưởng.
+
 ## [1.9.3] — 2026-09-13
 
 ### Sửa

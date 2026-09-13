@@ -446,6 +446,12 @@ class ZaloAdapter(BasePlatformAdapter):
         if isinstance(ignored, (list, tuple, set)):
             ignored = ",".join(str(uid) for uid in ignored)
         self._ignored_senders = set(_split_ids(str(ignored or "")))
+        # Nhóm chỉ chủ nhân gọi được bot (vd. nhóm cộng đồng đông người mà bot
+        # vào để nghe và tổng hợp): người khác tag thì im, tin vẫn giữ làm ngữ cảnh.
+        owner_only = extra.get("owner_only_groups", _get_scoped_secret("ZALO_OWNER_ONLY_GROUPS", ""))
+        if isinstance(owner_only, (list, tuple, set)):
+            owner_only = ",".join(str(gid) for gid in owner_only)
+        self._owner_only_groups = set(_split_ids(str(owner_only or "")))
 
         # Ngưỡng đặt rộng tay có chủ đích: sáu tin trong mười lăm giây nhanh
         # hơn nhịp hỏi của người thật khá nhiều, nên người dùng bình thường
@@ -685,6 +691,12 @@ class ZaloAdapter(BasePlatformAdapter):
         # nhân vào danh sách này thì bot không được im lặng với chính chủ.
         if is_group and sender_uid in self._ignored_senders and not self._is_owner(sender_uid):
             logger.debug("[zalo] %s nằm trong ignore_sender_uids — chỉ giữ làm ngữ cảnh", sender_uid)
+            return
+
+        # Nhóm chỉ chủ nhân gọi được: người khác tag hay gọi tên cũng không đánh
+        # thức bot, nhưng tin của họ đã nằm trong ngữ cảnh ở trên để tổng hợp.
+        if is_group and thread_id in self._owner_only_groups and not self._is_owner(sender_uid):
+            logger.debug("[zalo] nhóm %s chỉ chủ nhân gọi được — %s chỉ giữ làm ngữ cảnh", thread_id, sender_uid)
             return
 
         mentioned = self._is_mentioned(frame, text)
