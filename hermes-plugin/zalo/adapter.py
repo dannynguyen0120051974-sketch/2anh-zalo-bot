@@ -97,6 +97,53 @@ from .flood import MUTED as FLOOD_MUTED
 from .flood import FloodGuard
 
 
+def _transcode_to_m4a(audio_path: str) -> Optional[str]:
+    """Đóng gói âm thanh thành M4A (AAC mono 44,1 kHz, 64k) để iPhone và Zalo PC phát được.
+
+    Tệp AAC thô (ADTS) chỉ Android chịu phát; trình phát iOS và Zalo PC (Chromium)
+    cần AAC nằm trong vỏ MP4/M4A. Cờ ``+faststart`` đưa khối thông tin ``moov``
+    lên đầu tệp, để iPhone đọc được thời lượng mà không phải tải hết tệp.
+    """
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return None
+    fd, output_path = tempfile.mkstemp(prefix="zalo_voice_", suffix=".m4a")
+    os.close(fd)
+    try:
+        result = subprocess.run(
+            [
+                ffmpeg, "-v", "error", "-y", "-i", audio_path,
+                "-vn", "-ac", "1", "-ar", "44100", "-c:a", "aac", "-b:a", "64k",
+                "-movflags", "+faststart",
+                output_path,
+            ],
+            capture_output=True,
+            timeout=60,
+            stdin=subprocess.DEVNULL,
+        )
+        if result.returncode == 0 and os.path.getsize(output_path) > 0:
+            return output_path
+    except Exception:
+        logger.debug("Zalo M4A conversion failed for %s", audio_path, exc_info=True)
+    try:
+        os.unlink(output_path)
+    except OSError:
+        pass
+    return None
+
+
+def _with_audio_extension(url: str, extension: str) -> str:
+    """Nối đuôi tệp vào link CDN Zalo nếu link chưa có đuôi âm thanh.
+
+    CDN tệp của Zalo trả link không đuôi; trình phát trên điện thoại cần đuôi để
+    chọn bộ giải mã. CDN bỏ qua phần đuôi thêm vào và vẫn trả đúng tệp (đã thử).
+    """
+    path = urlsplit(url).path.lower()
+    if path.endswith((".m4a", ".aac", ".mp3")):
+        return url
+    return url + extension
+
+
 def _transcode_to_aac(audio_path: str) -> Optional[str]:
     """Return a temporary AAC file suitable for Zalo voice messages."""
     ffmpeg = shutil.which("ffmpeg")
@@ -1511,33 +1558,58 @@ class ZaloAdapter(BasePlatformAdapter):
         metadata: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> SendResult:
-        """Upload local audio to Zalo's CDN, then send it as a voice bubble."""
+        """Upload local audio to Zalo's CDN, then send it as a voice bubble.
+
+        Ưu tiên M4A (AAC trong vỏ MP4, ``+faststart``) vì chỉ Android phát được
+        AAC thô; iPhone và Zalo PC cần M4A và đường dẫn có đuôi. Zalo từ chối
+        đuôi ``.m4a`` thì lùi về AAC như cách cũ.
+        """
         if not os.path.isfile(audio_path):
             return SendResult(success=False, error="audio file was not found")
 
         metadata = metadata or {}
         thread_type = self._guess_thread_type(chat_id, metadata)
-        upload_path = audio_path
-        temporary_path: Optional[str] = None
-        if os.path.splitext(audio_path)[1].lower() != ".aac":
-            temporary_path = await asyncio.to_thread(_transcode_to_aac, audio_path)
-            if not temporary_path:
-                return SendResult(success=False, error="could not convert audio to AAC")
-            upload_path = temporary_path
+        temporary_paths: List[str] = []
+
+        def _as_aac() -> Optional[str]:
+            if os.path.splitext(audio_path)[1].lower() == ".aac":
+                return audio_path
+            path = _transcode_to_aac(audio_path)
+            if path:
+                temporary_paths.append(path)
+            return path
+
+        def _as_m4a() -> Optional[str]:
+            path = _transcode_to_m4a(audio_path)
+            if path:
+                temporary_paths.append(path)
+            return path
 
         try:
-            uploaded = await self.invoke(
-                "uploadAttachment", [[upload_path], str(chat_id), thread_type]
-            )
-            if not uploaded or not uploaded.get("ok"):
-                return SendResult(
-                    success=False,
-                    error=(uploaded or {}).get("error", "Zalo audio upload failed"),
+            voice_url: Optional[str] = None
+            last_error = "could not convert audio for Zalo voice"
+            for extension, produce in ((".m4a", _as_m4a), (".aac", _as_aac)):
+                upload_path = await asyncio.to_thread(produce)
+                if not upload_path:
+                    continue
+                uploaded = await self.invoke(
+                    "uploadAttachment", [[upload_path], str(chat_id), thread_type]
                 )
-            items = uploaded.get("result") or []
-            voice_url = items[0].get("fileUrl") if items and isinstance(items[0], dict) else None
+                if not uploaded or not uploaded.get("ok"):
+                    last_error = (uploaded or {}).get("error", "Zalo audio upload failed")
+                    # Chỉ thử định dạng kế tiếp khi Zalo chê đuôi tệp; lỗi mạng hay
+                    # lỗi khác thì dừng, tránh tải một đoạn thoại lên hai lần.
+                    if "not allowed" in str(last_error).lower() or "extension" in str(last_error).lower():
+                        continue
+                    return SendResult(success=False, error=last_error)
+                items = uploaded.get("result") or []
+                file_url = items[0].get("fileUrl") if items and isinstance(items[0], dict) else None
+                if not file_url:
+                    return SendResult(success=False, error="Zalo audio upload returned no file URL")
+                voice_url = _with_audio_extension(file_url, extension)
+                break
             if not voice_url:
-                return SendResult(success=False, error="Zalo audio upload returned no file URL")
+                return SendResult(success=False, error=last_error)
 
             sent = await self.invoke(
                 "sendVoice",
@@ -1557,9 +1629,11 @@ class ZaloAdapter(BasePlatformAdapter):
             ) or (message or {}).get("msgId") or (message or {}).get("msgID")
             return SendResult(success=True, message_id=message_id, raw_response=sent)
         finally:
-            if temporary_path:
+            for path in temporary_paths:
+                if path == audio_path:
+                    continue
                 try:
-                    os.unlink(temporary_path)
+                    os.unlink(path)
                 except OSError:
                     pass
 

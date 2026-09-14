@@ -2,6 +2,17 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [1.10.1] — 2026-09-14
+
+### Sửa
+
+- **Tin thoại của bot phát được trên iPhone và Zalo PC.** Trước đây bot đổi âm thanh
+  sang AAC thô rồi tải lên CDN tệp của Zalo; link trả về không có đuôi. Android tự dò
+  định dạng nên nghe được, còn iPhone và Zalo PC thì không. Nay bot đóng gói M4A (AAC
+  mono 44,1 kHz, 64k) với `-movflags +faststart` để khối thông tin nằm đầu tệp, và nối
+  đuôi `.m4a` vào link CDN (CDN bỏ qua phần đuôi thêm vào, vẫn trả đúng tệp). Zalo chê
+  đuôi `.m4a` thì tự lùi về cách gửi AAC cũ; lỗi mạng thì dừng, không tải lên hai lần.
+
 ## [1.10.0] — 2026-09-13
 
 ### Thêm

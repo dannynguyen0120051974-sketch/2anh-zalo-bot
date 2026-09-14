@@ -1099,42 +1099,120 @@ class ZaloAdapterMediaContextTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(adapter._bridge_url, "ws://127.0.0.1:3900")
 
     async def test_send_voice_uploads_local_audio_then_forwards_zalo_cdn_url(self):
+        # iPhone và Zalo PC không phát AAC thô qua link không đuôi: gửi M4A và nối đuôi.
         adapter = self.make_adapter()
         calls = []
 
         async def fake_invoke(method, args):
             calls.append((method, args))
             if method == "uploadAttachment":
-                return {
-                    "ok": True,
-                    "result": [{"fileUrl": "https://cdn.zalo.test/voice.aac"}],
-                }
+                return {"ok": True, "result": [{"fileUrl": "https://fg41.dlfl.vn/abc/6538968052631542979"}]}
             return {"ok": True, "result": {"message": {"msgId": "voice-1"}}}
 
         adapter.invoke = fake_invoke
-        with tempfile.NamedTemporaryFile(suffix=".aac", delete=False) as audio:
-            audio.write(b"aac")
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as audio:
+            audio.write(b"wav")
             audio_path = audio.name
+        with tempfile.NamedTemporaryFile(suffix=".m4a", delete=False) as m4a:
+            m4a.write(b"m4a")
+            m4a_path = m4a.name
         try:
-            result = await adapter.send_voice(
-                "2054797107487294899",
-                audio_path,
-                metadata={"chat_type": "group"},
-            )
+            with patch.object(zalo_adapter, "_transcode_to_m4a", return_value=m4a_path):
+                result = await adapter.send_voice(
+                    "2054797107487294899",
+                    audio_path,
+                    metadata={"chat_type": "group"},
+                )
         finally:
             os.unlink(audio_path)
 
         self.assertTrue(result.success)
         self.assertEqual(calls[0][0], "uploadAttachment")
+        self.assertTrue(calls[0][1][0][0].endswith(".m4a"))
         self.assertEqual(calls[0][1][1:], ["2054797107487294899", 1])
         self.assertEqual(calls[1], (
             "sendVoice",
             [
-                {"voiceUrl": "https://cdn.zalo.test/voice.aac", "ttl": 0},
+                {"voiceUrl": "https://fg41.dlfl.vn/abc/6538968052631542979.m4a", "ttl": 0},
                 "2054797107487294899",
                 1,
             ],
         ))
+        self.assertFalse(os.path.exists(m4a_path), "tệp M4A tạm phải được dọn")
+
+    async def test_send_voice_falls_back_to_aac_when_zalo_rejects_m4a(self):
+        adapter = self.make_adapter()
+        calls = []
+
+        async def fake_invoke(method, args):
+            calls.append((method, args))
+            if method == "uploadAttachment":
+                if args[0][0].endswith(".m4a"):
+                    return {"ok": False, "error": 'File extension "m4a" is not allowed'}
+                return {"ok": True, "result": [{"fileUrl": "https://fg41.dlfl.vn/abc/111"}]}
+            return {"ok": True, "result": {"message": {"msgId": "voice-2"}}}
+
+        adapter.invoke = fake_invoke
+        with tempfile.NamedTemporaryFile(suffix=".aac", delete=False) as audio:
+            audio.write(b"aac")
+            audio_path = audio.name
+        with tempfile.NamedTemporaryFile(suffix=".m4a", delete=False) as m4a:
+            m4a.write(b"m4a")
+            m4a_path = m4a.name
+        try:
+            with patch.object(zalo_adapter, "_transcode_to_m4a", return_value=m4a_path):
+                result = await adapter.send_voice("2054797107487294899", audio_path,
+                                                  metadata={"chat_type": "group"})
+        finally:
+            os.unlink(audio_path)
+
+        self.assertTrue(result.success)
+        self.assertEqual([c[0] for c in calls], ["uploadAttachment", "uploadAttachment", "sendVoice"])
+        self.assertEqual(calls[2][1][0]["voiceUrl"], "https://fg41.dlfl.vn/abc/111.aac")
+
+    async def test_send_voice_stops_on_network_error_instead_of_uploading_twice(self):
+        adapter = self.make_adapter()
+        calls = []
+
+        async def fake_invoke(method, args):
+            calls.append(method)
+            return {"ok": False, "error": "timeout"}
+
+        adapter.invoke = fake_invoke
+        with tempfile.NamedTemporaryFile(suffix=".m4a", delete=False) as m4a:
+            m4a.write(b"m4a")
+            m4a_path = m4a.name
+        with patch.object(zalo_adapter, "_transcode_to_m4a", return_value=m4a_path):
+            result = await adapter.send_voice("2054797107487294899", m4a_path,
+                                              metadata={"chat_type": "group"})
+        self.assertFalse(result.success)
+        self.assertEqual(calls, ["uploadAttachment"])
+
+    def test_with_audio_extension_only_adds_when_missing(self):
+        self.assertEqual(zalo_adapter._with_audio_extension("https://fg41.dlfl.vn/a/1", ".m4a"),
+                         "https://fg41.dlfl.vn/a/1.m4a")
+        self.assertEqual(zalo_adapter._with_audio_extension("https://voice-aac-dl.zdn.vn/1/x.aac", ".m4a"),
+                         "https://voice-aac-dl.zdn.vn/1/x.aac")
+
+    def test_transcode_to_m4a_puts_moov_before_audio_data(self):
+        import shutil
+        import subprocess
+        if not shutil.which("ffmpeg"):
+            self.skipTest("máy này không có ffmpeg")
+        fd, wav = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        try:
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+                            wav], check=True, capture_output=True, timeout=60)
+            out = zalo_adapter._transcode_to_m4a(wav)
+            self.assertIsNotNone(out)
+            data = open(out, "rb").read()
+            os.unlink(out)
+        finally:
+            os.unlink(wav)
+        self.assertEqual(data[4:8], b"ftyp")
+        # +faststart: khối moov (thông tin tệp) phải đứng trước mdat (dữ liệu âm thanh).
+        self.assertLess(data.find(b"moov"), data.find(b"mdat"))
 
     async def test_send_voice_accepts_media_delivery_is_voice_flag(self):
         adapter = self.make_adapter()
