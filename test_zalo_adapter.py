@@ -1204,6 +1204,45 @@ class ZaloAdapterMediaContextTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.success)
         self.assertEqual(calls, ["uploadAttachment"])
 
+    async def test_send_voice_skips_same_file_resent_to_same_chat(self):
+        # Bot gọi zalo_send_voice xong, gateway lại tự gắn MEDIA của text_to_speech vào câu trả
+        # lời cuối và gửi lần nữa: cùng tệp, cùng nhóm thì chỉ được đi một lần.
+        adapter = self.make_adapter()
+        calls = []
+
+        async def fake_invoke(method, args):
+            calls.append((method, args[-2]))
+            if method == "uploadAttachment":
+                return {"ok": True, "result": [{"fileUrl": "https://fg41.dlfl.vn/abc/1"}]}
+            return {"ok": True, "result": {"msgId": f"voice-{len(calls)}"}}
+
+        def fake_m4a(_path):
+            fd, path = tempfile.mkstemp(suffix=".m4a")
+            os.close(fd)
+            return path
+
+        adapter.invoke = fake_invoke
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as audio:
+            audio.write(b"mp3")
+            audio_path = audio.name
+        try:
+            with patch.object(zalo_adapter, "_transcode_to_m4a", side_effect=fake_m4a):
+                first = await adapter.send_voice("6537986660262149071", audio_path,
+                                                 metadata={"chat_type": "group"})
+                again = await adapter.send_voice("6537986660262149071", audio_path,
+                                                 metadata={"chat_type": "group"}, is_voice=True)
+                other = await adapter.send_voice("39633293852382968", audio_path,
+                                                 metadata={"chat_type": "group"})
+        finally:
+            os.unlink(audio_path)
+
+        self.assertTrue(first.success and again.success and other.success)
+        self.assertEqual(again.message_id, first.message_id)
+        self.assertEqual(calls, [
+            ("uploadAttachment", "6537986660262149071"), ("sendVoice", "6537986660262149071"),
+            ("uploadAttachment", "39633293852382968"), ("sendVoice", "39633293852382968"),
+        ])
+
     def test_with_audio_extension_only_adds_when_missing(self):
         self.assertEqual(zalo_adapter._with_audio_extension("https://fg41.dlfl.vn/a/1", ".m4a"),
                          "https://fg41.dlfl.vn/a/1.m4a")

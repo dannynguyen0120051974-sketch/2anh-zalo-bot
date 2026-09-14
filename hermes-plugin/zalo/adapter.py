@@ -257,6 +257,9 @@ SLOW_ACK_TIMEOUT_SECONDS = 150
 SLOW_METHODS = frozenset({"uploadAttachment", "sendMessage", "sendVoice", "sendVideo"})
 DEDUP_WINDOW_SECONDS = 300
 DEDUP_MAX_SIZE = 1000
+# Bot tự gửi voice bằng zalo_send_voice rồi gateway lại gửi MEDIA của text_to_speech thêm lần
+# nữa: cùng một tệp vào cùng một chat trong khoảng này thì coi là đã gửi.
+VOICE_RESEND_WINDOW_SECONDS = 600
 # Nhớ 8 tin để lúc nào cũng còn đủ 5 tin trước câu đang xử lý.
 GROUP_CONTEXT_LIMIT = 8
 # Bao nhiêu tin được kể lại khi bot bị gọi trơ, không kèm câu hỏi nào.
@@ -499,6 +502,8 @@ class ZaloAdapter(BasePlatformAdapter):
         if isinstance(owner_only, (list, tuple, set)):
             owner_only = ",".join(str(gid) for gid in owner_only)
         self._owner_only_groups = set(_split_ids(str(owner_only or "")))
+        # (chat, tệp, cỡ, giờ sửa) -> (lúc gửi, kết quả), chặn một đoạn thoại đi hai lần.
+        self._sent_voices: Dict[tuple, tuple] = {}
 
         # Ngưỡng đặt rộng tay có chủ đích: sáu tin trong mười lăm giây nhanh
         # hơn nhịp hỏi của người thật khá nhiều, nên người dùng bình thường
@@ -1601,6 +1606,17 @@ class ZaloAdapter(BasePlatformAdapter):
         if not os.path.isfile(audio_path):
             return SendResult(success=False, error="audio file was not found")
 
+        now = time.monotonic()
+        stat = os.stat(audio_path)
+        voice_key = (str(chat_id), os.path.realpath(audio_path), stat.st_size, stat.st_mtime_ns)
+        self._sent_voices = {
+            key: value for key, value in self._sent_voices.items()
+            if now - value[0] < VOICE_RESEND_WINDOW_SECONDS
+        }
+        if voice_key in self._sent_voices:
+            logger.info("Zalo: bỏ qua voice gửi lặp cùng tệp vào chat %s", chat_id)
+            return self._sent_voices[voice_key][1]
+
         metadata = metadata or {}
         thread_type = self._guess_thread_type(chat_id, metadata)
         temporary_paths: List[str] = []
@@ -1661,7 +1677,9 @@ class ZaloAdapter(BasePlatformAdapter):
                 if isinstance(payload, dict)
                 else None
             ) or (message or {}).get("msgId") or (message or {}).get("msgID")
-            return SendResult(success=True, message_id=message_id, raw_response=sent)
+            result = SendResult(success=True, message_id=message_id, raw_response=sent)
+            self._sent_voices[voice_key] = (now, result)
+            return result
         finally:
             for path in temporary_paths:
                 if path == audio_path:

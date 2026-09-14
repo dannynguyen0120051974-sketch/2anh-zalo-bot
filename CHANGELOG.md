@@ -2,6 +2,17 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [1.10.3] — 2026-09-14
+
+### Sửa
+
+- **Bot không còn gửi một tin thoại hai lần.** Khi được nhờ gửi voice, bot tạo âm thanh
+  bằng `text_to_speech` rồi tự gửi bằng `zalo_send_voice`; sau đó gateway Hermes lại tự
+  gắn `MEDIA:` của kết quả `text_to_speech` vào câu trả lời cuối và gửi thêm lần nữa (thấy
+  ở nhóm VIBE WORKING (2), hai voice cách nhau 4 giây). Adapter nay nhớ tệp thoại đã gửi
+  thành công theo từng chat trong 10 phút; cùng tệp vào cùng chat thì bỏ qua và trả lại kết
+  quả lần trước. Gửi sang chat khác, hoặc tệp đã bị ghi đè nội dung, vẫn đi bình thường.
+
 ## [1.10.2] — 2026-09-14
 
 ### Sửa
