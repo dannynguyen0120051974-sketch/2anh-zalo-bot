@@ -2,6 +2,17 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [1.10.2] — 2026-09-14
+
+### Sửa
+
+- **Chủ nhân gọi tên bot trong nhóm không cần tag.** "Nhi ơi", "chào Nhi", "Nhi đâu",
+  "nhờ Nhi" nay đánh thức bot khi người gọi là chủ nhân; người khác vẫn phải tag. Tag
+  gõ tay viết thường (`@uyển nhi`) hoặc chỉ tên ngắn (`@nhi`) cũng được nhận. Phần
+  này do chính Uyển Nhi sửa tại chỗ trên VPS theo yêu cầu của chủ nhân ngày 14/9, nay
+  đưa về kho mã kèm test; bỏ một test Uyển Nhi thêm nhầm (cho người lạ hỏi kỹ thuật
+  trong nhóm chỉ-chủ-nhân), trái với quy tắc đã chốt và vốn chạy hỏng.
+
 ## [1.10.1] — 2026-09-14
 
 ### Sửa

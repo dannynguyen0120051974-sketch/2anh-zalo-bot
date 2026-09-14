@@ -746,7 +746,8 @@ class ZaloAdapter(BasePlatformAdapter):
             logger.debug("[zalo] nhóm %s chỉ chủ nhân gọi được — %s chỉ giữ làm ngữ cảnh", thread_id, sender_uid)
             return
 
-        mentioned = self._is_mentioned(frame, text)
+        is_owner = self._is_owner(sender_uid)
+        mentioned = self._is_mentioned(frame, text, is_owner=is_owner)
         # Trong nhóm: không trả lời khi chưa được gọi, nhưng vẫn giữ tin đó trong
         # rolling memory ở trên để câu tag ngay sau có ảnh/ngữ cảnh gần nhất.
         if is_group and self._reply_only_tagged and not mentioned:
@@ -978,7 +979,7 @@ class ZaloAdapter(BasePlatformAdapter):
             metadata={"chat_type": "dm"},
         )
 
-    def _is_mentioned(self, frame: Dict[str, Any], text: str) -> bool:
+    def _is_mentioned(self, frame: Dict[str, Any], text: str, is_owner: bool = False) -> bool:
         """True only when *this bot* is addressed.
 
         A Zalo mention carries the ``uid`` of the person being tagged, so a
@@ -995,11 +996,36 @@ class ZaloAdapter(BasePlatformAdapter):
                     return True
 
         low = text.lower()
+        name = (self._self_profile.get("display_name") or "").strip().lower()
+        if not name:
+            return low.startswith("bot ") or low == "bot" or "@bot" in low
+
+        # 1. Bất kỳ ai gõ @bot hoặc @TênBot dạng text thường đều nhận diện được
         if low.startswith("bot ") or low == "bot" or "@bot" in low:
             return True
 
-        name = (self._self_profile.get("display_name") or "").strip().lower()
-        return bool(name) and f"@{name}" in low
+        names = [name]
+        if " " in name:
+            short_name = name.split()[-1]
+            if len(short_name) >= 2:
+                names.append(short_name)
+
+        for n in names:
+            if f"@{n}" in low or low.startswith(f"@{n} "):
+                return True
+
+        # 2. Các cách gọi thân thuộc không cần @ (Nhi ơi, Tiêu ơi, chào Nhi...)
+        # CHỈ dành riêng cho CHỦ NHÂN (sếp). Người khác bắt buộc phải tag.
+        if is_owner:
+            for n in names:
+                if low.startswith(f"{n} ") or low == n:
+                    return True
+                if f"{n} ơi" in low or f"{n} oi" in low or f"chào {n}" in low or f"chao {n}" in low:
+                    return True
+                if f"{n} đâu" in low or f"{n} dau" in low or f"nhờ {n}" in low or f"nho {n}" in low:
+                    return True
+
+        return False
 
     def _strip_mention(self, text: str) -> str:
         """Drop the bot's own @name so the agent sees a clean prompt."""
@@ -1011,6 +1037,10 @@ class ZaloAdapter(BasePlatformAdapter):
         name = (self._self_profile.get("display_name") or "").strip()
         if name:
             cleaned = re.sub(rf"@{re.escape(name)}", "", cleaned, flags=re.IGNORECASE)
+            if " " in name:
+                short_name = name.split()[-1]
+                if len(short_name) >= 2:
+                    cleaned = re.sub(rf"@{re.escape(short_name)}", "", cleaned, flags=re.IGNORECASE)
         return cleaned
 
     def _mention_only(self, text: str) -> bool:
@@ -1026,6 +1056,10 @@ class ZaloAdapter(BasePlatformAdapter):
         name = (self._self_profile.get("display_name") or "").strip()
         if name:
             rest = re.sub(re.escape(name), " ", rest, flags=re.IGNORECASE)
+            if " " in name:
+                short_name = name.split()[-1]
+                if len(short_name) >= 2:
+                    rest = re.sub(rf"\b{re.escape(short_name)}\b", " ", rest, flags=re.IGNORECASE)
         words = re.findall(r"[^\W\d_]+", rest, flags=re.UNICODE)
         return all(word.lower() in _CALL_ONLY_WORDS for word in words)
 

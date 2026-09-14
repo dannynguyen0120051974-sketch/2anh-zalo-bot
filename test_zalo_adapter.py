@@ -234,6 +234,22 @@ class ZaloAdapterMediaContextTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(handled[0].media_urls, ["C:/cache/sticker.png"])
         self.assertIn("Ngữ cảnh gần nhất trong nhóm Zalo", handled[0].channel_context)
 
+    def test_owner_can_call_by_name_without_at_but_others_must_tag(self):
+        # Anh Hải Anh gọi "Nhi ơi" trong nhóm mà bot không đáp (13–14/9). Chỉ chủ nhân
+        # được gọi tên không cần @; người khác vẫn phải tag, kể cả tag tên ngắn.
+        adapter = self.make_adapter()
+        adapter._self_profile["display_name"] = "Uyển Nhi"
+
+        self.assertTrue(adapter._is_mentioned({}, "Nhi ơi em cười vào mặt tiểu mi đi", is_owner=True))
+        self.assertTrue(adapter._is_mentioned({}, "chào Nhi", is_owner=True))
+        self.assertTrue(adapter._is_mentioned({}, "nhi oi", is_owner=True))
+        self.assertFalse(adapter._is_mentioned({}, "Nhi ơi em cười vào mặt tiểu mi đi", is_owner=False))
+        # Tag gõ tay, viết thường, hoặc chỉ tên ngắn — ai tag cũng được nhận.
+        self.assertTrue(adapter._is_mentioned({}, "@uyển nhi đọc profile anh Khương", is_owner=False))
+        self.assertTrue(adapter._is_mentioned({}, "@nhi giúp em với", is_owner=False))
+        # Không nhầm chữ "nhi" nằm trong từ khác.
+        self.assertFalse(adapter._is_mentioned({}, "bệnh nhi khoa đông quá", is_owner=False))
+
     def test_mention_only_recognizes_a_bare_call(self):
         adapter = self.make_adapter()
         self.assertTrue(adapter._mention_only("@Lăng Tiêu"))
