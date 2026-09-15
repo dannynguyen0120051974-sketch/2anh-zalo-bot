@@ -2,6 +2,18 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [1.10.4] — 2026-09-15
+
+### Sửa
+
+- **Tag cả nhóm (`@All`) thành tag Zalo thật.** Trước đây `@All` trong tin bot gửi luôn
+  hiện dạng chữ vì bộ gắn tag chỉ biết tên thành viên. Nay `@All` được gắn tag cả nhóm
+  (`uid: "-1"`) — nhưng chỉ khi bot là **trưởng hoặc phó nhóm**, vì Zalo chỉ cho hai vai
+  này tag cả nhóm; không phải thì giữ nguyên dạng chữ và hướng dẫn trình bày dặn bot báo
+  chủ nhân thay vì nói đã tag thành công. `@Alla`, `@All1`, `a@All` không bị tính.
+  Thay cho bản Uyển Nhi tự sửa tại chỗ trên VPS ngày 15/9 (bản đó gắn tag cả nhóm ở mọi
+  nhóm và chưa từng chạy vì sidecar chưa khởi động lại).
+
 ## [1.10.3] — 2026-09-14
 
 ### Sửa

@@ -236,6 +236,44 @@ test('send vào nhóm gắn tag thật cho "@Tên" khớp đúng một thành vi
   }
 });
 
+test('"@All" thành tag cả nhóm chỉ khi bot là trưởng/phó nhóm', async (t) => {
+  const sent = [];
+  const groups = {
+    ga: { creatorId: 'owner', adminIds: ['bot-uid'], memVerList: ['111_0'] },
+    gb: { creatorId: 'owner', adminIds: [], memVerList: ['111_0'] },
+  };
+  const api = {
+    sendMessage(content) {
+      sent.push(content);
+      return Promise.resolve({ message: { msgId: `m${sent.length}` } });
+    },
+    async getGroupInfo([id]) {
+      return { gridInfoMap: { [id]: groups[id] } };
+    },
+    async getGroupMembersInfo() {
+      return { profiles: { 111: { displayName: 'Liên Lưu Thu' } } };
+    },
+  };
+  // Bộ test chỉ cho gửi 1 tin mỗi phiên cầu nối, nên mỗi nhóm mở một phiên riêng.
+  for (const group of ['ga', 'gb']) {
+    const ws = await openBridge(t, api, { user_id: 'bot-uid' });
+    try {
+      ws.send(JSON.stringify({
+        type: 'send', reqId: group, threadId: group, threadType: 1,
+        text: '@All họp lúc 8h nhé', auth: auth(group, 1),
+      }));
+      const ack = await onceMessage(ws, (msg) => msg.type === 'ack' && msg.reqId === group);
+      assert.equal(ack.ok, true, ack.error);
+    } finally {
+      ws.close();
+      stopHermesBridge();
+    }
+  }
+  assert.deepEqual(sent[0].mentions, [{ pos: 0, len: 4, uid: '-1' }]);
+  assert.equal(sent[1].mentions, undefined);
+  assert.equal(sent[1].msg, '@All họp lúc 8h nhé');
+});
+
 test('khung tin gửi sang Hermes mang đúng loại tệp, không gắn cứng ảnh', async (t) => {
   const ws = await openBridge(t, {});
   const { forwardToHermes } = await import('./hermes-bridge.js');
@@ -298,8 +336,8 @@ test('nhóm đông hơn số hồ sơ tra được thì không tag theo danh sá
   }
 });
 
-async function openBridge(t, api) {
-  const server = startHermesBridge({ api, profile: null, port: 0, store: testStore(t) });
+async function openBridge(t, api, profile = null) {
+  const server = startHermesBridge({ api, profile, port: 0, store: testStore(t) });
   await new Promise((resolve) => server.once('listening', resolve));
   const ws = new WebSocket(`ws://127.0.0.1:${server.address().port}`);
   const hello = onceMessage(ws, (msg) => msg.type === 'hello');

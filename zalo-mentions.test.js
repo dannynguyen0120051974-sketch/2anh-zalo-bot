@@ -34,6 +34,31 @@ test('tên còn tiếp bằng chữ hoa hoặc bị cắt ở cuối chunk thì 
   assert.deepEqual(findMentions(tail, members), [{ pos: tail.indexOf('@Thu'), len: 4, uid: '555' }]);
 });
 
+test('"@All" chỉ thành tag cả nhóm khi bot là trưởng/phó nhóm', () => {
+  const msg = '@All họp lúc 8h nhé, @all nhớ mang laptop';
+  assert.deepEqual(findMentions(msg, members, { canMentionAll: true }), [
+    { pos: 0, len: 4, uid: '-1' },
+    { pos: msg.indexOf('@all'), len: 4, uid: '-1' },
+  ]);
+  // Không phải trưởng/phó: Zalo không cho tag cả nhóm, để nguyên dạng chữ.
+  assert.deepEqual(findMentions(msg, members), []);
+  // Danh bạ nhóm mới chưa tra được vẫn tag cả nhóm được.
+  assert.deepEqual(findMentions('@All chào cả nhà', [], { canMentionAll: true }), [{ pos: 0, len: 4, uid: '-1' }]);
+});
+
+test('"@Alla", "@All1" và a@All trong email không phải tag cả nhóm', () => {
+  assert.deepEqual(findMentions('@Alla @All1 mail a@All', [], { canMentionAll: true }), []);
+});
+
+test('danh bạ trả luôn quyền tag cả nhóm cùng danh sách thành viên', async () => {
+  const directory = createMemberDirectory({
+    fetchMembers: async () => ({ members: [{ uid: '1', name: 'A' }], canMentionAll: true }),
+  });
+  assert.deepEqual(await directory.lookup('g1'), { members: [{ uid: '1', name: 'A' }], canMentionAll: true });
+  const broken = createMemberDirectory({ fetchMembers: async () => { throw new Error('mạng chập chờn'); } });
+  assert.deepEqual(await broken.lookup('g1'), { members: [], canMentionAll: false });
+});
+
 test('danh bạ nhớ tạm kết quả đầy đủ, không nhớ kết quả thiếu, lỗi thì dùng bản cũ', async () => {
   let calls = 0;
   let clock = 0;

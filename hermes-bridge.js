@@ -51,13 +51,16 @@ const GROUP_MEMBERS_LIMIT = 200;
 // lấy danh sách ID trước (dạng "uid_0").
 async function fetchGroupMembers(api, groupId) {
   const info = await api.getGroupInfo([groupId]);
-  const memberIds = (info?.gridInfoMap?.[groupId]?.memVerList || [])
+  const group = info?.gridInfoMap?.[groupId] || {};
+  const adminIds = [group.creatorId, ...(group.adminIds || [])].filter(Boolean).map(String);
+  const memberIds = (group.memVerList || [])
     .map((entry) => String(entry).replace(/_\d+$/, ''))
     .filter(Boolean);
   const lookup = memberIds.slice(0, GROUP_MEMBERS_LIMIT);
   const profiles = lookup.length ? (await api.getGroupMembersInfo(lookup))?.profiles || {} : {};
   return {
     total: memberIds.length,
+    adminIds,
     members: lookup.map((id) => ({
       id,
       displayName: profiles[id]?.displayName || profiles[id]?.zaloName || '',
@@ -80,6 +83,7 @@ async function mentionCandidates(api, groupId) {
     if (!row.isSelf) add(row.senderUid, row.senderName);
   }
   let cacheable = true;
+  let canMentionAll = false;
   let timer;
   try {
     const lookup = await Promise.race([
@@ -88,6 +92,8 @@ async function mentionCandidates(api, groupId) {
         timer = setTimeout(() => reject(new Error('quá thời gian tra thành viên')), MEMBER_LOOKUP_TIMEOUT_MS);
       }),
     ]);
+    // Zalo chỉ cho trưởng/phó nhóm tag cả nhóm ("@All").
+    canMentionAll = lookup.adminIds.includes(String(activeAccountId));
     // Nhóm đông hơn số hồ sơ tra được thì "tên duy nhất" không chắc đúng — chỉ
     // tag người vừa nhắn, là những người bot đang thấy trong cuộc trò chuyện.
     if (lookup.members.length >= lookup.total) {
@@ -99,7 +105,7 @@ async function mentionCandidates(api, groupId) {
   } finally {
     clearTimeout(timer);
   }
-  return { members: [...candidates.values()], cacheable };
+  return { members: [...candidates.values()], cacheable, canMentionAll };
 }
 
 /**
@@ -822,9 +828,9 @@ async function handleCommand(ws, cmd) {
       const rawText = String(cmd.text ?? '');
       const chunks = formatAndChunkZaloMarkdown(rawText);
       // Chỉ tra danh bạ khi tin vào nhóm thật sự có "@" — phần lớn tin không cần.
-      const mentionable = threadType === ThreadType.Group && rawText.includes('@') && memberDirectory
-        ? await memberDirectory.get(String(cmd.threadId))
-        : [];
+      const { members: mentionable, canMentionAll } = threadType === ThreadType.Group && rawText.includes('@') && memberDirectory
+        ? await memberDirectory.lookup(String(cmd.threadId))
+        : { members: [], canMentionAll: false };
 
       let lastMsgId = null;
       for (let i = 0; i < chunks.length; i++) {
@@ -835,6 +841,7 @@ async function handleCommand(ws, cmd) {
         const mentions = findMentions(item.msg, mentionable, {
           selfUid: activeAccountId,
           continuesInNextChunk: i < chunks.length - 1,
+          canMentionAll,
         });
         if (mentions.length) content.mentions = mentions;
         // Chỉ trích dẫn (quote) ở tin đầu tiên nếu có
