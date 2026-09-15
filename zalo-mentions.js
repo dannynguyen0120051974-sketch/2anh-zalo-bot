@@ -25,8 +25,8 @@ function normalize(text) {
  * @param {{selfUid?: string, continuesInNextChunk?: boolean, canMentionAll?: boolean}} options
  *   continuesInNextChunk: chunk này chưa phải chunk cuối — tên nằm sát cuối có
  *   thể bị cắt đôi ("@Trang " | "Nguyễn …") nên không tag.
- *   canMentionAll: bot là trưởng/phó nhóm. Zalo chỉ cho trưởng/phó tag cả nhóm,
- *   nên không phải thì "@All" để nguyên dạng chữ.
+ *   canMentionAll: bot được tag cả nhóm (nhóm tới 100 người, hoặc bot là
+ *   trưởng/phó nhóm). Không được thì "@All" để nguyên dạng chữ.
  * @returns {{pos: number, len: number, uid: string}[]}
  */
 export function findMentions(msg, members, { selfUid = '', continuesInNextChunk = false, canMentionAll = false } = {}) {

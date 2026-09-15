@@ -236,11 +236,13 @@ test('send vào nhóm gắn tag thật cho "@Tên" khớp đúng một thành vi
   }
 });
 
-test('"@All" thành tag cả nhóm chỉ khi bot là trưởng/phó nhóm', async (t) => {
+test('"@All" thành tag cả nhóm ở nhóm tới 100 người, nhóm đông hơn thì chỉ khi bot là trưởng/phó', async (t) => {
   const sent = [];
+  const members = (count) => Array.from({ length: count }, (_, i) => `${1000 + i}_0`);
   const groups = {
-    ga: { creatorId: 'owner', adminIds: ['bot-uid'], memVerList: ['111_0'] },
-    gb: { creatorId: 'owner', adminIds: [], memVerList: ['111_0'] },
+    ga: { creatorId: 'owner', adminIds: ['bot-uid'], memVerList: members(150) },
+    gb: { creatorId: 'owner', adminIds: [], memVerList: members(150) },
+    gc: { creatorId: 'owner', adminIds: [], memVerList: members(100) },
   };
   const api = {
     sendMessage(content) {
@@ -255,7 +257,7 @@ test('"@All" thành tag cả nhóm chỉ khi bot là trưởng/phó nhóm', asyn
     },
   };
   // Bộ test chỉ cho gửi 1 tin mỗi phiên cầu nối, nên mỗi nhóm mở một phiên riêng.
-  for (const group of ['ga', 'gb']) {
+  for (const group of ['ga', 'gb', 'gc']) {
     const ws = await openBridge(t, api, { user_id: 'bot-uid' });
     try {
       ws.send(JSON.stringify({
@@ -272,6 +274,7 @@ test('"@All" thành tag cả nhóm chỉ khi bot là trưởng/phó nhóm', asyn
   assert.deepEqual(sent[0].mentions, [{ pos: 0, len: 4, uid: '-1' }]);
   assert.equal(sent[1].mentions, undefined);
   assert.equal(sent[1].msg, '@All họp lúc 8h nhé');
+  assert.deepEqual(sent[2].mentions, [{ pos: 0, len: 4, uid: '-1' }]);
 });
 
 test('khung tin gửi sang Hermes mang đúng loại tệp, không gắn cứng ảnh', async (t) => {

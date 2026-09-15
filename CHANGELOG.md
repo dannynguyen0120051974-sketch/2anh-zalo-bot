@@ -2,6 +2,15 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [1.10.5] — 2026-09-15
+
+### Sửa
+
+- **Tag cả nhóm được ở mọi nhóm tới 100 người.** Bản 1.10.4 chỉ cho bot tag `@All` khi là
+  trưởng/phó nhóm; thực tế Zalo cho mọi thành viên tag cả nhóm ở nhóm tới 100 người, chỉ
+  nhóm đông hơn mới cần trưởng/phó. Bot nay tag được khi nhóm có tối đa 100 người, hoặc khi
+  bot là trưởng/phó nhóm. Nếu Zalo vẫn từ chối, cầu nối gửi lại tin dạng chữ thường như cũ.
+
 ## [1.10.4] — 2026-09-15
 
 ### Sửa

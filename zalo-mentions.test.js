@@ -34,13 +34,13 @@ test('tên còn tiếp bằng chữ hoa hoặc bị cắt ở cuối chunk thì 
   assert.deepEqual(findMentions(tail, members), [{ pos: tail.indexOf('@Thu'), len: 4, uid: '555' }]);
 });
 
-test('"@All" chỉ thành tag cả nhóm khi bot là trưởng/phó nhóm', () => {
+test('"@All" chỉ thành tag cả nhóm khi bot được phép tag cả nhóm', () => {
   const msg = '@All họp lúc 8h nhé, @all nhớ mang laptop';
   assert.deepEqual(findMentions(msg, members, { canMentionAll: true }), [
     { pos: 0, len: 4, uid: '-1' },
     { pos: msg.indexOf('@all'), len: 4, uid: '-1' },
   ]);
-  // Không phải trưởng/phó: Zalo không cho tag cả nhóm, để nguyên dạng chữ.
+  // Không được phép (nhóm đông mà bot không phải trưởng/phó): để nguyên dạng chữ.
   assert.deepEqual(findMentions(msg, members), []);
   // Danh bạ nhóm mới chưa tra được vẫn tag cả nhóm được.
   assert.deepEqual(findMentions('@All chào cả nhà', [], { canMentionAll: true }), [{ pos: 0, len: 4, uid: '-1' }]);

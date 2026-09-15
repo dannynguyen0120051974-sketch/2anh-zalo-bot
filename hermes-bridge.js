@@ -71,6 +71,7 @@ async function fetchGroupMembers(api, groupId) {
 // Tra thành viên để gắn tag nằm ngay trên đường gửi câu trả lời: treo quá lâu
 // thì gửi luôn không tag còn hơn để người dùng chờ.
 const MEMBER_LOOKUP_TIMEOUT_MS = 4000;
+const MENTION_ALL_MAX_MEMBERS = 100;
 
 // Những người bot có thể tag trong nhóm. Tên người vừa nhắn là đúng cái tên bot
 // thấy trong prompt nên lấy trước; danh sách thành viên bù cho người chưa nhắn.
@@ -92,8 +93,10 @@ async function mentionCandidates(api, groupId) {
         timer = setTimeout(() => reject(new Error('quá thời gian tra thành viên')), MEMBER_LOOKUP_TIMEOUT_MS);
       }),
     ]);
-    // Zalo chỉ cho trưởng/phó nhóm tag cả nhóm ("@All").
-    canMentionAll = lookup.adminIds.includes(String(activeAccountId));
+    // Zalo cho mọi người tag cả nhóm ("@All") ở nhóm tới 100 người; nhóm đông
+    // hơn thì chỉ trưởng/phó nhóm được.
+    canMentionAll = lookup.adminIds.includes(String(activeAccountId))
+      || (lookup.total > 0 && lookup.total <= MENTION_ALL_MAX_MEMBERS);
     // Nhóm đông hơn số hồ sơ tra được thì "tên duy nhất" không chắc đúng — chỉ
     // tag người vừa nhắn, là những người bot đang thấy trong cuộc trò chuyện.
     if (lookup.members.length >= lookup.total) {
