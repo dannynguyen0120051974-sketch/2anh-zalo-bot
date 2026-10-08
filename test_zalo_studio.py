@@ -411,9 +411,10 @@ class SandboxTest(unittest.IsolatedAsyncioTestCase):
         net_props = [net[i + 1] for i, part in enumerate(net) if part == "-p"]
         self.assertNotIn("PrivateNetwork=yes", net_props)
         deny = next(p for p in net_props if p.startswith("IPAddressDeny="))
-        for item in ("localhost", "link-local", "10.0.0.0/8", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7", "fe80::/10",
+        for item in ("127.0.0.0/8", "::1/128", "169.254.0.0/16", "224.0.0.0/4", "10.0.0.0/8", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7", "fe80::/10",
                      "203.0.113.7/32", "2001:db8::7/128"):
             self.assertIn(item, deny.split("=", 1)[1].split())
+        self.assertNotIn("localhost", deny, "systemd-run -p không hiểu từ khoá")
         self.assertIn("P=50%%", net, "% của systemd được thoát")
 
     def test_systemd_paths_with_spaces_or_specials_are_rejected_clearly(self):
@@ -2049,7 +2050,7 @@ class RestartSafetyTest(unittest.TestCase):
         allow = next(p for p in props if p.startswith("IPAddressAllow=")).split("=", 1)[1].split()
         self.assertEqual(allow, ["127.0.0.53/32", "10.0.0.2/32", "fd00::53/128"])
         deny = next(p for p in props if p.startswith("IPAddressDeny=")).split("=", 1)[1].split()
-        for item in ("localhost", "10.0.0.0/8", "203.0.113.7/32"):
+        for item in ("127.0.0.0/8", "10.0.0.0/8", "203.0.113.7/32"):
             self.assertIn(item, deny, "vẫn chặn phần còn lại")
         offline = sandbox.systemd_command(["x"], Path("/w"), {}, network=False, timeout=10, hidden=[])
         offline_props = [offline[i + 1] for i, part in enumerate(offline) if part == "-p"]

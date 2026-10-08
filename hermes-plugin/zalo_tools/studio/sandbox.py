@@ -62,7 +62,9 @@ SYSTEMCTL = "systemctl"
 HOME_ROOTS = ("/root", "/home")
 HIDDEN_ROOTS = ("/opt", "/srv", "/mnt", "/media")
 # Bước có mạng: chặn máy mình, mạng nội bộ (IPv4 + IPv6), đa hướng. Địa chỉ của chính máy chủ thêm lúc chạy.
-DENIED_NETWORKS = ("localhost", "link-local", "multicast", "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10",
+# Chỉ dùng dải số: ``systemd-run -p IPAddressDeny=`` (systemd 255) không hiểu từ khoá localhost/link-local/multicast.
+DENIED_NETWORKS = ("127.0.0.0/8", "::1/128", "169.254.0.0/16", "224.0.0.0/4", "ff00::/8",
+                   "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10",
                    "172.16.0.0/12", "192.168.0.0/16", "198.18.0.0/15", "fc00::/7", "fe80::/10", "fec0::/10")
 
 
