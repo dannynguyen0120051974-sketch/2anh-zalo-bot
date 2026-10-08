@@ -424,3 +424,39 @@ test('doctor (Linux): cảnh báo khi user của hermes-gateway không đọc đ
   assert.match(detail(null, stat(0o100600, 1000, 1000)), /chưa kiểm được/);
   t.after(() => rmSync(dir, { recursive: true, force: true }));
 });
+
+// --- Second brain (spec §18.5.4): chỉ Linux, bật bằng ZALO_SECOND_BRAIN_URL, bộ cài chỉ gợi ý ---
+test('Second brain: dòng doctor — Windows luôn tắt, chưa đặt thì hướng dẫn, không phải loopback thì hỏng', async () => {
+  const { secondBrainCheck } = await import('./hermes-install-lib.js');
+  assert.deepEqual(secondBrainCheck({ url: 'http://127.0.0.1:1933', hostPlatform: 'win32' }), { ok: true, detail: 'luôn tắt trên Windows (ZALO_SECOND_BRAIN_URL bị bỏ qua)' });
+  assert.match(secondBrainCheck({ url: '', hostPlatform: 'linux' }).detail, /^tắt — muốn bật trên VPS: thêm ZALO_SECOND_BRAIN_URL=/);
+  assert.equal(secondBrainCheck({ url: 'http://10.1.2.3:1933', hostPlatform: 'linux' }).ok, false);
+  assert.deepEqual(secondBrainCheck({ url: 'http://127.0.0.1:1933', hostPlatform: 'linux' }), { ok: true, detail: 'bật — http://127.0.0.1:1933' });
+});
+
+test('Second brain: bộ cài chỉ in gợi ý khi thấy OpenViking trên Linux và chưa đặt biến — không bao giờ tự đặt', async () => {
+  const { secondBrainHint } = await import('./hermes-install-lib.js');
+  const calls = [];
+  const probe = (active) => (cmd, args) => { calls.push([cmd, ...args]); return { status: args.at(-1) === active ? 0 : 3 }; };
+  const hint = secondBrainHint({ hostPlatform: 'linux', url: '', envFile: '/root/.hermes/.env', commandProbe: probe('hermes-openviking.service') });
+  assert.match(hint, /hermes-openviking\.service/);
+  assert.match(hint, /ZALO_SECOND_BRAIN_URL=http:\/\/127\.0\.0\.1:1933/);
+  assert.match(hint, /\/root\/\.hermes\/\.env/);
+  assert.deepEqual(calls[0], ['systemctl', 'is-active', '--quiet', 'hermes-openviking.service']);
+  assert.equal(secondBrainHint({ hostPlatform: 'linux', url: '', commandProbe: probe('khong-co') }), null);
+  assert.equal(secondBrainHint({ hostPlatform: 'linux', url: 'http://127.0.0.1:1933', commandProbe: probe('hermes-openviking.service') }), null, 'đã đặt');
+  assert.equal(secondBrainHint({ hostPlatform: 'win32', url: '', commandProbe: () => { throw new Error('không được gọi'); } }), null);
+});
+
+test('Second brain: doctor đọc ZALO_SECOND_BRAIN_URL trong .env của Hermes; cài đặt không ghi biến này', async (t) => {
+  const fx = fixture(t);
+  await installHermes({ sidecarRoot: fx.sidecar, hermesHome: fx.hermesHome, skipPython: true });
+  const envFile = join(fx.hermesHome, '.env');
+  assert.ok(!existsSync(envFile) || !/ZALO_SECOND_BRAIN_URL/.test(readFileSync(envFile, 'utf8')));
+  writeFileSync(envFile, 'ZALO_SECOND_BRAIN_URL="http://192.168.1.9:1933"\n');
+  const bad = doctorHermes({ sidecarRoot: fx.sidecar, hermesHome: fx.hermesHome, skipPython: true, noDashboard: true, hostPlatform: 'linux' });
+  assert.equal(bad.checks.find((c) => c.name === 'second-brain').ok, false);
+  writeFileSync(envFile, 'ZALO_SECOND_BRAIN_URL=http://127.0.0.1:1933\n');
+  const good = doctorHermes({ sidecarRoot: fx.sidecar, hermesHome: fx.hermesHome, skipPython: true, noDashboard: true, hostPlatform: 'linux' });
+  assert.equal(good.checks.find((c) => c.name === 'second-brain').detail, 'bật — http://127.0.0.1:1933');
+});

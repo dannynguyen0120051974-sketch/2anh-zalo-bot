@@ -96,3 +96,13 @@ test('ghi qua symlink: sửa tệp đích, symlink vẫn là symlink', (t) => {
   assert.ok(lstatSync(link).isSymbolicLink());
   assert.equal(readFileSync(real, 'utf8'), 'X=1\nZALO_ALLOWED_USERS=2234567890123456\n');
 });
+
+test('khoá chỉ đọc (giai đoạn 7): đọc được, không bao giờ ghi được', (t) => {
+  const f = join(tmp(t), '.env');
+  writeFileSync(f, 'ZALO_KB_DIR=D:/Kho tai lieu\nZALO_SECOND_BRAIN_URL=http://127.0.0.1:1933\n');
+  assert.equal(readEnvKey(f, 'ZALO_KB_DIR'), 'D:/Kho tai lieu');
+  assert.equal(readEnvKey(f, 'ZALO_SECOND_BRAIN_URL'), 'http://127.0.0.1:1933');
+  assert.equal(readEnvKey(f, 'ZALO_PEOPLE_FILE'), null);
+  assert.throws(() => writeEnvKey(f, 'ZALO_KB_DIR', '1'), /không nằm trong danh sách/);
+  assert.throws(() => readEnvKey(f, 'TELEGRAM_BOT_TOKEN'), /không nằm trong danh sách/);
+});

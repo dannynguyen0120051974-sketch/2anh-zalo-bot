@@ -420,13 +420,15 @@ test('Nhật ký: câu tự nhiên từ what/who/where, nhóm theo ngày, lọc 
 
 test('thanh điều hướng điện thoại: 4 mục chính + "Thêm" theo vai trò', async () => {
   const { navSplit } = await import('./views/shell.js');
-  const admin = navSplit('admin', '/audit');
+  const admin = navSplit('admin', '/audit', { secondBrain: true });
   assert.deepEqual(admin.primary.map((i) => [i.path, i.short]), [['/', 'Tổng quan'], ['/chats', 'Phiên chat'], ['/zalo', 'Zalo'], ['/permissions', 'Phân quyền']]);
-  assert.deepEqual(admin.more.map((i) => i.path), ['/audit', '/brand', '/health', '/users', '/owners', '/alerts', '/profile']);
+  assert.deepEqual(admin.more.map((i) => i.path), ['/contacts', '/schedules', '/memory', '/kb', '/insight', '/second-brain',
+    '/audit', '/brand', '/health', '/users', '/owners', '/alerts', '/profile']);
   assert.equal(admin.activeMore.text, 'Nhật ký');
-  const owner = navSplit('owner', '/');
+  const owner = navSplit('owner', '/', { secondBrain: true });
   assert.equal(owner.primary.length, 4);
-  assert.deepEqual(owner.more.map((i) => i.path), ['/audit', '/brand', '/health', '/profile'], 'Chủ bot không thấy mục Quản trị');
+  assert.deepEqual(owner.more.map((i) => i.path), ['/contacts', '/schedules', '/memory', '/kb', '/insight', '/audit', '/brand', '/health', '/profile'],
+    'Chủ bot không thấy mục Quản trị (kể cả Second brain)');
   assert.equal(owner.activeMore, null);
   assert.equal(navSplit('owner', '/users').activeMore, null);
 });
@@ -732,4 +734,124 @@ test('Phiên chat: link ngoài (tệp, video, ảnh gốc, link) luôn mở th�
       assert.match(a, /rel="noopener noreferrer"/, `${f}: ${a}`);
     }
   }
+});
+
+// --- Giai đoạn 7 (spec §18): thanh bên theo dashboard mẫu, đường dẫn vị trí, dòng phụ thương hiệu ---
+test('thanh bên: 5 nhóm theo mẫu; Second brain chỉ Quản trị và chỉ khi máy chủ bật; nhóm rỗng ẩn', async () => {
+  const { visibleGroups } = await import('./views/shell.js');
+  const admin = visibleGroups('admin', { secondBrain: true });
+  assert.deepEqual(admin.map((g) => g.label), ['Tổng quan', 'Hội thoại', 'Dữ liệu', 'Hệ thống', 'Quản trị']);
+  assert.deepEqual(admin[1].items.map((i) => i.text), ['Phiên chat', 'Liên hệ', 'Phân quyền Bot', 'Lịch hẹn']);
+  assert.deepEqual(admin[2].items.map((i) => i.text), ['Trí nhớ', 'Kho tri thức', 'Insight nhóm', 'Second brain']);
+  const owner = visibleGroups('owner', { secondBrain: true });
+  assert.deepEqual(owner.map((g) => g.label), ['Tổng quan', 'Hội thoại', 'Dữ liệu', 'Hệ thống']);
+  assert.ok(!owner.flatMap((g) => g.items).some((i) => i.admin), 'Chủ bot không thấy mục admin nào');
+  assert.ok(!visibleGroups('admin', {}).flatMap((g) => g.items).some((i) => i.path === '/second-brain'), 'tính năng tắt (Windows / chưa đặt ZALO_SECOND_BRAIN_URL) → ẩn');
+});
+
+test('đường dẫn vị trí: "Nhóm / Trang"; Tổng quan và trang lạ không có; Tài khoản của tôi một cấp', async () => {
+  const { crumbsFor } = await import('./views/shell.js');
+  assert.deepEqual(crumbsFor('/brand'), ['Hệ thống', 'Thương hiệu']);
+  assert.deepEqual(crumbsFor('/kb'), ['Dữ liệu', 'Kho tri thức']);
+  assert.deepEqual(crumbsFor('/users'), ['Quản trị', 'Người dùng']);
+  assert.deepEqual(crumbsFor('/'), []);
+  assert.deepEqual(crumbsFor('/khong-co'), []);
+  assert.deepEqual(crumbsFor('/profile'), ['Tài khoản của tôi']);
+});
+
+test('menu "Thêm" trên điện thoại chia theo nhóm, giữ thứ tự thanh bên', async () => {
+  const { navSplit, moreSections } = await import('./views/shell.js');
+  const secs = moreSections(navSplit('owner', '/').more);
+  assert.deepEqual(secs.map((s) => s.label), ['Hội thoại', 'Dữ liệu', 'Hệ thống', 'Tài khoản']);
+  assert.deepEqual(secs[0].items.map((i) => i.path), ['/contacts', '/schedules']);
+});
+
+test('mọi trang trong thanh bên đều có route; mục/nhóm Quản trị thì route cũng chỉ Quản trị', async () => {
+  const { GROUPS } = await import('./views/shell.js');
+  const src = readFileSync(join(root, 'views', 'shell.js'), 'utf8');
+  const routes = new Map([...src.matchAll(/'(\/[^']*)': \{ view: \w+(, admin: true)? \}/g)].map((m) => [m[1], Boolean(m[2])]));
+  for (const g of GROUPS) {
+    for (const it of g.items) {
+      assert.ok(routes.has(it.path), it.path);
+      assert.equal(routes.get(it.path), Boolean(g.admin || it.admin), it.path);
+    }
+  }
+});
+
+test('Liên hệ: nhãn nguồn theo thứ tự chủ nhân → bạn bè → nhắn riêng → hồ sơ; bộ lọc dùng nút chip', async () => {
+  const { contactBadges, KINDS } = await import('./views/contacts.js');
+  assert.deepEqual(contactBadges({ owner: true, friend: true, lastDmAt: 5, profile: { name: 'x' } }), ['Chủ nhân', 'Bạn bè', 'Đã nhắn riêng', 'Có hồ sơ']);
+  assert.deepEqual(contactBadges({ owner: false, friend: false, lastDmAt: null, profile: null }), []);
+  assert.deepEqual(KINDS.map((k) => k.value), ['all', 'friend', 'dm', 'profile']);
+  assert.match(readFileSync(join(root, 'views', 'contacts.js'), 'utf8'), /class="btn btn-secondary btn-sm chip"/);
+});
+
+test('Trí nhớ: bản nháp hồ sơ luôn có dòng trống, thân gửi bỏ dòng trống; chữ dung lượng bộ nhớ', async () => {
+  const { personDraft, personPayload, usageText } = await import('./views/memory.js');
+  const d = personDraft({ name: 'Lan', note: '', fields: [{ key: 'môn', value: 'Hoá' }] });
+  assert.deepEqual(d.fields, [{ key: 'môn', value: 'Hoá' }, { key: '', value: '' }]);
+  assert.deepEqual(personPayload(d), { name: 'Lan', note: '', fields: [{ key: 'môn', value: 'Hoá' }] });
+  assert.equal(personPayload(d, 1234).updatedAt, 1234, 'gửi mốc sửa khách đã thấy');
+  assert.equal(personPayload(d, null).updatedAt, null);
+  assert.equal(usageText(1100, 2200), '1.100/2.200 ký tự (50 %)');
+  assert.equal(usageText(3000, 2200), '3.000/2.200 ký tự (100 %)');
+  const src = readFileSync(join(root, 'views', 'memory.js'), 'utf8');
+  assert.match(src, /me\?\.role === 'admin' \? html`<\$\{AgentMemory\}/, 'bộ nhớ trợ lý chỉ hiện cho Quản trị');
+  assert.match(src, /err\.status === 409\) onStale/, 'gặp 409 thì tải lại danh sách');
+});
+
+test('Lịch hẹn: trạng thái việc hẹn giờ, lọc không dấu, nhãn lặp lại của lời nhắc', async () => {
+  const { jobState, filterJobs, REPEAT_LABELS } = await import('./views/schedules.js');
+  assert.deepEqual(jobState({ enabled: true, paused: false, lastStatus: 'ok' }), { kind: 'ok', text: 'Đang chạy' });
+  assert.deepEqual(jobState({ enabled: true, paused: true, lastStatus: 'ok' }), { kind: 'warn', text: 'Tạm dừng' });
+  assert.deepEqual(jobState({ enabled: true, paused: false, lastStatus: 'error' }), { kind: 'danger', text: 'Lần trước lỗi' });
+  assert.deepEqual(jobState({ enabled: false }), { kind: 'idle', text: 'Đã tắt' });
+  const jobs = [{ name: 'Nhắc nộp bài', prompt: '', targetName: 'Tổ Hoá', creatorName: 'Lan' }, { name: 'Tin sáng', prompt: '', targetName: 'Anh', creatorName: '' }];
+  assert.deepEqual(filterJobs(jobs, 'to hoa').map((j) => j.name), ['Nhắc nộp bài']);
+  assert.equal(filterJobs(jobs, '').length, 2);
+  assert.equal(REPEAT_LABELS[2], 'Hằng tuần');
+});
+
+test('Kho tri thức: cỡ tệp dễ đọc; kiểm đuôi/cỡ trước khi gửi', async () => {
+  const { fmtSize, uploadProblem } = await import('./views/kb.js');
+  assert.equal(fmtSize(512), '512 B');
+  assert.equal(fmtSize(1536), '1,5 KB');
+  assert.equal(fmtSize(3.4 * 1024 * 1024), '3,4 MB');
+  const types = ['.docx', '.pdf', '.md', '.txt'];
+  assert.equal(uploadProblem({ name: 'a.PDF', size: 10 }, types, 100), '');
+  assert.match(uploadProblem({ name: 'a.exe', size: 10 }, types, 100), /Chỉ nhận/);
+  assert.match(uploadProblem({ name: 'a.pdf', size: 101 }, types, 100), /quá/);
+  assert.match(uploadProblem({ name: 'a.pdf', size: 0 }, types, 100), /rỗng/);
+});
+
+test('Insight nhóm: mức màu bản đồ giờ 0–4, nhãn ngày, thứ bắt đầu từ T2', async () => {
+  const { heatLevel, dayLabel, WEEKDAYS, KIND_LABELS } = await import('./views/insight.js');
+  assert.equal(heatLevel(0, 10), 0);
+  assert.equal(heatLevel(1, 10), 1);
+  assert.equal(heatLevel(5, 10), 2);
+  assert.equal(heatLevel(10, 10), 4);
+  assert.equal(heatLevel(3, 0), 0);
+  assert.equal(dayLabel('2026-10-07'), '07/10');
+  assert.equal(WEEKDAYS[0], 'T2');
+  assert.equal(WEEKDAYS[6], 'CN');
+  assert.deepEqual(Object.keys(KIND_LABELS), ['text', 'photo', 'file', 'link', 'sticker', 'voice', 'other']);
+});
+
+test('Insight: câu trạng thái tóm tắt AI — đang chờ, quá hạn, lỗi của plugin, thành công thì không có câu', async () => {
+  const { summaryStatusText, POLL_MS } = await import('./views/insight-ai.js');
+  assert.match(summaryStatusText({ status: 'pending' }), /Đang nhờ trợ lý/);
+  assert.match(summaryStatusText({ status: 'timeout' }), /3 phút/);
+  assert.equal(summaryStatusText({ status: 'done', result: { ok: false, error: 'Đã hết lượt tóm tắt hôm nay' } }), 'Đã hết lượt tóm tắt hôm nay');
+  assert.equal(summaryStatusText({ status: 'done', result: { ok: true, summary: {} } }), '');
+  assert.equal(POLL_MS, 3000);
+});
+
+test('Second brain: tên ngắn của mục, lên một cấp không vượt khỏi gốc', async () => {
+  const { entryName, parentUri } = await import('./views/second-brain.js');
+  assert.equal(entryName('viking://user/default/memories/knowledge/zalo%20bot.md'), 'zalo bot');
+  assert.equal(entryName('viking://resources/'), 'resources');
+  const root = 'viking://user/default/memories';
+  assert.equal(parentUri(root, root), null);
+  assert.equal(parentUri(`${root}/knowledge/a`, root), `${root}/knowledge`);
+  assert.equal(parentUri(`${root}/knowledge`, root), root);
 });

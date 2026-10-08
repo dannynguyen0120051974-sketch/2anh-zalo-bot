@@ -748,6 +748,29 @@ export async function acquireSendQuota() {
   }
 }
 
+/**
+ * Ghi một dòng audit_log cho thao tác dashboard không phải gửi tin (spec §18.4: đồng ý/từ chối kết bạn, xoá lời
+ * nhắc): `actor_role="dashboard"`, `actor_uid=<tên người dùng dashboard>`, category `admin`. `fn` lỗi → dòng
+ * `failed` rồi ném lại; chưa có kho (bot chưa khởi động xong) → vẫn chạy `fn`, không ghi.
+ */
+export async function auditDashboardAction({ action, actor, threadId, threadType }, fn) {
+  if (!activeStore) return fn();
+  const requestId = `dashboard-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  activeStore.beginAudit({
+    requestId, accountId: activeAccountId, actorUid: String(actor), actorRole: 'dashboard', action, category: 'admin',
+    threadId: String(threadId), threadType: Number(threadType),
+    targetSummary: { commandType: action, threadId: String(threadId), threadType: Number(threadType) },
+  });
+  try {
+    const result = await fn();
+    activeStore.finishAudit(requestId, 'succeeded');
+    return result;
+  } catch (error) {
+    activeStore.finishAudit(requestId, 'failed', { error: 'operation_failed' });
+    throw error;
+  }
+}
+
 export async function sendSystemNotice({
   api, threadId, threadType, text, mentions = null,
   actorUid = 'system', actorRole = 'system', action = 'send_system_notice', remember = true,

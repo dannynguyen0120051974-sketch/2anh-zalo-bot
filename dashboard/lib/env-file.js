@@ -5,9 +5,16 @@ import { parseEnv } from 'node:util';
 import { writeFileAtomic } from './json-store.js';
 
 export const EDITABLE_KEYS = new Set(['ZALO_ALLOWED_USERS']);
+// Chỉ đọc, chỉ dùng phía máy chủ (giai đoạn 7): nơi đặt sổ người quen/kho tài liệu, địa chỉ bộ nhớ dài hạn.
+// OPENVIKING_API_KEY là khoá bí mật — dashboard dùng để gọi OpenViking, KHÔNG BAO GIỜ trả ra trình duyệt.
+export const READ_ONLY_KEYS = new Set([
+  'ZALO_PEOPLE_FILE', 'ZALO_KB_DIR', 'ZALO_KB_PUBLIC_DIRS',
+  'ZALO_SECOND_BRAIN_URL', 'OPENVIKING_ACCOUNT', 'OPENVIKING_USER', 'OPENVIKING_API_KEY',
+]);
 
-function allowed(key) {
-  if (!EDITABLE_KEYS.has(key)) throw new Error(`env-file: khoá ${key} không nằm trong danh sách được phép`);
+function allowed(key, { write = false } = {}) {
+  if (EDITABLE_KEYS.has(key) || (!write && READ_ONLY_KEYS.has(key))) return;
+  throw new Error(`env-file: khoá ${key} không nằm trong danh sách được phép`);
 }
 
 const lineOf = (key) => new RegExp(`^(\\s*(?:export\\s+)?)${key}\\s*=.*$`);
@@ -27,7 +34,7 @@ export function readEnvKey(file, key) {
  * `value` chỉ được chứa chữ số và dấu phẩy — không bao giờ chèn được dòng hay khoá khác.
  */
 export function writeEnvKey(link, key, value) {
-  allowed(key);
+  allowed(key, { write: true });
   if (!/^[0-9,]*$/.test(value)) throw new Error('env-file: giá trị chỉ được gồm chữ số và dấu phẩy');
   // .env là symlink thì ghi vào tệp đích, không thay symlink bằng tệp thường.
   let file = link;

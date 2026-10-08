@@ -6,6 +6,8 @@ import { readJson, writeFileAtomic, writeJsonAtomic } from './json-store.js';
 
 export const DEFAULT_NAME = 'Dashboard Zalo';
 export const MAX_NAME = 40;
+export const DEFAULT_SUBTITLE = 'Không gian làm việc';
+export const MAX_SUBTITLE = 40;
 export const LOGO_MAX_SIDE = 256;
 export const LOGO_MAX_BYTES = 400 * 1024;
 
@@ -27,7 +29,12 @@ export function parseBrand(body) {
     throw new InvalidBrand('Màu này quá nhạt, chữ trắng trên nút sẽ khó đọc — chọn màu đậm hơn.');
   }
   if (typeof b.poweredBy !== 'boolean') throw new InvalidBrand('Lựa chọn "Vận hành bởi 2Anh AI" không hợp lệ — tải lại trang rồi thử lại.');
-  return { name, color, poweredBy: b.poweredBy };
+  // Dòng phụ dưới tên (giai đoạn 7): bản giao diện cũ không gửi → giữ mặc định.
+  if (b.subtitle !== undefined && typeof b.subtitle !== 'string') throw new InvalidBrand('Dòng phụ không hợp lệ — nhập lại.');
+  // eslint-disable-next-line no-control-regex
+  const subtitle = String(b.subtitle ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim() || DEFAULT_SUBTITLE;
+  if ([...subtitle].length > MAX_SUBTITLE) throw new InvalidBrand(`Dòng phụ tối đa ${MAX_SUBTITLE} ký tự — rút gọn rồi lưu lại.`);
+  return { name, subtitle, color, poweredBy: b.poweredBy };
 }
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -61,7 +68,7 @@ export function brandCss(color) {
 }
 
 export function createBrandStore({ file, logoFile, now = Date.now }) {
-  const DEFAULTS = { name: DEFAULT_NAME, color: DEFAULT_COLOR, poweredBy: true, logoAt: null };
+  const DEFAULTS = { name: DEFAULT_NAME, subtitle: DEFAULT_SUBTITLE, color: DEFAULT_COLOR, poweredBy: true, logoAt: null };
   function read() {
     const raw = readJson(file, {});
     const out = { ...DEFAULTS };
@@ -74,7 +81,7 @@ export function createBrandStore({ file, logoFile, now = Date.now }) {
     /** Phần công khai — đúng thứ trang đăng nhập cần, không hơn. */
     get() {
       const b = read();
-      return { name: b.name, color: b.color, poweredBy: b.poweredBy, logoUrl: b.logoAt ? `/brand/logo.png?v=${b.logoAt}` : null };
+      return { name: b.name, subtitle: b.subtitle, color: b.color, poweredBy: b.poweredBy, logoUrl: b.logoAt ? `/brand/logo.png?v=${b.logoAt}` : null };
     },
     set(body) {
       const b = parseBrand(body);

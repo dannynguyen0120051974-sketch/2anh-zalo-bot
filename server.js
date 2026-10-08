@@ -9,13 +9,14 @@ import { loadRepoEnv, loadHermesEnv } from './scripts/setup-env.js';
 import { Zalo } from 'zca-js';
 import { tryReconnect, saveSession, clearSession, fetchProfile, zaloOptions } from './auth.js';
 import { setupBotListener } from './bot-handler.js';
-import { startAutomaticBackfill, startHermesBridge, stopHermesBridge, isHermesAttached, sendSystemNotice } from './hermes-bridge.js';
+import { startAutomaticBackfill, startHermesBridge, stopHermesBridge, isHermesAttached, sendSystemNotice, auditDashboardAction, acquireSendQuota } from './hermes-bridge.js';
 import { openZaloStore } from './zalo-store.js';
 import { createRuntimeHealth } from './runtime-health.js';
 import { importLegacyHermesHistory } from './legacy-history-import.js';
 import { installFileLog } from './file-log.js';
 import { createQrLogin } from './qr-login.js';
 import { createControlRouter } from './control-api.js';
+import { createZaloDirectory } from './zalo-directory.js';
 import { createGroupDirectory } from './group-directory.js';
 import { createDmRules, permissionsFileFromEnv } from './dm-rules.js';
 
@@ -89,6 +90,8 @@ Mã có hiệu lực 5 phút. Đừng đưa mã này cho ai.`,
     });
   },
   groups: () => groupDirectory.list(),
+  // `api` đổi khi đăng nhập lại — đọc qua hàm, không chụp giá trị lúc khởi động.
+  directory: createZaloDirectory({ getApi: () => api, acquire: acquireSendQuota, audit: auditDashboardAction }),
 }));
 app.use(express.static(join(__dirname, 'public')));
 app.use('/api', (req, res, next) => {

@@ -14,7 +14,10 @@ import { createStoreReader } from './lib/store-reader.js';
 import { createThreadNames } from './lib/thread-names.js';
 import { createPermissionsStore } from './lib/permissions.js';
 import { createBrandStore } from './lib/brand.js';
+import { createPeopleStore } from './lib/people-store.js';
+import { createHermesMemory } from './lib/hermes-memory.js';
 import { createOwnersStore } from './lib/owners.js';
+import { createInsightAi } from './lib/insight-ai.js';
 
 const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
   let c = n;
@@ -57,6 +60,11 @@ export function fakeSidecar(overrides = {}) {
     logout: async () => { calls.push('logout'); },
     send: async (m) => { calls.push(['send', m]); return { msgId: '999' }; },
     groups: async () => [{ id: '200', name: 'Tổ Hoá', members: 12 }],
+    friends: async () => [{ uid: '1111111111111111111', name: 'Lan', zaloName: 'lan' }],
+    friendRequests: async () => [{ uid: '2222222222222222222', name: 'Minh', message: 'Chào bot', at: 1 }],
+    answerFriendRequest: async (m) => { calls.push(['answer', m]); return {}; },
+    reminders: async (m) => { calls.push(['reminders', m]); return [{ id: '77', title: 'Họp tổ', startAt: 1, repeat: 0, creatorUid: 'bot', mine: true, createdAt: 1 }]; },
+    removeReminder: async (m) => { calls.push(['remove-reminder', m]); return {}; },
     ...overrides,
   };
 }
@@ -116,6 +124,9 @@ export function makeDeps(t, overrides = {}) {
     brand: createBrandStore({ file: join(dir, 'brand.json'), logoFile: join(dir, 'brand', 'logo.png') }),
     health: fakeHealth(),
     studioUsageFile: join(dir, 'zalo', 'studio-usage.json'),
+    people: createPeopleStore({ file: join(dir, 'zalo', 'people.json') }),
+    agentMemory: createHermesMemory({ hermesHome: dir, configFile: join(dir, 'config.yaml') }),
+    insightAi: createInsightAi({ dir: join(dir, 'zalo', 'insight') }),
     publicDir: join(dir, 'public'),
     dir,
     ...overrides,

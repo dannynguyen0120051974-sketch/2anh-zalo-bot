@@ -2,6 +2,23 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [1.26.0] — 2026-10-08
+
+### Thêm
+
+- **Thanh bên theo dashboard mẫu**: Tổng quan · Hội thoại · Dữ liệu · Hệ thống · Quản trị; đường dẫn vị trí trên đầu mỗi trang; dòng phụ dưới tên thương hiệu (sửa ở Thương hiệu). Menu "Thêm" trên điện thoại chia theo nhóm.
+- **Liên hệ**: bạn bè của bot, người đã nhắn riêng, người có hồ sơ; lời mời kết bạn đang chờ — Đồng ý / Từ chối ngay trên dashboard.
+- **Lịch hẹn**: việc hẹn giờ của trợ lý gửi về Zalo (hẹn giờ nhóm và việc của chủ nhân) — tạm dừng, chạy lại, xoá; lời nhắc Zalo theo từng hội thoại — xem, xoá.
+- **Trí nhớ**: sửa/xoá hồ sơ trong sổ người quen; Quản trị sửa/xoá từng mục bộ nhớ của trợ lý.
+- **Kho tri thức**: danh sách tài liệu bot đọc được; tải lên .docx/.pdf/.md/.txt (≤ 10 MB) vào thư mục riêng; xoá tệp đã tải lên.
+- **Insight nhóm**: tin theo ngày, người nhắn nhiều, giờ sôi nổi, loại tin; nút **Tóm tắt chủ đề** bằng AI (giới hạn lượt/ngày, `ZALO_INSIGHT_DAILY`, mặc định 10).
+- **Second brain** (Quản trị, chỉ máy chủ Linux): tìm, xem và thêm ghi chú vào OpenViking trên cùng máy. Tắt mặc định; bật bằng `ZALO_SECOND_BRAIN_URL=http://127.0.0.1:1933` trong `.env` của Hermes. Máy Windows luôn tắt. Bộ cài gợi ý cách bật khi thấy OpenViking; `doctor` có dòng `second-brain`.
+- Kết nối Zalo: `/control/friends`, `/control/friend-requests[/answer]`, `/control/reminders[/remove]` — có audit_log.
+
+### An toàn
+
+- Ghi people.json, MEMORY.md/USER.md: tệp tạm riêng, `.bak`, từ chối khi bot vừa ghi (409). Tải lên kiểm nội dung khớp đuôi, chỉ xoá trong `tai-len-dashboard`. OpenViking chỉ địa chỉ loopback, chỉ đọc trong 3 gốc, chỉ ghi mới. Tóm tắt AI không công cụ, chỉ chạy khi bấm.
+
 ## [1.25.1] — 2026-10-08
 
 ### Sửa

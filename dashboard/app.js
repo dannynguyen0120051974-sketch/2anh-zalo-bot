@@ -7,12 +7,19 @@ import { zaloRoutes } from './routes/zalo.js';
 import { chatRoutes } from './routes/chats.js';
 import { mediaRoutes } from './routes/media.js';
 import { auditRoutes } from './routes/audit.js';
+import { secondBrainRoutes } from './routes/second-brain.js';
 import { telegramRoutes } from './routes/telegram.js';
 import { adminRoutes } from './routes/admin.js';
 import { permissionRoutes } from './routes/permissions.js';
 import { brandRoutes } from './routes/brand.js';
 import { healthRoutes } from './routes/health.js';
 import { studioRoutes } from './routes/studio.js';
+import { peopleRoutes } from './routes/people.js';
+import { contactRoutes } from './routes/contacts.js';
+import { agentMemoryRoutes } from './routes/agent-memory.js';
+import { scheduleRoutes } from './routes/schedules.js';
+import { kbRoutes } from './routes/kb.js';
+import { insightRoutes } from './routes/insight.js';
 
 export function createDashboardApp(deps) {
   const app = express();
@@ -32,6 +39,13 @@ export function createDashboardApp(deps) {
   if (deps.linker) app.use('/api', telegramRoutes(deps));
   if (deps.health) app.use('/api', healthRoutes(deps));
   if (deps.studioUsageFile) app.use('/api', studioRoutes(deps));
+  if (deps.people) app.use('/api', peopleRoutes(deps));
+  app.use('/api', contactRoutes(deps));
+  if (deps.agentMemory) app.use('/api', agentMemoryRoutes(deps));
+  if (deps.schedules) app.use('/api', scheduleRoutes(deps));
+  if (deps.kb) app.use('/api', kbRoutes(deps));
+  app.use('/api', insightRoutes(deps));
+  if (deps.secondBrain) app.use('/api', secondBrainRoutes(deps));
   app.use('/api', adminRoutes(deps));
   // Gắn ở gốc: router này có cả /api/brand lẫn /brand.css, /brand/logo.png (công khai, trước giao diện tĩnh).
   app.use(brandRoutes(deps));

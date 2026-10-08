@@ -9,7 +9,7 @@ test('GET /api/brand công khai, chỉ có tên, màu, logo, dòng vận hành v
   const deps = makeDeps(t); const { call } = await startApp(t, deps);
   const r = await call('/api/brand');
   assert.equal(r.status, 200);
-  assert.deepEqual(Object.keys(r.json).sort(), ['color', 'logoUrl', 'name', 'ok', 'poweredBy', 'suggestions']);
+  assert.deepEqual(Object.keys(r.json).sort(), ['color', 'logoUrl', 'name', 'ok', 'poweredBy', 'subtitle', 'suggestions']);
   assert.equal(r.json.name, 'Dashboard Zalo');
   assert.equal(r.json.suggestions.length, 6);
   assert.equal(r.headers.get('cache-control'), 'no-cache');

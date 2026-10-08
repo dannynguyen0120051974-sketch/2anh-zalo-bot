@@ -17,6 +17,8 @@ try {
     console.log(`[PASS] dashboard-service - ${result.dashboard.installed ? '' : 'chưa tự chạy: '}${result.dashboard.detail}`);
     if (result.setupLink) console.log(`\nMở dashboard: ${result.setupLink}`);
     if (result.caddy) console.log(`\nThêm khối này vào Caddyfile rồi chạy "systemctl reload caddy":\n${result.caddy}`);
+    // Second brain (spec §18.5.4): chỉ in cách bật khi thấy OpenViking trên Linux — không bao giờ tự đặt biến.
+    if (result.secondBrain) console.log(`\n${result.secondBrain}`);
   }
   console.log('\nCài đặt hoàn tất. Chạy `npm start`, mở http://127.0.0.1:3872 để quét QR, rồi xác lập UID chủ nhân theo README.');
   console.log('Sau khi đăng nhập, khởi động hoặc khởi động lại Hermes gateway theo cách máy này đang quản lý dịch vụ.');

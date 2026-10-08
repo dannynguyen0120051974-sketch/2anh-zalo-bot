@@ -30,7 +30,9 @@ test('màu: chuẩn hoá mã, tương phản chữ trắng, 6 gợi ý đều đ
 });
 
 test('parseBrand: chuẩn hoá tên, từ chối màu nhạt, tên rỗng/dài, sai kiểu', () => {
-  assert.deepEqual(parseBrand({ name: '  Trường\nCNT  ', color: '1D4ED8', poweredBy: false }), { name: 'Trường CNT', color: '#1d4ed8', poweredBy: false });
+  assert.deepEqual(parseBrand({ name: '  Trường\nCNT  ', color: '1D4ED8', poweredBy: false }), { name: 'Trường CNT', subtitle: 'Không gian làm việc', color: '#1d4ed8', poweredBy: false });
+  assert.equal(parseBrand({ name: 'A', subtitle: '  THPT\nCNT ', color: '#1d4ed8', poweredBy: true }).subtitle, 'THPT CNT');
+  assert.equal(parseBrand({ name: 'A', subtitle: '   ', color: '#1d4ed8', poweredBy: true }).subtitle, 'Không gian làm việc', 'để trống = mặc định');
   const bad = [
     [{ name: '', color: '#1d4ed8', poweredBy: true }, /trống/],
     [{ name: 'x'.repeat(41), color: '#1d4ed8', poweredBy: true }, /40 ký tự/],
@@ -39,6 +41,8 @@ test('parseBrand: chuẩn hoá tên, từ chối màu nhạt, tên rỗng/dài, 
     [{ name: 'A', color: '#1d4ed8', poweredBy: 'true' }, /Vận hành bởi/],
     [{ name: 5, color: '#1d4ed8', poweredBy: true }, /Tên/],
     [null, /Tên/],
+    [{ name: 'A', subtitle: 'x'.repeat(41), color: '#1d4ed8', poweredBy: true }, /Dòng phụ tối đa 40/],
+    [{ name: 'A', subtitle: 7, color: '#1d4ed8', poweredBy: true }, /Dòng phụ/],
   ];
   for (const [body, re] of bad) assert.throws(() => parseBrand(body), (e) => e instanceof InvalidBrand && e.statusCode === 400 && re.test(e.message));
   assert.equal(parseBrand({ name: '🙂'.repeat(40), color: '#1d4ed8', poweredBy: true }).name.length, 80, 'đếm theo ký tự, không theo đơn vị UTF-16');
@@ -84,7 +88,7 @@ test('brandCss: màu mặc định không ghi đè; màu khác chỉ có biến 
 
 test('kho: mặc định → lưu → logo → gỡ logo → khôi phục; tệp quyền 600; tệp sửa tay sai thì về mặc định', (t) => {
   const { d, s } = store(t);
-  assert.deepEqual(s.get(), { name: 'Dashboard Zalo', color: '#0f766e', poweredBy: true, logoUrl: null });
+  assert.deepEqual(s.get(), { name: 'Dashboard Zalo', subtitle: 'Không gian làm việc', color: '#0f766e', poweredBy: true, logoUrl: null });
   assert.equal(s.logo(), null);
   s.set({ name: 'Trường CNT', color: '#1d4ed8', poweredBy: false });
   const withLogo = s.setLogo(dataUrl(pngOf(64, 64)));
@@ -102,8 +106,8 @@ test('kho: mặc định → lưu → logo → gỡ logo → khôi phục; tệp
   assert.equal(s.removeLogo().logoUrl, null);
   assert.equal(existsSync(join(d, 'brand', 'logo.png')), false);
   s.setLogo(dataUrl(pngOf(8, 8)));
-  assert.deepEqual(s.reset(), { name: 'Dashboard Zalo', color: '#0f766e', poweredBy: true, logoUrl: null });
+  assert.deepEqual(s.reset(), { name: 'Dashboard Zalo', subtitle: 'Không gian làm việc', color: '#0f766e', poweredBy: true, logoUrl: null });
   assert.equal(existsSync(join(d, 'brand', 'logo.png')), false);
   writeFileSync(join(d, 'brand.json'), JSON.stringify({ name: 'X', color: '#ffffff', poweredBy: true, logoAt: 5 }));
-  assert.deepEqual(s.get(), { name: 'Dashboard Zalo', color: '#0f766e', poweredBy: true, logoUrl: null }, 'màu nhạt sửa tay + logo đã mất');
+  assert.deepEqual(s.get(), { name: 'Dashboard Zalo', subtitle: 'Không gian làm việc', color: '#0f766e', poweredBy: true, logoUrl: null }, 'màu nhạt sửa tay + logo đã mất');
 });

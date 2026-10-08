@@ -32,6 +32,12 @@ def register(ctx) -> None:
         publish_video_policy()
     except Exception:  # cố hết sức — không được làm hỏng việc nạp plugin
         logger.warning("[zalo] không ghi được studio-policy.json lúc nạp plugin", exc_info=True)
+    # Insight nhóm (spec §18.5): luồng nền nhận yêu cầu tóm tắt từ dashboard qua tệp, gọi ctx.llm không công cụ.
+    try:
+        from .insight_ai import start_insight_worker
+        start_insight_worker(lambda: getattr(ctx, "llm", None))
+    except Exception:  # cố hết sức — dashboard sẽ báo "trợ lý chưa trả lời"
+        logger.warning("[zalo] không bật được luồng tóm tắt nhóm", exc_info=True)
     # Rào chắn tại điểm thực thi: Hermes cấp lại công cụ đã ghim của phiên nhóm
     # cho mọi lượt, kể cả lượt của người ngoài. Xem guard_member_tool_call().
     ctx.register_hook("pre_tool_call", guard_member_tool_call)

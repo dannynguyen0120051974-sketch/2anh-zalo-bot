@@ -105,3 +105,46 @@ test('lỗi bên trong luôn 502 dù có statusCode, và POST thiếu token vẫ
   assert.equal((await call('/logout', { method: 'POST', token: null })).status, 401);
   assert.equal((await call('/send', { method: 'POST', token: null, body: {} })).status, 401);
 });
+
+// --- Liên hệ và Lịch hẹn (spec §18.4) ---
+function fakeDirectory() {
+  const calls = [];
+  return {
+    calls,
+    friends: async (o) => { calls.push(['friends', o]); return [{ uid: '1111111111111111111', name: 'Lan', zaloName: 'lan' }]; },
+    friendRequests: async () => [{ uid: '2222222222222222222', name: 'Minh', message: '', at: 1 }],
+    answerFriendRequest: async (m) => { calls.push(['answer', m]); return {}; },
+    reminders: async (m) => { calls.push(['reminders', m]); return []; },
+    removeReminder: async (m) => { calls.push(['remove', m]); return {}; },
+  };
+}
+
+test('liên hệ: bạn bè, lời mời, trả lời lời mời chuyển đúng người làm; không có directory thì 404', async (t) => {
+  const directory = fakeDirectory();
+  const { call } = await serve(t, { directory });
+  assert.equal((await (await call('/friends?fresh=1')).json()).friends[0].name, 'Lan');
+  assert.deepEqual(directory.calls.at(-1), ['friends', { fresh: true }]);
+  assert.equal((await (await call('/friend-requests')).json()).requests.length, 1);
+  const res = await call('/friend-requests/answer', { method: 'POST', body: { uid: '2222222222222222222', accept: true, actor: 'anh' } });
+  assert.equal(res.status, 200);
+  assert.deepEqual(directory.calls.at(-1), ['answer', { uid: '2222222222222222222', accept: true, actor: 'anh' }]);
+  assert.equal((await call('/friend-requests/answer', { method: 'POST', body: { uid: '2222222222222222222', accept: true } })).status, 400, 'thiếu actor');
+  const bare = await serve(t);
+  assert.equal((await bare.call('/friends')).status, 404);
+});
+
+test('lời nhắc: threadType từ chuỗi truy vấn thành số; xoá đòi actor; lỗi kiểm tra thành 400', async (t) => {
+  const directory = fakeDirectory();
+  directory.reminders = async (m) => {
+    directory.calls.push(['reminders', m]);
+    if (m.threadType !== 0 && m.threadType !== 1) throw Object.assign(new Error('threadType phải là 0 hoặc 1'), { validation: true });
+    return [];
+  };
+  const { call } = await serve(t, { directory });
+  assert.equal((await call('/reminders?threadId=55&threadType=1')).status, 200);
+  assert.deepEqual(directory.calls.at(-1), ['reminders', { threadId: '55', threadType: 1 }]);
+  assert.equal((await call('/reminders?threadId=55&threadType=x')).status, 400);
+  assert.equal((await call('/reminders/remove', { method: 'POST', body: { reminderId: '7', threadId: '55', threadType: 1 } })).status, 400);
+  assert.equal((await call('/reminders/remove', { method: 'POST', body: { reminderId: '7', threadId: '55', threadType: 1, actor: 'anh' } })).status, 200);
+  assert.deepEqual(directory.calls.at(-1), ['remove', { reminderId: '7', threadId: '55', threadType: 1, actor: 'anh' }]);
+});

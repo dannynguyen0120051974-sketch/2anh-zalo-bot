@@ -14,6 +14,7 @@ import { loadDashboardConfig } from '../dashboard/lib/config.js';
 import { createUserStore } from '../dashboard/lib/users.js';
 import { issueSetupLink } from '../dashboard/lib/setup-link.js';
 import { readJson } from '../dashboard/lib/json-store.js';
+import { SECOND_BRAIN_KEY, secondBrainStatus } from '../dashboard/lib/second-brain.js';
 
 const PLATFORM_KEY = 'platforms/zalo';
 const TOOLS_KEY = 'zalo-tools';
@@ -388,6 +389,45 @@ function configObject(configPath) {
   try { return parse(readFileSync(configPath, 'utf8')) || {}; } catch { return null; }
 }
 
+/** Giá trị một khoá trong `.env` của Hermes (dòng sau cùng thắng, bỏ nháy); không có → ''. */
+function hermesEnvValue(home, key) {
+  const file = join(home, '.env');
+  if (!existsSync(file)) return '';
+  const lines = readFileSync(file, 'utf8').split(/\r?\n/).filter((l) => new RegExp(`^\\s*(?:export\\s+)?${key}\\s*=`).test(l));
+  if (!lines.length) return '';
+  return lines.at(-1).replace(/^[^=]*=/, '').trim().replace(/^(['"])(.*)\1$/, '$2');
+}
+
+/**
+ * Dòng doctor cho Second brain (spec §18.5.4): bật bằng ZALO_SECOND_BRAIN_URL, chỉ Linux, chỉ loopback.
+ * Chỉ đọc cấu hình — không gọi mạng. Chỉ hỏng khi đã đặt mà địa chỉ không phải loopback (trên Linux).
+ */
+export function secondBrainCheck({ url = '', hostPlatform = platform() } = {}) {
+  const st = secondBrainStatus({ url, platform: hostPlatform });
+  if (st.reason === 'windows') {
+    return { ok: true, detail: url ? 'luôn tắt trên Windows (ZALO_SECOND_BRAIN_URL bị bỏ qua)' : 'luôn tắt trên Windows' };
+  }
+  if (st.reason === 'unset') return { ok: true, detail: `tắt — muốn bật trên VPS: thêm ${SECOND_BRAIN_KEY}=http://127.0.0.1:1933 vào .env của Hermes` };
+  if (st.reason === 'not-loopback') return { ok: false, detail: `${SECOND_BRAIN_KEY} phải là địa chỉ 127.0.0.1/localhost — sửa lại trong .env của Hermes` };
+  return { ok: true, detail: `bật — ${st.base}` };
+}
+
+/**
+ * Bộ cài trên Linux: thấy dịch vụ OpenViking đang chạy mà chưa bật Second brain → in cách bật. KHÔNG tự đặt biến:
+ * kho này có thể chứa ghi nhớ riêng của chủ máy. Windows, đã đặt, hoặc không thấy dịch vụ → null.
+ */
+export function secondBrainHint({ hostPlatform = platform(), url = '', envFile = '.env của Hermes', commandProbe = spawnSync } = {}) {
+  if (hostPlatform !== 'linux' || String(url).trim()) return null;
+  for (const unit of ['hermes-openviking.service', 'openviking.service']) {
+    const probe = commandProbe('systemctl', ['is-active', '--quiet', unit], { encoding: 'utf8' });
+    if (probe?.status === 0) {
+      return `Thấy OpenViking (${unit}) trên máy này. Muốn bật trang Second brain (chỉ Quản trị) thì thêm dòng sau vào ${envFile} `
+        + `rồi khởi động lại dashboard:\n  ${SECOND_BRAIN_KEY}=http://127.0.0.1:1933\nBộ cài không tự bật — kho này có thể chứa ghi nhớ riêng.`;
+    }
+  }
+  return null;
+}
+
 export function doctorHermes({
   sidecarRoot,
   hermesHome,
@@ -447,6 +487,8 @@ export function doctorHermes({
       ? `người trong nhóm gọi được MCP khớp: ${open.join(', ')} (đang cấu hình: ${mcpServers.join(', ')})`
       : `MCP ${mcpServers.join(', ')} chỉ chủ nhân dùng được — muốn mở cho nhóm thì thêm ZALO_PUBLIC_MCP=<tên server> vào .env của Hermes`);
   }
+  const secondBrain = secondBrainCheck({ url: hermesEnvValue(layout.home, SECOND_BRAIN_KEY), hostPlatform });
+  add('second-brain', secondBrain.ok, secondBrain.detail);
   const configuredVieneu = config?.tts?.providers?.[VIENEU_PROVIDER];
   const target = vieneuLayout(layout.home);
   const managedVieneu = config?.tts?.provider === VIENEU_PROVIDER
@@ -567,6 +609,7 @@ export async function installHermes({
   vieneuTts = false,
   noDashboard = false,
   commandProbe = spawnSync,
+  hostPlatform = platform(),
   dashboardInstaller = installDashboardService,
 } = {}) {
   if (Number(process.versions.node.split('.')[0]) < 22) throw new Error('Cần Node.js 22 trở lên');
@@ -603,6 +646,7 @@ export async function installHermes({
     skipPython,
     noDashboard: true,
     commandProbe,
+    hostPlatform,
   });
   if (!diagnosis.ok) throw new Error(`Cài đặt chưa hoàn chỉnh: ${JSON.stringify(diagnosis.checks)}`);
   if (noDashboard) return diagnosis;
@@ -626,7 +670,10 @@ export async function installHermes({
       dashboard.detail = `${dashboard.detail} (không tạo được link thiết lập: ${error.message})`;
     }
   }
-  return { ...diagnosis, dashboard, setupLink, caddy };
+  const secondBrain = secondBrainHint({
+    hostPlatform, url: hermesEnvValue(layout.home, SECOND_BRAIN_KEY), envFile: join(layout.home, '.env'), commandProbe,
+  });
+  return { ...diagnosis, dashboard, setupLink, caddy, secondBrain };
 }
 
 export function uninstallHermes({ hermesHome, noDashboard = false, dashboardUninstaller = uninstallDashboardService } = {}) {
