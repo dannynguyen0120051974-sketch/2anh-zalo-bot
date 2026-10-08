@@ -188,7 +188,7 @@ test('quá 500 nhóm riêng thì từ chối nhóm mới bằng InvalidPermissio
 // --- Nhắn riêng (spec §16) ---
 const P1 = '1234567890123456';
 const P2 = '2234567890123456789';
-const dm8 = (over = {}) => ({ web: true, files: true, voice: true, reminders: true, kb: true, people: true, academic: true, video: true, ...over });
+const dm8 = (over = {}) => ({ web: true, files: true, voice: true, reminders: true, kb: true, people: true, academic: true, video: true, history: true, ...over });
 
 test('nhắn riêng: chưa có mục dm → theo ZALO_DM_POLICY, mọi nút bật; báo Hermes có đang chặn người ngoài không', (t) => {
   const s = setup(t, { dmEnv: () => ({ legacyWho: 'everyone', gatewayOpen: false }) });

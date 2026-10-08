@@ -32,6 +32,8 @@ function fixture(t) {
   const hermesRepo = join(hermesHome, 'hermes-agent');
   mkdirSync(join(sidecar, 'hermes-plugin', 'zalo'), { recursive: true });
   mkdirSync(join(sidecar, 'hermes-plugin', 'zalo_tools'), { recursive: true });
+  mkdirSync(join(sidecar, 'hermes-plugin', 'zalo_memory'), { recursive: true });
+  writeFileSync(join(sidecar, 'hermes-plugin', 'zalo_memory', '__init__.py'), '# zalo_memory\n');
   mkdirSync(join(sidecar, 'tts'), { recursive: true });
   writeFileSync(join(sidecar, 'server.js'), '// fixture\n');
   writeFileSync(join(sidecar, '.env.example'), 'ZALO_BRIDGE_PORT=3873\n');
@@ -459,4 +461,33 @@ test('Second brain: doctor đọc ZALO_SECOND_BRAIN_URL trong .env của Hermes;
   writeFileSync(envFile, 'ZALO_SECOND_BRAIN_URL=http://127.0.0.1:1933\n');
   const good = doctorHermes({ sidecarRoot: fx.sidecar, hermesHome: fx.hermesHome, skipPython: true, noDashboard: true, hostPlatform: 'linux' });
   assert.equal(good.checks.find((c) => c.name === 'second-brain').detail, 'bật — http://127.0.0.1:1933');
+});
+
+// --- Trí nhớ dài hạn (spec §19.10): bộ cài chép plugin nhưng không bao giờ tự bật ---
+test('trí nhớ dài hạn: cài chép plugin vào plugins/memory, không đổi memory.provider; doctor báo tắt/bật/hỏng; gỡ cài xoá plugin', async (t) => {
+  const fx = fixture(t);
+  await installHermes({ sidecarRoot: fx.sidecar, hermesHome: fx.hermesHome, skipPython: true });
+  const plugin = join(fx.hermesRepo, 'plugins', 'memory', 'zalo_memory', '__init__.py');
+  assert.equal(existsSync(plugin), true);
+  assert.doesNotMatch(readFileSync(join(fx.hermesHome, 'config.yaml'), 'utf8'), /provider:\s*zalo_memory/);
+  const doctor = (platform) => doctorHermes({ sidecarRoot: fx.sidecar, hermesHome: fx.hermesHome, skipPython: true, noDashboard: true, hostPlatform: platform })
+    .checks.find((c) => c.name === 'long-term-memory');
+  assert.match(doctor('linux').detail, /^tắt \(mặc định\)/);
+  writeFileSync(join(fx.hermesHome, 'config.yaml'), `${readFileSync(join(fx.hermesHome, 'config.yaml'), 'utf8')}memory:\n  provider: zalo_memory\n`);
+  assert.deepEqual(doctor('linux'), { name: 'long-term-memory', ok: true, detail: 'bật — zalo_memory, OpenViking http://127.0.0.1:1933' });
+  assert.match(doctor('win32').detail, /không chạy trên Windows/);
+  writeFileSync(join(fx.hermesHome, '.env'), 'OPENVIKING_ENDPOINT=http://10.0.0.9:1933\n');
+  assert.equal(doctor('linux').ok, false);
+  uninstallHermes({ hermesHome: fx.hermesHome });
+  assert.equal(existsSync(plugin), false);
+});
+
+test('trí nhớ dài hạn: gợi ý bật chỉ in trên Linux có OpenViking và chưa bật — không bao giờ tự bật', async () => {
+  const { memoryHint } = await import('./hermes-install-lib.js');
+  const probe = (active) => (_cmd, args) => ({ status: args.at(-1) === active ? 0 : 3 });
+  assert.match(memoryHint({ hostPlatform: 'linux', provider: '', configFile: '/root/.hermes/config.yaml', commandProbe: probe('hermes-openviking.service') }),
+    /memory\.provider: zalo_memory trong \/root\/\.hermes\/config\.yaml rồi khởi động lại gateway/);
+  assert.equal(memoryHint({ hostPlatform: 'linux', provider: 'zalo_memory', commandProbe: probe('hermes-openviking.service') }), null);
+  assert.equal(memoryHint({ hostPlatform: 'linux', provider: '', commandProbe: probe('khong-co') }), null);
+  assert.equal(memoryHint({ hostPlatform: 'win32', provider: '', commandProbe: () => { throw new Error('không được gọi'); } }), null);
 });

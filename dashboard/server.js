@@ -27,6 +27,7 @@ import { createRestartFlags } from './lib/restart-flags.js';
 import { createBrandStore } from './lib/brand.js';
 import { readEnvKey, SETTINGS_ENV_KEYS } from './lib/env-file.js';
 import { createSecondBrain } from './lib/second-brain.js';
+import { createLearnedMemory, readProvider } from './lib/learned-memory.js';
 import { createPeopleStore } from './lib/people-store.js';
 import { createHermesMemory } from './lib/hermes-memory.js';
 import { createSchedules, hermesBin } from './lib/schedules.js';
@@ -68,10 +69,13 @@ export function buildDeps({ env = process.env, sidecarRoot = join(here, '..'), i
     restartSidecar,
     stateFile: paths.watchdogFile, publicUrl: config.publicUrl, botName: () => botName,
   });
+  const threadNames = createThreadNames({ loadGroups: () => sidecar.groups() });
+  const owners = createOwnersStore({ envFile: paths.hermesEnvFile, sidecarEnvFile: paths.sidecarEnvFile, pendingFile: paths.pendingRestartFile, inheritedValue: inheritedOwners });
+  const people = createPeopleStore({ file: readEnvKey(paths.hermesEnvFile, 'ZALO_PEOPLE_FILE') || paths.peopleFile });
   return {
     paths, config, sidecar, linker,
     store: createStoreReader({ path: paths.sqliteFile }),
-    threadNames: createThreadNames({ loadGroups: () => sidecar.groups() }),
+    threadNames,
     users,
     sessions: createSessionStore(paths.sessionsFile),
     guard: createLoginGuard(),
@@ -94,10 +98,10 @@ export function buildDeps({ env = process.env, sidecarRoot = join(here, '..'), i
     restartAssistant: makeRestartAssistant({ cmd: config.assistantRestartCmd, hermesHome: paths.hermesHome }),
     restartSidecar,
     restartFlags: createRestartFlags({ file: paths.restartFlagsFile }),
-    owners: createOwnersStore({ envFile: paths.hermesEnvFile, sidecarEnvFile: paths.sidecarEnvFile, pendingFile: paths.pendingRestartFile, inheritedValue: inheritedOwners }),
+    owners,
     brand: createBrandStore({ file: paths.brandFile, logoFile: paths.brandLogoFile }),
     // Cùng tệp plugin đọc: ZALO_PEOPLE_FILE trong .env của Hermes (nếu đặt) thắng đường mặc định.
-    people: createPeopleStore({ file: readEnvKey(paths.hermesEnvFile, 'ZALO_PEOPLE_FILE') || paths.peopleFile }),
+    people,
     agentMemory: createHermesMemory({ hermesHome: paths.hermesHome, configFile: paths.hermesConfigFile }),
     schedules: createSchedules({ hermesHome: paths.hermesHome, bin: hermesBin({ hermesHome: paths.hermesHome, env }) }),
     // Đọc lại .env mỗi lần: người cài đặt đổi ZALO_KB_DIR thì không cần khởi động lại dashboard.
@@ -117,6 +121,16 @@ export function buildDeps({ env = process.env, sidecarRoot = join(here, '..'), i
       url: readEnvKey(paths.hermesEnvFile, 'ZALO_SECOND_BRAIN_URL'), account: readEnvKey(paths.hermesEnvFile, 'OPENVIKING_ACCOUNT'),
       user: readEnvKey(paths.hermesEnvFile, 'OPENVIKING_USER'), apiKey: readEnvKey(paths.hermesEnvFile, 'OPENVIKING_API_KEY'),
     }) }),
+    // Kho tri thức tự học (spec §19.6, Quản trị + Chủ bot; kho DM chủ nhân chỉ Quản trị): bật khi Hermes dùng memory.provider zalo_memory, OpenViking loopback, không phải Windows.
+    learnedMemory: createLearnedMemory({
+      settings: () => ({ provider: readProvider(paths.hermesConfigFile), endpoint: readEnvKey(paths.hermesEnvFile, 'OPENVIKING_ENDPOINT') }),
+      names: (kind, id) => (kind === 'group' ? threadNames.cached().get(id) : people.list().find((p) => p.uid === id)?.name) || '',
+      owners: () => owners.list(),
+      ownerOverrides: () => owners.overrideUids(),
+      everOwnersFile: paths.everOwnersFile,
+      // Chu kỳ rút trí nhớ: cùng tệp provider zalo_memory đọc nóng.
+      settingsFile: join(paths.hermesHome, 'zalo', 'memory.json'),
+    }),
     studioUsageFile: paths.studioUsageFile,
     studioPolicyFile: paths.studioPolicyFile,
     publicDir: join(here, 'public'),

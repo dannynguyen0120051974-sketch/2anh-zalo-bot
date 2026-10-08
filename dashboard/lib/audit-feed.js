@@ -57,6 +57,12 @@ export const ACTION_LABELS = {
   kb_delete: 'Xoá tài liệu khỏi kho tri thức',
   insight_summary: 'Nhờ AI tóm tắt chủ đề nhóm',
   second_brain_note: 'Thêm ghi chú vào Second brain',
+  // Giai đoạn 8 (spec §19.6)
+  learned_memory_edit: 'Sửa trí nhớ tự học',
+  learned_memory_delete: 'Xoá một mục trí nhớ tự học',
+  learned_memory_forget: 'Xoá toàn bộ trí nhớ tự học của một nhóm/người',
+  learned_memory_settings: 'Đổi chu kỳ rút trí nhớ tự học',
+  learned_memory_extract: 'Rút trí nhớ tự học ngay',
   // Giai đoạn 7B (spec §18.6)
   agent_model: 'Đổi model của trợ lý',
   agent_reasoning: 'Đổi mức suy nghĩ của trợ lý',

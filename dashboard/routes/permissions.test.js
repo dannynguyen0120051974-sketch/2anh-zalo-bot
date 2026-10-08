@@ -121,11 +121,11 @@ test('quá 500 nhóm riêng → 400 có hướng dẫn; nhóm đã có vẫn s�
 
 test('nhắn riêng: Chủ bot lưu được, tệp có mục dm, Nhật ký ghi dòng dễ đọc; 401 khi chưa đăng nhập; 400 kèm bước tiếp theo', async (t) => {
   const { call, owner, disk, deps } = await ready(t);
-  const dm8 = (over = {}) => ({ web: true, files: true, voice: true, reminders: true, kb: true, people: true, academic: true, video: true, ...over });
+  const dm8 = (over = {}) => ({ web: true, files: true, voice: true, reminders: true, kb: true, people: true, academic: true, video: true, history: true, ...over });
   const payload = { who: 'list', features: dm8({ video: false }), people: [{ uid: '1234567890123456', name: 'Cô Lan', features: dm8({ voice: false }) }] };
   assert.equal((await call('/api/permissions/dm', { method: 'PUT', body: payload })).status, 401);
   const first = await call('/api/permissions', { cookie: owner });
-  assert.deepEqual(first.json.dmFeatures.map((f) => f.key), ['web', 'files', 'voice', 'reminders', 'kb', 'people', 'academic', 'video']);
+  assert.deepEqual(first.json.dmFeatures.map((f) => f.key), ['web', 'files', 'voice', 'reminders', 'kb', 'people', 'academic', 'video', 'history']);
   assert.equal(first.json.dm.explicit, false);
   const saved = await call('/api/permissions/dm', { method: 'PUT', cookie: owner, body: payload });
   assert.equal(saved.status, 200);

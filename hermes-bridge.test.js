@@ -1431,3 +1431,46 @@ test('auditDashboardAction: ghi attempted → succeeded/failed với tên ngư�
     stopHermesBridge();
   }
 });
+
+test('history_search chỉ đọc kho của đúng hội thoại, không gọi Zalo, bỏ mã đăng nhập', async (t) => {
+  const store = testStore(t);
+  const base = Date.now() - 60_000;
+  const put = (i, over) => store.upsertMessage('bot', {
+    threadId: 'group-1', threadType: 1, msgId: `m${i}`, cliMsgId: `c${i}`, senderUid: 'u1', senderName: 'Yến',
+    text: `tin ${i}`, msgType: 'webchat', ts: base + i, isSelf: false, ...over,
+  });
+  put(1, { text: 'Kế hoạch tuần.pdf\nhttps://f.zdn.vn/a', msgType: 'share.file' });
+  put(2, { text: 'Mã đăng nhập dashboard: 654321', isSelf: true });
+  store.upsertMessage('bot', { threadId: 'group-2', threadType: 1, msgId: 'x', cliMsgId: 'x', senderUid: 'u9', senderName: 'Khác', text: 'ke hoach nhom khac', msgType: 'webchat', ts: base + 3, isSelf: false });
+  const calls = [];
+  const api = new Proxy({}, { get: (_o, name) => (...args) => { calls.push(name); return {}; } });
+  const server = startHermesBridge({ api, profile: { user_id: 'bot' }, port: 0, store, ownerUids: ['owner'] });
+  await new Promise((resolve) => server.once('listening', resolve));
+  const ws = new WebSocket(`ws://127.0.0.1:${server.address().port}`);
+  try {
+    const hello = onceMessage(ws, (msg) => msg.type === 'hello');
+    await new Promise((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); });
+    await hello;
+    const member = auth('group-1', 1, { actorUid: 'nguoi-trong-nhom' });
+    ws.send(JSON.stringify({ type: 'history_search', reqId: 's1', threadId: 'group-1', threadType: 1, query: 'ke hoach', sinceMs: 0, limit: 10, auth: { ...member, actorRole: 'public' } }));
+    const ack = await onceMessage(ws, (msg) => msg.reqId === 's1');
+    assert.equal(ack.ok, true);
+    assert.deepEqual(ack.result.messages.map((m) => m.msgId), ['m1']);
+    ws.send(JSON.stringify({ type: 'history_search', reqId: 's2', threadId: 'group-1', threadType: 1, query: '', sinceMs: 0, auth: { ...member, actorRole: 'public' } }));
+    const all = await onceMessage(ws, (msg) => msg.reqId === 's2');
+    assert.equal(JSON.stringify(all.result).includes('654321'), false);
+    ws.send(JSON.stringify({ type: 'history_search', reqId: 's3', threadId: 'group-2', threadType: 1, query: 'ke hoach', auth: { ...member, actorRole: 'public' } }));
+    const cross = await onceMessage(ws, (msg) => msg.reqId === 's3');
+    assert.equal(cross.ok, false);
+    assert.equal(cross.errorCode, 'cross_thread_denied');
+    // threadType dạng chuỗi: policy và phần thực thi hiểu cùng một hội thoại (nhóm), không rơi sang nhắn riêng.
+    store.upsertMessage('bot', { threadId: 'group-1', threadType: 0, msgId: 'dm', cliMsgId: 'dm', senderUid: 'u1', senderName: 'Yến', text: 'ke hoach rieng', msgType: 'webchat', ts: base + 4, isSelf: false });
+    ws.send(JSON.stringify({ type: 'history_search', reqId: 's4', threadId: 'group-1', threadType: '1', query: 'ke hoach', auth: { ...member, actorRole: 'public' } }));
+    const str = await onceMessage(ws, (msg) => msg.reqId === 's4');
+    assert.deepEqual(str.result.messages.map((m) => m.msgId), ['m1']);
+    assert.deepEqual(calls.filter((n) => n !== 'then'), [], 'không gọi hàm Zalo nào');
+  } finally {
+    ws.close();
+    stopHermesBridge();
+  }
+});

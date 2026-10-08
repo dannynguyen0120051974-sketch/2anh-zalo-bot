@@ -8,6 +8,7 @@ import { chatRoutes } from './routes/chats.js';
 import { mediaRoutes } from './routes/media.js';
 import { auditRoutes } from './routes/audit.js';
 import { secondBrainRoutes } from './routes/second-brain.js';
+import { learnedMemoryRoutes } from './routes/learned-memory.js';
 import { telegramRoutes } from './routes/telegram.js';
 import { adminRoutes } from './routes/admin.js';
 import { permissionRoutes } from './routes/permissions.js';
@@ -51,6 +52,7 @@ export function createDashboardApp(deps) {
   if (deps.kb) app.use('/api', kbRoutes(deps));
   app.use('/api', insightRoutes(deps));
   if (deps.secondBrain) app.use('/api', secondBrainRoutes(deps));
+  if (deps.learnedMemory) app.use('/api', learnedMemoryRoutes(deps));
   if (deps.agentConfig && deps.soul) app.use('/api', agentRoutes(deps));
   if (deps.toolsManifestFile) app.use('/api', toolRoutes(deps));
   if (deps.agentTrace) app.use('/api', traceRoutes(deps));

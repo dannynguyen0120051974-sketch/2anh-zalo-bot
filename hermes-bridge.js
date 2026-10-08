@@ -862,6 +862,10 @@ async function handleCommand(ws, cmd) {
     return send(ws, { type: 'pong', ts: Date.now() });
   }
 
+  // Chuẩn hoá kiểu hội thoại thành số ngay trước khi xét quyền: policy (so Number) và phần thực thi bên dưới
+  // (so === 1) phải hiểu cùng một hội thoại — "1" dạng chuỗi không được qua policy là nhóm rồi chạy như nhắn riêng.
+  if (cmd.threadType != null) cmd.threadType = Number(cmd.threadType);
+
   const authorization = authorizeBridgeCommand(cmd, { ownerUids: activeOwnerUids, dmRules: activeDmRules });
   const shouldAudit = ['send', 'admin', 'undo'].includes(authorization.category);
   const auditRequestId = String(cmd.reqId || `bridge-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -1034,6 +1038,20 @@ async function handleCommand(ws, cmd) {
         : { messages: [], nextCursor: null };
       if (cmd.reqId) {
         send(ws, { type: 'ack', reqId: cmd.reqId, ok: true, result: { count: page.messages.length, ...page } });
+      }
+      break;
+    }
+
+    case 'history_search': {
+      // Tra lịch sử của thành viên (spec §19.5): chỉ đọc kho SQLite, không gọi Zalo, không backfill.
+      // zalo-policy.js đã ép threadId/threadType trùng hội thoại của lượt này.
+      const found = activeStore
+        ? activeStore.searchHistory(activeAccountId, String(cmd.threadId), threadType === ThreadType.Group ? 1 : 0, {
+          query: cmd.query, sender: cmd.sender, sinceMs: cmd.sinceMs, limit: cmd.limit,
+        })
+        : { messages: [], scanned: 0, truncated: false };
+      if (cmd.reqId) {
+        send(ws, { type: 'ack', reqId: cmd.reqId, ok: true, result: { count: found.messages.length, ...found } });
       }
       break;
     }

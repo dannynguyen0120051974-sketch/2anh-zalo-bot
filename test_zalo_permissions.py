@@ -849,5 +849,77 @@ class ToolsOffTest(PermissionsFile, unittest.TestCase):
         self.assertTrue(all(r["description"] for r in manifest["tools"]))
 
 
+class ThreadHistoryToolTest(PermissionsFile, unittest.IsolatedAsyncioTestCase):
+    """zalo_thread_history (spec §19.5): đúng hội thoại của lượt, chỉ đọc, giới hạn, có nút "history"."""
+
+    def setUp(self):
+        super().setUp()
+        self.calls = []
+        test = self
+
+        class FakeAdapter:
+            async def search_history(self, chat_id, **kw):
+                test.calls.append((chat_id, kw))
+                return {"ok": True, "result": {"messages": [
+                    {"ts": 1_759_000_000_000, "senderName": "Cô Lan", "senderUid": "555", "msgType": "share.file",
+                     "text": "Báo cáo tháng 9.docx\nhttps://f.zdn.vn/abc"},
+                    {"ts": 1_759_000_060_000, "senderName": "Minh", "senderUid": "666", "msgType": "webchat", "text": "ok cô"},
+                ]}}
+
+        zalo_tools.set_active_adapter(FakeAdapter())
+        self.addCleanup(zalo_tools.clear_active_adapter)
+        self.addCleanup(zalo_tools.bind_turn, None)
+        zalo_tools._THREAD_HISTORY_QUOTA.clear()
+
+    def turn(self, *, thread=GROUP_A, owner=False, group=True):
+        zalo_tools.bind_turn({"sender_uid": OWNER if owner else MEMBER, "thread_id": thread,
+                              "is_group": group, "is_owner": owner, "text": ""})
+
+    async def test_reads_only_the_current_thread_even_if_model_names_another(self):
+        self.turn()
+        out = json.loads(await zalo_tools.zalo_thread_history(
+            {"query": "báo cáo", "thread_id": GROUP_B, "days": 999, "limit": 999}))
+        self.assertTrue(out["success"])
+        chat_id, kw = self.calls[0]
+        self.assertEqual(chat_id, GROUP_A)
+        self.assertEqual(kw["limit"], 40)
+        self.assertEqual(kw["metadata"], {"chat_type": "group"})
+        self.assertEqual(out["result"]["days"], 30)
+        text = out["result"]["text"]
+        self.assertIn("Cô Lan: [tệp] Báo cáo tháng 9.docx", text)
+        self.assertNotIn("https://", text)
+        self.assertNotIn("555", text)
+
+    async def test_members_are_rate_limited_owner_is_not(self):
+        self.turn()
+        for _ in range(zalo_tools.THREAD_HISTORY_PER_HOUR):
+            self.assertTrue(json.loads(await zalo_tools.zalo_thread_history({}))["success"])
+        self.assertFalse(json.loads(await zalo_tools.zalo_thread_history({}))["success"])
+        self.turn(owner=True)
+        self.assertTrue(json.loads(await zalo_tools.zalo_thread_history({}))["success"])
+
+    def test_history_switch_blocks_members_and_is_public_and_on_by_default(self):
+        self.assertIn("zalo_thread_history", zalo_tools._PUBLIC_TOOL_NAMES)
+        self.assertEqual(gp.feature_of("zalo_thread_history"), "history")
+        self.turn()
+        self.assertIsNone(zalo_tools.guard_member_tool_call("zalo_thread_history", {}))
+        self.write({"version": 1, "groups": {GROUP_A: {"features": {"history": False}}}})
+        verdict = zalo_tools.guard_member_tool_call("zalo_thread_history", {})
+        self.assertEqual(verdict["action"], "block")
+        self.assertIn("tra lịch sử trò chuyện", verdict["message"])
+        self.turn(owner=True)
+        self.assertIsNone(zalo_tools.guard_member_tool_call("zalo_thread_history", {}))
+        self.turn(thread=MEMBER, group=False)
+        self.write({"version": 1, "dm": {"who": "everyone", "features": {"history": False}}})
+        self.assertEqual(zalo_tools.guard_member_tool_call("zalo_thread_history", {})["action"], "block")
+
+    def test_refusal_hint_points_members_to_thread_history_not_owner_tool(self):
+        self.turn()
+        message = zalo_tools.guard_member_tool_call("terminal", {"command": "ls"})["message"]
+        self.assertIn("zalo_thread_history", message)
+        self.assertNotIn("zalo_read_history", message)
+        self.write({"version": 1, "groups": {GROUP_A: {"features": {"history": False}}}})
+        self.assertNotIn("zalo_thread_history", zalo_tools.guard_member_tool_call("terminal", {"command": "ls"})["message"])
+
 if __name__ == "__main__":
     unittest.main()

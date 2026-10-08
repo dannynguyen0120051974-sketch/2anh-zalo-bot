@@ -16,7 +16,7 @@ import { join } from 'node:path';
 
 export const DM_WHO = ['owners', 'list', 'everyone'];
 // "Hẹn giờ cho nhóm" không có nghĩa trong tin nhắn riêng (công cụ tự từ chối ngoài nhóm).
-export const DM_FEATURE_KEYS = ['web', 'files', 'voice', 'reminders', 'kb', 'people', 'academic', 'video'];
+export const DM_FEATURE_KEYS = ['web', 'files', 'voice', 'reminders', 'kb', 'people', 'academic', 'video', 'history'];
 // Xưởng tạo sản phẩm (spec §17): nằm cùng `features` trong tệp nhưng thiếu khoá = TẮT. Kết nối Zalo không dùng tới;
 // chỉ giữ lại để dashboard lưu nhắn riêng không làm rơi chúng.
 export const STUDIO_KEYS = ['studioSlides', 'studioDocs', 'studioExams', 'studioVideo'];

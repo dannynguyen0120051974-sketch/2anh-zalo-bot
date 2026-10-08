@@ -2,8 +2,16 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { fold } from './dashboard/public/fold.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+// Tin chứa mã đăng nhập dashboard (server.js gửi với remember:false, nhưng bản cũ từng lưu lại) — không bao giờ trả cho công cụ.
+export const LOGIN_CODE_MARK = 'Mã đăng nhập dashboard:';
+// Tra lịch sử cho thành viên (spec §19.5): quét tối đa chừng này tin gần nhất trong khoảng thời gian (theo trang
+// HISTORY_SEARCH_PAGE, đủ tin thì dừng), trả tối đa 40 tin.
+export const HISTORY_SEARCH_SCAN = 5_000;
+export const HISTORY_SEARCH_PAGE = 500;
+export const HISTORY_SEARCH_MAX = 40;
 
 function text(value) {
   return value == null ? '' : String(value);
@@ -290,6 +298,46 @@ export function openZaloStore({ path, retentionDays = 365, now = Date.now } = {}
     };
   }
 
+  /**
+   * Tìm tin trong MỘT hội thoại cho công cụ tra lịch sử của thành viên (spec §19.5). Chỉ đọc kho, không gọi Zalo.
+   * Khớp không phân biệt hoa thường và dấu ("bao cao" khớp "Báo cáo"); `sender` khớp một phần tên người gửi.
+   * Bỏ tin chứa mã đăng nhập dashboard và tin thu hồi/xoá. Trả cũ trước mới sau, tối đa HISTORY_SEARCH_MAX tin mới nhất.
+   */
+  function searchHistory(accountId, threadId, threadType, { query = '', sender = '', sinceMs = 0, limit = 20 } = {}) {
+    const safeLimit = Math.min(Math.max(Math.trunc(Number(limit)) || 20, 1), HISTORY_SEARCH_MAX);
+    const needle = fold(String(query ?? '').trim()).slice(0, 100);
+    const who = fold(String(sender ?? '').trim()).slice(0, 60);
+    // Đi theo chỉ mục idx_messages_thread_time từ mới tới cũ, từng trang nhỏ: đủ tin thì dừng, không nạp cả
+    // HISTORY_SEARCH_SCAN dòng một lúc (giữ vòng lặp sự kiện của sidecar không bị chặn lâu).
+    const page = db.prepare(`
+      SELECT rowid AS cursor_rowid, * FROM messages
+      WHERE account_id = ? AND thread_type = ? AND thread_id = ? AND timestamp_ms >= ?
+        AND (timestamp_ms < ? OR (timestamp_ms = ? AND rowid < ?))
+        AND instr(text, ?) = 0 AND msg_type NOT IN ('chat.delete', 'chat.undo')
+      ORDER BY timestamp_ms DESC, rowid DESC LIMIT ?
+    `);
+    const found = [];
+    let scanned = 0;
+    let beforeTs = Number.MAX_SAFE_INTEGER;
+    let beforeRowid = Number.MAX_SAFE_INTEGER;
+    while (found.length < safeLimit && scanned < HISTORY_SEARCH_SCAN) {
+      const rows = page.all(String(accountId), Number(threadType), String(threadId), Number(sinceMs) || 0,
+        beforeTs, beforeTs, beforeRowid, LOGIN_CODE_MARK, Math.min(HISTORY_SEARCH_PAGE, HISTORY_SEARCH_SCAN - scanned));
+      for (const row of rows) {
+        scanned += 1;
+        if (needle && !fold(row.text).includes(needle)) continue;
+        if (who && !fold(row.sender_name).includes(who)) continue;
+        found.push(mapMessage(row));
+        if (found.length >= safeLimit) break;
+      }
+      if (rows.length < HISTORY_SEARCH_PAGE) break;
+      const last = rows[rows.length - 1];
+      beforeTs = last.timestamp_ms;
+      beforeRowid = last.cursor_rowid;
+    }
+    return { messages: found.reverse(), scanned, truncated: scanned >= HISTORY_SEARCH_SCAN };
+  }
+
   function findOwnMessage(accountId, threadId, threadType, ids = null) {
     const conditions = [
       'account_id = ?', 'thread_id = ?', 'thread_type = ?', 'is_self = 1',
@@ -418,6 +466,7 @@ export function openZaloStore({ path, retentionDays = 365, now = Date.now } = {}
     insertMessages,
     getHistory,
     getRange,
+    searchHistory,
     findOwnMessage,
     pruneMessages,
     beginAudit,

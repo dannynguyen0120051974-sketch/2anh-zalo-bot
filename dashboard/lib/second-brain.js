@@ -66,6 +66,27 @@ export function noteUri(title, nowMs, rand = randomBytes(3).toString('hex')) {
   return `${NOTE_ROOT}/${day}-${slug}-${rand}.md`;
 }
 
+/**
+ * Một yêu cầu tới OpenViking trên cùng máy — dùng chung cho Second brain và Kho tri thức tự học (spec §19.6).
+ * `conn`: `{ base, account, user, apiKey }`, `base` đã qua `loopbackEndpoint`. Lỗi mạng → 503, máy chủ từ chối → 502
+ * (không lộ chi tiết). Không theo chuyển hướng.
+ */
+export async function ovRequest(conn, path, { method = 'GET', query, body } = {}, fetchImpl = fetch) {
+  const url = new URL(path, conn.base);
+  for (const [k, v] of Object.entries(query || {})) url.searchParams.set(k, String(v));
+  const headers = { 'X-OpenViking-Account': conn.account, 'X-OpenViking-User': conn.user, ...(conn.apiKey ? { 'X-API-Key': conn.apiKey } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) };
+  let res; let json = {};
+  try {
+    res = await fetchImpl(url, { method, headers, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(TIMEOUT_MS), redirect: 'error' });
+    json = await res.json();
+  } catch { throw err(503, 'Bộ nhớ dài hạn (OpenViking) không trả lời — kiểm tra dịch vụ trên máy chủ (Sức khoẻ máy chủ).'); }
+  if (!res.ok || json.status !== 'ok') {
+    // `ovCode` (vd. NOT_FOUND) để nơi gọi phân biệt "chưa có dữ liệu" với lỗi thật.
+    throw Object.assign(err(502, 'Bộ nhớ dài hạn từ chối yêu cầu — thử lại, nếu vẫn lỗi hãy báo người cài đặt.'), { ovCode: String(json?.error?.code || '') });
+  }
+  return json.result;
+}
+
 /** `settings()` đọc lại mỗi lần: `{ url, account, user, apiKey }` (chuỗi thô từ .env). */
 export function createSecondBrain({ settings, platform = process.platform, fetchImpl = fetch, now = Date.now }) {
   const status = () => secondBrainStatus({ url: settings().url, platform });
@@ -75,18 +96,9 @@ export function createSecondBrain({ settings, platform = process.platform, fetch
     if (!st.enabled) throw err(404, st.note);
     return { base: st.base, account: s.account || 'default', user: s.user || 'default', apiKey: s.apiKey || '' };
   }
-  async function call(path, { method = 'GET', query, body } = {}) {
+  async function call(path, opts) {
     const c = conf();
-    const url = new URL(path, c.base);
-    for (const [k, v] of Object.entries(query || {})) url.searchParams.set(k, String(v));
-    const headers = { 'X-OpenViking-Account': c.account, 'X-OpenViking-User': c.user, ...(c.apiKey ? { 'X-API-Key': c.apiKey } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) };
-    let res; let json = {};
-    try {
-      res = await fetchImpl(url, { method, headers, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(TIMEOUT_MS), redirect: 'error' });
-      json = await res.json();
-    } catch { throw err(503, 'Bộ nhớ dài hạn (OpenViking) không trả lời — kiểm tra dịch vụ trên máy chủ (Sức khoẻ máy chủ).'); }
-    if (!res.ok || json.status !== 'ok') throw err(502, 'Bộ nhớ dài hạn từ chối yêu cầu — thử lại, nếu vẫn lỗi hãy báo người cài đặt.');
-    return { result: json.result, user: c.user };
+    return { result: await ovRequest(c, path, opts, fetchImpl), user: c.user };
   }
   return {
     status() { const { enabled, reason, note } = status(); return { enabled, reason, note }; },
@@ -107,7 +119,10 @@ export function createSecondBrain({ settings, platform = process.platform, fetch
     async search(query) {
       const q = String(query ?? '').trim();
       if (q.length < 2 || q.length > 200) throw err(400, 'Gõ 2–200 ký tự để tìm.');
-      const { result, user } = await call('/api/v1/search/find', { method: 'POST', body: { query: q, limit: 20 } });
+      // Tìm đúng trong các gốc cho phép: kho trí nhớ theo nhóm/người (tài khoản "zalo") không chen mất 20 chỗ kết quả.
+      const { user } = conf();
+      const target = ['viking://resources', `viking://user/${user}/memories`, `viking://user/${user}/peers`];
+      const { result } = await call('/api/v1/search/find', { method: 'POST', body: { query: q, limit: 20, target_uri: target } });
       return ['memories', 'resources'].flatMap((k) => (Array.isArray(result?.[k]) ? result[k] : []))
         .filter((h) => allowedUri(h?.uri, user))
         .map((h) => ({ uri: h.uri, score: Number(h.score) || 0, abstract: String(h.abstract || '').slice(0, 600) }))

@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-FEATURES = ("web", "files", "voice", "reminders", "groupCron", "kb", "people", "academic", "video")
+FEATURES = ("web", "files", "voice", "reminders", "groupCron", "kb", "people", "academic", "video", "history")
 
 FEATURE_TOOLS: Dict[str, tuple] = {
     "web": ("zalo_web_search", "zalo_web_read"),
@@ -37,6 +37,7 @@ FEATURE_TOOLS: Dict[str, tuple] = {
     "people": ("zalo_remember_person", "zalo_recall_person"),
     "academic": ("zalo_academic_search",),
     "video": ("zalo_video_info", "zalo_video_download"),
+    "history": ("zalo_thread_history",),
 }
 
 # Công cụ công khai luôn bật, không có nút.
@@ -52,6 +53,7 @@ FEATURE_LABELS: Dict[str, str] = {
     "people": "sổ người quen",
     "academic": "tra cứu học thuật",
     "video": "tải và xem thông tin video",
+    "history": "tra lịch sử trò chuyện",
 }
 
 _TOOL_FEATURE = {tool: feature for feature, tools in FEATURE_TOOLS.items() for tool in tools}

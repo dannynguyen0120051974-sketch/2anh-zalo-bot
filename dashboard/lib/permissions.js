@@ -21,10 +21,11 @@ export const FEATURES = [
   { key: 'people', label: 'Sổ người quen', hint: 'Ghi nhớ và tra hồ sơ thành viên' },
   { key: 'academic', label: 'Tra cứu học thuật', hint: 'Tìm bài báo khoa học' },
   { key: 'video', label: 'Video', hint: 'Xem thông tin và tải video từ link' },
+  { key: 'history', label: 'Tra lịch sử trò chuyện', hint: 'Bot tìm lại tin cũ của chính nhóm này khi được hỏi "hôm trước ai nói gì", "ai đã gửi tệp X"' },
 ];
 export const FEATURE_KEYS = FEATURES.map((f) => f.key);
 // Nút cho tin nhắn riêng (spec §16): 8 nút, không có "Hẹn giờ cho nhóm"; lời gợi ý viết cho một người.
-const DM_HINTS = { kb: 'Đọc tài liệu chủ bot đã mở cho mọi người', people: 'Bot nhớ hồ sơ người nhắn để xưng hô đúng' };
+const DM_HINTS = { kb: 'Đọc tài liệu chủ bot đã mở cho mọi người', people: 'Bot nhớ hồ sơ người nhắn để xưng hô đúng', history: 'Bot tìm lại tin cũ trong cuộc trò chuyện riêng với người này' };
 export const DM_FEATURES = FEATURES.filter((f) => DM_FEATURE_KEYS.includes(f.key)).map((f) => ({ ...f, hint: DM_HINTS[f.key] || f.hint }));
 // Xưởng tạo sản phẩm (spec §17): 4 nút nằm cùng `features` trong tệp nhưng thiếu khoá = TẮT; giao diện tách riêng
 // thành `studio`. Hạn mức: `groups[id].studioQuota`, mục gốc `studio: { quota, people: { uid: { name, quota } } }`.

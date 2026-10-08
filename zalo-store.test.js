@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
-import { openZaloStore } from './zalo-store.js';
+import { HISTORY_SEARCH_PAGE, HISTORY_SEARCH_SCAN, openZaloStore } from './zalo-store.js';
 
 function withStore(t, options = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'zalo-store-'));
@@ -226,4 +226,46 @@ test('getRange đọc theo khoảng thời gian và lật trang không sót, kh�
   assert.deepEqual(seen, ['tin 1', 'tin 2', 'tin 3', 'tin 4', 'tin 5']);
   assert.equal(pages, 3);
   assert.equal(store.getRange('account-1', 'group-1', 1, { sinceMs: 99_999 }).messages.length, 0);
+});
+
+test('searchHistory: đúng một hội thoại, khớp không dấu, lọc người gửi, bỏ mã đăng nhập và tin thu hồi, giới hạn 40', (t) => {
+  const { store } = withStore(t);
+  const put = (i, over) => store.upsertMessage('account-1', {
+    ...baseMessage, msgId: `s-${i}`, cliMsgId: `sc-${i}`, ts: 1_000 + i, ...over,
+  }, 'live');
+  put(1, { senderName: 'Cô Lan', text: 'Báo cáo tháng 9.docx\nhttps://f.zdn.vn/x', msgType: 'share.file' });
+  put(2, { senderName: 'Minh', text: 'ai gửi bao cao chưa?' });
+  put(3, { senderName: 'Bot', isSelf: true, text: 'Mã đăng nhập dashboard: 123456' });
+  put(4, { senderName: 'Minh', text: 'báo cáo đây', msgType: 'chat.undo' });
+  store.upsertMessage('account-1', { ...baseMessage, threadId: 'group-2', msgId: 'o', cliMsgId: 'o', text: 'Báo cáo nhóm khác', ts: 1_005 }, 'live');
+
+  const hits = store.searchHistory('account-1', 'group-1', 1, { query: 'BAO CAO' });
+  assert.deepEqual(hits.messages.map((m) => m.msgId), ['s-1', 's-2']);
+  assert.deepEqual(store.searchHistory('account-1', 'group-1', 1, { query: 'bao cao', sender: 'lan' }).messages.map((m) => m.msgId), ['s-1']);
+  assert.equal(JSON.stringify(store.searchHistory('account-1', 'group-1', 1, {})).includes('123456'), false);
+  assert.deepEqual(store.searchHistory('account-1', 'group-1', 1, { sinceMs: 1_003 }).messages.map((m) => m.msgId), [], "mốc thời gian: chỉ còn tin mã và tin thu hồi — đều bị bỏ");
+
+  for (let i = 10; i < 70; i += 1) put(i, { text: `tin ${i}` });
+  const capped = store.searchHistory('account-1', 'group-1', 1, { limit: 999 });
+  assert.equal(capped.messages.length, 40);
+  assert.equal(capped.messages.at(-1).text, 'tin 69', 'giữ 40 tin MỚI NHẤT, xếp cũ trước');
+});
+
+test('searchHistory: quét theo trang, đủ tin thì dừng; không thấy thì dừng ở trần HISTORY_SEARCH_SCAN', (t) => {
+  const { store } = withStore(t);
+  const n = HISTORY_SEARCH_SCAN + 700;
+  store.insertMessages('account-1', Array.from({ length: n }, (_, i) => ({
+    ...baseMessage, msgId: `p-${i}`, cliMsgId: `pc-${i}`, ts: 10_000 + Math.floor(i / 3), text: i === 5 ? 'kim trong đáy bể' : `tin ${i}`,
+  })));
+  const recent = store.searchHistory('account-1', 'group-1', 1, { limit: 10 });
+  assert.equal(recent.messages.length, 10);
+  assert.ok(recent.scanned <= HISTORY_SEARCH_PAGE, `đủ 10 tin trong trang đầu thì dừng (quét ${recent.scanned})`);
+  assert.equal(recent.messages.at(-1).msgId, `p-${n - 1}`);
+  const none = store.searchHistory('account-1', 'group-1', 1, { query: 'không có đâu' });
+  assert.deepEqual([none.messages.length, none.scanned, none.truncated], [0, HISTORY_SEARCH_SCAN, true]);
+  // Cùng mốc giờ nhiều tin (ts trùng): phân trang theo rowid không bỏ sót, không lặp.
+  const all = store.searchHistory('account-1', 'group-1', 1, { query: 'tin 4', limit: 40 });
+  assert.equal(new Set(all.messages.map((m) => m.msgId)).size, all.messages.length);
+  const old = store.searchHistory('account-1', 'group-1', 1, { query: 'kim', sinceMs: 0 });
+  assert.deepEqual(old.messages, [], 'tin quá xa ngoài trần quét');
 });

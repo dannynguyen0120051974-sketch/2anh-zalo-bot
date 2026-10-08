@@ -15,6 +15,7 @@ import { createUserStore } from '../dashboard/lib/users.js';
 import { issueSetupLink } from '../dashboard/lib/setup-link.js';
 import { readJson } from '../dashboard/lib/json-store.js';
 import { SECOND_BRAIN_KEY, secondBrainStatus } from '../dashboard/lib/second-brain.js';
+import { LM_PROVIDER, learnedMemoryStatus } from '../dashboard/lib/learned-memory.js';
 
 const PLATFORM_KEY = 'platforms/zalo';
 const TOOLS_KEY = 'zalo-tools';
@@ -413,6 +414,19 @@ export function secondBrainCheck({ url = '', hostPlatform = platform() } = {}) {
 }
 
 /**
+ * Dòng doctor cho trí nhớ dài hạn (spec §19.10). TẮT mặc định; chỉ đọc cấu hình, không gọi mạng.
+ * Hỏng khi đã chọn provider zalo_memory mà thiếu plugin, hoặc OPENVIKING_ENDPOINT không phải loopback.
+ */
+export function memoryCheck({ provider = '', endpoint = '', pluginInstalled = true, hostPlatform = platform() } = {}) {
+  if (provider !== LM_PROVIDER) return { ok: true, detail: 'tắt (mặc định) — bật trên VPS có OpenViking: xem README, mục "Trí nhớ dài hạn"' };
+  if (!pluginInstalled) return { ok: false, detail: 'config.yaml chọn memory.provider: zalo_memory nhưng thiếu plugin — chạy lại install:hermes' };
+  const st = learnedMemoryStatus({ provider, endpoint, platform: hostPlatform });
+  if (st.reason === 'windows') return { ok: true, detail: 'zalo_memory không chạy trên Windows (tự tắt) — bỏ memory.provider khỏi config.yaml' };
+  if (st.reason === 'not-loopback') return { ok: false, detail: 'OPENVIKING_ENDPOINT phải là 127.0.0.1/localhost — sửa lại trong .env của Hermes' };
+  return { ok: true, detail: `bật — zalo_memory, OpenViking ${st.base}` };
+}
+
+/**
  * Bộ cài trên Linux: thấy dịch vụ OpenViking đang chạy mà chưa bật Second brain → in cách bật. KHÔNG tự đặt biến:
  * kho này có thể chứa ghi nhớ riêng của chủ máy. Windows, đã đặt, hoặc không thấy dịch vụ → null.
  */
@@ -423,6 +437,21 @@ export function secondBrainHint({ hostPlatform = platform(), url = '', envFile =
     if (probe?.status === 0) {
       return `Thấy OpenViking (${unit}) trên máy này. Muốn bật trang Second brain (chỉ Quản trị) thì thêm dòng sau vào ${envFile} `
         + `rồi khởi động lại dashboard:\n  ${SECOND_BRAIN_KEY}=http://127.0.0.1:1933\nBộ cài không tự bật — kho này có thể chứa ghi nhớ riêng.`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Bộ cài trên Linux: thấy dịch vụ OpenViking mà chưa bật trí nhớ dài hạn → in cách bật (spec §19.10). KHÔNG tự bật:
+ * trí nhớ tự học ghi lại nội dung trò chuyện của khách — chủ bot phải tự quyết. Windows / đã bật / không thấy dịch vụ → null.
+ */
+export function memoryHint({ hostPlatform = platform(), provider = '', configFile = 'config.yaml của Hermes', commandProbe = spawnSync } = {}) {
+  if (hostPlatform !== 'linux' || provider === LM_PROVIDER) return null;
+  for (const unit of ['hermes-openviking.service', 'openviking.service']) {
+    if (commandProbe('systemctl', ['is-active', '--quiet', unit], { encoding: 'utf8' })?.status === 0) {
+      return `Thấy OpenViking (${unit}). Muốn bot tự học theo từng nhóm/người (tắt mặc định): đặt memory.provider: zalo_memory trong ${configFile} `
+        + 'rồi khởi động lại gateway; chu kỳ rút trí nhớ chỉnh ở dashboard › Trí nhớ. Xem README, mục "Trí nhớ dài hạn".';
     }
   }
   return null;
@@ -489,6 +518,11 @@ export function doctorHermes({
   }
   const secondBrain = secondBrainCheck({ url: hermesEnvValue(layout.home, SECOND_BRAIN_KEY), hostPlatform });
   add('second-brain', secondBrain.ok, secondBrain.detail);
+  const memory = memoryCheck({
+    provider: String(config?.memory?.provider ?? '').trim(), endpoint: hermesEnvValue(layout.home, 'OPENVIKING_ENDPOINT'),
+    pluginInstalled: existsSync(join(layout.repoRoot, 'plugins', 'memory', 'zalo_memory', '__init__.py')), hostPlatform,
+  });
+  add('long-term-memory', memory.ok, memory.detail);
   const configuredVieneu = config?.tts?.providers?.[VIENEU_PROVIDER];
   const target = vieneuLayout(layout.home);
   const managedVieneu = config?.tts?.provider === VIENEU_PROVIDER
@@ -622,6 +656,8 @@ export async function installHermes({
   const toolsDestination = join(layout.repoRoot, 'plugins', 'zalo_tools');
   atomicReplaceDirectory(join(root, 'hermes-plugin', 'zalo'), platformDestination);
   atomicReplaceDirectory(join(root, 'hermes-plugin', 'zalo_tools'), toolsDestination);
+  // Trí nhớ dài hạn (spec §19): chỉ chép plugin; KHÔNG đổi memory.provider — người cài đặt tự bật.
+  atomicReplaceDirectory(join(root, 'hermes-plugin', 'zalo_memory'), join(layout.repoRoot, 'plugins', 'memory', 'zalo_memory'));
   const manifestPath = join(platformDestination, 'plugin.yaml');
   writeFileSync(manifestPath, renderPlatformManifest(readFileSync(manifestPath, 'utf8'), root), 'utf8');
 
@@ -673,13 +709,16 @@ export async function installHermes({
   const secondBrain = secondBrainHint({
     hostPlatform, url: hermesEnvValue(layout.home, SECOND_BRAIN_KEY), envFile: join(layout.home, '.env'), commandProbe,
   });
-  return { ...diagnosis, dashboard, setupLink, caddy, secondBrain };
+  const memory = memoryHint({
+    hostPlatform, provider: String(configObject(layout.configPath)?.memory?.provider ?? '').trim(), configFile: layout.configPath, commandProbe,
+  });
+  return { ...diagnosis, dashboard, setupLink, caddy, secondBrain, memory };
 }
 
 export function uninstallHermes({ hermesHome, noDashboard = false, dashboardUninstaller = uninstallDashboardService } = {}) {
   const layout = resolveHermesLayout({ hermesHome });
   const pluginRoot = join(layout.repoRoot, 'plugins');
-  const targets = [join(pluginRoot, 'platforms', 'zalo'), join(pluginRoot, 'zalo_tools')];
+  const targets = [join(pluginRoot, 'platforms', 'zalo'), join(pluginRoot, 'zalo_tools'), join(pluginRoot, 'memory', 'zalo_memory')];
   for (const target of targets) {
     if (!within(pluginRoot, target)) throw new Error(`Đích gỡ cài đặt không an toàn: ${target}`);
     if (existsSync(target)) rmSync(target, { recursive: true, force: true });

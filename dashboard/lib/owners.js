@@ -49,6 +49,12 @@ export function createOwnersStore({ envFile, sidecarEnvFile, pendingFile, inheri
         os: Boolean(inheritedValue) && !sameSet(splitOwners(inheritedValue), mine),
       };
     },
+    /** UID chủ nhân từ các nguồn ghi đè (.env thư mục bot, biến môi trường dịch vụ); nguồn hỏng → bỏ qua nguồn đó. */
+    overrideUids() {
+      let local = null;
+      try { local = sidecarEnvFile ? readEnvKey(sidecarEnvFile, OWNER_KEY) : null; } catch { /* không đọc được */ }
+      return [...new Set([...splitOwners(local), ...splitOwners(inheritedValue)])];
+    },
     /** Ghi danh sách mới; trả true nếu có thay đổi. Đặt cờ chờ TRƯỚC khi ghi .env để không bao giờ mất banner. */
     set(uids, by) {
       if (sameSet(uids, list())) return false;
