@@ -887,3 +887,9 @@ test('Theo dõi agent: thời gian dễ đọc', async () => {
   assert.equal(fmtMs(2500), '2,5 giây');
   assert.equal(fmtMs(65_000), '1 phút 5 giây');
 });
+
+test('Kết nối MCP: màu trạng thái', async () => {
+  const { mcpKind } = await import('./views/mcp.js');
+  assert.deepEqual(['Đang mở', 'Không phản hồi', 'Đã tắt', 'Máy ngoài — không kiểm'].map(mcpKind), ['ok', 'danger', 'idle', 'warn']);
+  assert.equal(mcpKind('Chạy cùng trợ lý — không kiểm được từ dashboard'), 'idle');
+});

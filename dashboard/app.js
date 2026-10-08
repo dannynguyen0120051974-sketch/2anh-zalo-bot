@@ -23,6 +23,7 @@ import { insightRoutes } from './routes/insight.js';
 import { agentRoutes } from './routes/agent.js';
 import { toolRoutes } from './routes/tools.js';
 import { traceRoutes } from './routes/trace.js';
+import { mcpRoutes } from './routes/mcp.js';
 
 export function createDashboardApp(deps) {
   const app = express();
@@ -52,6 +53,7 @@ export function createDashboardApp(deps) {
   if (deps.agentConfig && deps.soul) app.use('/api', agentRoutes(deps));
   if (deps.toolsManifestFile) app.use('/api', toolRoutes(deps));
   if (deps.agentTrace) app.use('/api', traceRoutes(deps));
+  if (deps.mcpServers) app.use('/api', mcpRoutes(deps));
   app.use('/api', adminRoutes(deps));
   // Gắn ở gốc: router này có cả /api/brand lẫn /brand.css, /brand/logo.png (công khai, trước giao diện tĩnh).
   app.use(brandRoutes(deps));
