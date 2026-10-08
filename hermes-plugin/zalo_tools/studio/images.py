@@ -5,12 +5,13 @@ AI chỉ được XIN ảnh: một câu mô tả (ảnh AI) hoặc một cụm t
 - Ảnh AI: gọi ``<ZALO_STUDIO_IMAGE_URL>/images/generations`` (mặc định 9router như đường Vox của 2Anh Studio),
   khoá ``ANH_AI_KEY`` của chủ bot — khoá không bao giờ vào hộp cát. Nhận ``b64_json`` (hoặc ``url`` → tải an toàn).
 - Ảnh web: tìm qua API Openverse (ảnh giấy phép mở, có tác giả/giấy phép để ghi nguồn), rồi tải ``url`` kết quả.
-- Mọi lần tải ra Internet đi qua ``fetch``: chỉ https, phân giải tên rồi kiểm MỌI địa chỉ là địa chỉ công cộng
-  (chặn 127/8, 10/8, 172.16/12, 192.168/16, 169.254/16, 100.64/10, ::1, fc00::/7, fe80::/10, đa hướng…), kết nối
+- Mọi lần tải ra Internet đi qua ``fetch``: chỉ https cổng 443, phân giải tên rồi kiểm MỌI địa chỉ là địa chỉ công
+  cộng (chặn 127/8, 10/8, 172.16/12, 192.168/16, 169.254/16, 100.64/10, ::1, fc00::/7, fe80::/10, fec0::/10, đa
+  hướng…), kết nối
   thẳng tới đúng IP đã kiểm (chống đổi DNS giữa lúc kiểm và lúc nối) với SNI/chứng chỉ của tên gốc, tự đi theo tối
   đa 3 lần chuyển hướng và kiểm lại từng chặng, giới hạn cỡ và thời gian, Content-Type phải là ảnh.
-- Ảnh nhận về phải đúng PNG hoặc JPEG theo byte đầu (không tin Content-Type), ≤ 8 MB, rồi mới ghi vào thư mục việc
-  dưới tên do plugin đặt. Số ảnh mỗi việc có trần (``MAX_AI_IMAGES``, ``MAX_WEB_IMAGES``).
+- Ảnh nhận về phải đúng PNG hoặc JPEG theo byte đầu (không tin Content-Type), ≤ 8 MB, kích thước đọc từ IHDR/SOF
+  ≤ 8192 px mỗi cạnh và ≤ 40 MP (chặn "bom giải nén"), rồi mới ghi vào thư mục việc dưới tên do plugin đặt. Số ảnh mỗi việc có trần (``MAX_AI_IMAGES``, ``MAX_WEB_IMAGES``).
 """
 
 from __future__ import annotations
@@ -42,12 +43,52 @@ class ImageError(Exception):
     """Không có được ảnh (mạng, nhà cung cấp, dữ liệu không phải ảnh, địa chỉ bị chặn)."""
 
 
+MAX_SIDE = 8192
+MAX_PIXELS = 40_000_000
+
+
 def sniff(data: bytes) -> Optional[str]:
     """Đuôi tệp theo byte đầu: ``png`` | ``jpg`` | None."""
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
         return "png"
     if data.startswith(b"\xff\xd8\xff"):
         return "jpg"
+    return None
+
+
+# JPEG: các khung SOF mang kích thước (bỏ C4 = DHT, C8 = JPG, CC = DAC).
+_SOF = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
+
+
+def dimensions(data: bytes) -> Optional[Tuple[int, int]]:
+    """(rộng, cao) đọc từ IHDR của PNG hoặc khung SOF của JPEG; None khi không đọc được."""
+    kind = sniff(data)
+    if kind == "png":
+        if len(data) < 24 or data[12:16] != b"IHDR":
+            return None
+        return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+    if kind == "jpg":
+        i = 2
+        while i + 4 <= len(data):
+            if data[i] != 0xFF:
+                return None
+            marker = data[i + 1]
+            if marker == 0xFF:          # byte đệm
+                i += 1
+                continue
+            if marker in (0x01,) or 0xD0 <= marker <= 0xD8:   # không có độ dài
+                i += 2
+                continue
+            if marker == 0xD9 or marker == 0xDA:              # hết ảnh / bắt đầu dữ liệu nén mà chưa có SOF
+                return None
+            length = int.from_bytes(data[i + 2:i + 4], "big")
+            if length < 2:
+                return None
+            if marker in _SOF:
+                if i + 9 > len(data):
+                    return None
+                return int.from_bytes(data[i + 7:i + 9], "big"), int.from_bytes(data[i + 5:i + 7], "big")
+            i += 2 + length
     return None
 
 
@@ -58,6 +99,8 @@ def is_public(address: str) -> bool:
         return False
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
         ip = ip.ipv4_mapped
+    if isinstance(ip, ipaddress.IPv6Address) and ip.is_site_local:   # fec0::/10 — đã bỏ nhưng mạng cũ còn dùng
+        return False
     return ip.is_global and not ip.is_multicast and not ip.is_reserved
 
 
@@ -75,7 +118,12 @@ def check_url(url: str, resolver: Resolver = system_resolver) -> Tuple[str, str,
     if parts.scheme != "https" or not parts.hostname or parts.username or parts.password:
         raise ImageError("chỉ tải ảnh qua https từ địa chỉ công khai")
     host = parts.hostname.lower().rstrip(".")
-    port = parts.port or 443
+    try:
+        port = 443 if parts.port is None else parts.port
+    except ValueError:
+        raise ImageError("cổng của địa chỉ ảnh không hợp lệ") from None
+    if port != 443:
+        raise ImageError("chỉ tải ảnh qua cổng https chuẩn (443)")
     if host in ("localhost",) or host.endswith((".localhost", ".local", ".internal", ".lan", ".home.arpa")):
         raise ImageError("không tải ảnh từ máy nội bộ")
     try:
@@ -165,6 +213,12 @@ def _image(data: bytes) -> Picture:
     ext = sniff(data)
     if ext is None:
         raise ImageError("dữ liệu nhận về không phải ảnh PNG/JPEG")
+    size = dimensions(data)
+    if size is None:
+        raise ImageError("không đọc được kích thước ảnh")
+    width, height = size
+    if not (0 < width <= MAX_SIDE and 0 < height <= MAX_SIDE) or width * height > MAX_PIXELS:
+        raise ImageError(f"ảnh {width}×{height} quá lớn (tối đa {MAX_SIDE} px mỗi cạnh, {MAX_PIXELS // 1_000_000} MP)")
     return Picture(data=data, ext=ext)
 
 
@@ -264,17 +318,23 @@ async def search_web(query: str, orientation: str = "landscape", *, client: Any 
     raise last or ImageError(f"không tìm được ảnh cho \"{q}\"")
 
 
-def save(picture: Picture, folder: Path, name: str) -> Path:
-    """Ghi ảnh vào thư mục việc dưới tên do plugin đặt (``name`` không có đuôi, chỉ chữ/số/gạch)."""
-    if not name.replace("-", "").replace("_", "").isalnum():
+def save(picture: Picture, folder: Path, name: str, *, root: Path) -> Path:
+    """Ghi ảnh vào ``folder`` (trong thư mục việc ``root``) dưới tên do plugin đặt (``name`` không có đuôi, chỉ
+    chữ/số/gạch). Tiến trình cha ghi qua ``sandbox.write_file``: không đi theo liên kết tượng trưng, không ra ngoài ``root``."""
+    from . import sandbox
+
+    if not name or not name.isascii() or not name.replace("-", "").replace("_", "").isalnum():
         raise ImageError("tên ảnh không hợp lệ")
-    folder.mkdir(parents=True, exist_ok=True)
     path = folder / f"{name}.{picture.ext}"
-    path.write_bytes(picture.data)
+    try:
+        sandbox.write_file(root, path, picture.data)
+    except sandbox.UnsafeJobDir as exc:
+        raise ImageError(f"không ghi được ảnh ({exc})") from None
     return path
 
 
-def sources_manifest(entries: List[Dict[str, str]], path: Path) -> None:
+def sources_manifest(entries: List[Dict[str, str]], path: Path, *, root: Path) -> None:
     """``image_sources.json`` theo dạng 2Anh Studio đọc: ``{"items": [{filename, author, license_name, provider}]}``."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"items": entries}, ensure_ascii=False, indent=2), encoding="utf-8")
+    from . import sandbox
+
+    sandbox.write_file(root, path, json.dumps({"items": entries}, ensure_ascii=False, indent=2).encode("utf-8"))

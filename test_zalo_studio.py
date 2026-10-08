@@ -481,8 +481,25 @@ class SandboxTest(unittest.IsolatedAsyncioTestCase):
 
 from plugins.zalo_tools.studio import images  # noqa: E402
 
-PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
-JPG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
+def png(width, height):
+    import struct
+    import zlib
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(b"\x00" * 10)) + chunk(b"IEND", b""))
+
+
+def jpg(width, height):
+    import struct
+    app0 = b"\xff\xe0" + struct.pack(">H", 16) + b"JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
+    sof0 = b"\xff\xc0" + struct.pack(">HBHHB", 11, 8, height, width, 1) + b"\x01\x11\x00"
+    return b"\xff\xd8" + app0 + sof0 + b"\xff\xda\x00\x08\x01\x01\x00\x00\x3f\x00" + b"\x00" * 16 + b"\xff\xd9"
+
+
+PNG = png(2, 2)
+JPG = jpg(3, 2)
 PUBLIC = lambda host, port: ["93.184.216.34"]  # noqa: E731
 
 
@@ -498,9 +515,20 @@ class ImagesTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(images.sniff(b"<svg onload=alert(1)>"))
         self.assertIsNone(images.sniff(b"GIF89a"))
         for ip in ("127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.169.254", "100.64.0.1", "0.0.0.0",
-                   "::1", "fe80::1", "fc00::1", "::ffff:127.0.0.1", "224.0.0.1", "lạ"):
+                   "::1", "fe80::1", "fc00::1", "fec0::1", "fec0:1::5", "::ffff:127.0.0.1", "224.0.0.1", "lạ"):
             self.assertFalse(images.is_public(ip), ip)
         self.assertTrue(images.is_public("93.184.216.34"))
+        self.assertTrue(images.is_public("2600:1f18::1"))
+
+    def test_dimensions_are_read_and_capped(self):
+        self.assertEqual(images.dimensions(png(640, 480)), (640, 480))
+        self.assertEqual(images.dimensions(jpg(1920, 1080)), (1920, 1080))
+        self.assertEqual(images._image(jpg(8192, 4096)).ext, "jpg")
+        for data in (png(60000, 60000), png(8193, 10), png(8000, 8000), jpg(9000, 100), jpg(7000, 7000),
+                     png(0, 10), b"\x89PNG\r\n\x1a\n" + b"\x00" * 64, b"\xff\xd8\xff\xe0" + b"\x00" * 64,
+                     b"\xff\xd8\xff\xda\x00\x02"):
+            with self.assertRaises(images.ImageError, msg=data[:40]):
+                images._image(data)
 
     def test_check_url_https_only_and_every_resolved_address_must_be_public(self):
         self.assertEqual(images.check_url("https://upload.wikimedia.org/a.png?x=1", PUBLIC),
@@ -508,7 +536,10 @@ class ImagesTest(unittest.IsolatedAsyncioTestCase):
         for url, resolver in (("http://a.vn/x.png", PUBLIC), ("https://u:p@a.vn/x", PUBLIC), ("https://localhost/x", PUBLIC),
                               ("https://máy.local/x", PUBLIC), ("https://10.0.0.5/x", PUBLIC),
                               ("https://rebind.vn/x", lambda h, p: ["93.184.216.34", "127.0.0.1"]),
-                              ("https://nội-bộ.vn/x", lambda h, p: ["192.168.1.10"]), ("file:///E:/Hermes/.env", PUBLIC)):
+                              ("https://nội-bộ.vn/x", lambda h, p: ["192.168.1.10"]), ("file:///E:/Hermes/.env", PUBLIC),
+                              ("https://a.vn:8443/x.png", PUBLIC), ("https://a.vn:20128/v1", PUBLIC),
+                              ("https://a.vn:99999/x", PUBLIC), ("https://a.vn:0/x", PUBLIC), ("https://b.vn/x", lambda h, p: ["fec0::1"]),
+                              ("https://cu.vn/x", lambda h, p: ["fec0::5"])):
             with self.assertRaises(images.ImageError, msg=url):
                 images.check_url(url, resolver)
 
@@ -560,9 +591,22 @@ class ImagesTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls[0][0], "http://127.0.0.1:20128/v1/images/generations")
         self.assertEqual(calls[0][1], "Bearer khoa-cua-chu")
         self.assertEqual(calls[0][2], {"model": "ag/gemini-3.1-flash-image", "prompt": "tế bào nhân thực", "size": "1536x1024", "n": 1})
-        for body in ({"data": [{"b64_json": base64.b64encode(b"<svg/>").decode()}]}, {"data": []}, {"lỗi": 1}):
+        for body in ({"data": [{"b64_json": base64.b64encode(b"<svg/>").decode()}]}, {"data": []}, {"lỗi": 1},
+                     {"data": [{"b64_json": base64.b64encode(png(60000, 60000)).decode()}]}):
             async with mock_client(lambda r, b=body: httpx.Response(200, json=b)) as client:
                 with self.assertRaises(images.ImageError, msg=body):
+                    await images.generate("x", "1024x1024", config=cfg, client=client)
+
+    async def test_generate_url_answer_goes_through_the_safe_fetch(self):
+        """Cổng vẽ trả ``url`` thay vì ``b64_json``: tải bằng ``fetch`` (https, cổng 443, địa chỉ công cộng) — cổng
+        được phép là 127.0.0.1 nhưng địa chỉ ảnh nó trả về thì không. Không chạm mạng thật: bị chặn trước khi nối."""
+        import httpx
+        cfg = images.ImageConfig(url="http://127.0.0.1:20128/v1", key="k", model="m")
+        for url in ("https://127.0.0.1/a.png", "http://127.0.0.1:20128/v1/files/a.png", "http://upload.wikimedia.org/a.png",
+                    "https://169.254.169.254/latest", "https://[::1]/a.png", "https://localhost/a.png", "file:///etc/passwd",
+                    "https://93.184.216.34:8443/a.png"):
+            async with mock_client(lambda r, u=url: httpx.Response(200, json={"data": [{"url": u}]})) as client:
+                with self.assertRaises(images.ImageError, msg=url):
                     await images.generate("x", "1024x1024", config=cfg, client=client)
 
     async def test_search_web_takes_an_openverse_result_with_credit(self):
@@ -581,10 +625,24 @@ class ImagesTest(unittest.IsolatedAsyncioTestCase):
             picture = await images.search_web("te bao", client=client, resolver=PUBLIC)
         self.assertEqual((picture.ext, picture.author, picture.license, picture.provider), ("jpg", "BruceBlaus", "CC BY 4.0", "Openverse/wikimedia"))
 
-    def test_save_uses_plugin_names_only(self):
+    def test_save_uses_plugin_names_only_and_stays_inside_the_job_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = images.save(images.Picture(PNG, "png"), Path(tmp), "a1")
-            self.assertEqual(path.name, "a1.png")
-            for bad in ("../x", "a/b", "a.png", ""):
+            job = Path(tmp, "job")
+            path = images.save(images.Picture(PNG, "png"), job / "images", "a1", root=job)
+            self.assertEqual((path.name, path.read_bytes()), ("a1.png", PNG))
+            for bad in ("../x", "a/b", "a.png", "", "ảnh"):
                 with self.assertRaises(images.ImageError, msg=bad):
-                    images.save(images.Picture(PNG, "png"), Path(tmp), bad)
+                    images.save(images.Picture(PNG, "png"), job / "images", bad, root=job)
+            with self.assertRaises(images.ImageError):
+                images.save(images.Picture(PNG, "png"), Path(tmp, "ngoai"), "a1", root=job)
+            images.sources_manifest([{"filename": "a1.png"}], job / "p" / "anh" / "image_sources.json", root=job)
+            self.assertEqual(json.loads((job / "p" / "anh" / "image_sources.json").read_text(encoding="utf-8")),
+                             {"items": [{"filename": "a1.png"}]})
+            Path(tmp, "ngoai").mkdir()
+            try:
+                os.symlink(Path(tmp, "ngoai"), job / "lien-ket", target_is_directory=True)
+            except (OSError, NotImplementedError):
+                self.skipTest("máy không cho tạo liên kết tượng trưng")
+            with self.assertRaises(images.ImageError):
+                images.save(images.Picture(PNG, "png"), job / "lien-ket", "a1", root=job)
+            self.assertEqual(list(Path(tmp, "ngoai").iterdir()), [])
