@@ -16,7 +16,8 @@ const usage = {
     'không phải ngày': {},
   },
   jobs: [{ id: 'a', at: 1_790_000_000, name: 'Thầy Nam', kind: 'video', status: 'ok', group: true },
-    { id: 'b', at: 1_790_000_100, name: 'Cô Lan', kind: 'giao_an', status: 'lạ', group: false }],
+    { id: 'b', at: 1_790_000_100, name: 'Cô Lan', kind: 'giao_an', status: 'lạ', group: false },
+    { id: 'c', at: 1_790_000_200, name: 'Cô Lan', kind: 'slide', status: 'failed', group: false, refund_denied: true }],
 };
 
 test('lượt dùng xưởng: cả hai vai trò xem được, ngày mới nhất trước, người dùng nhiều nhất trước; 401 khi chưa đăng nhập', async (t) => {
@@ -36,7 +37,8 @@ test('lượt dùng xưởng: cả hai vai trò xem được, ngày mới nhất
   assert.equal(res.json.days[0].inputTokens, 5100);
   assert.equal(res.json.days[0].images, 9);
   assert.equal(res.json.days[0].people[0].images, 9);
-  assert.deepEqual(res.json.recent.map((j) => [j.kind, j.status, j.at]), [['giao_an', 'failed', 1_790_000_100_000], ['video', 'ok', 1_790_000_000_000]]);
+  assert.deepEqual(res.json.recent.map((j) => [j.kind, j.status, j.at, j.refundDenied]),
+    [['slide', 'failed', 1_790_000_200_000, true], ['giao_an', 'failed', 1_790_000_100_000, false], ['video', 'ok', 1_790_000_000_000, false]]);
   writeFileSync(deps.studioUsageFile, '{hỏng');
   assert.equal((await call('/api/studio-usage', { cookie: owner })).json.error, 'unreadable');
 });

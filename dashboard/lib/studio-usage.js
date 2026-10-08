@@ -37,6 +37,8 @@ export function readStudioUsage(file, { days = 14, recent = 20 } = {}) {
   const jobs = (Array.isArray(data.jobs) ? data.jobs : []).filter(isObj).slice(-recent).reverse().map((j) => ({
     at: num(j.at) * 1000, name: typeof j.name === 'string' ? j.name.slice(0, 80) : '', kind: String(j.kind || ''),
     status: STATUSES.has(j.status) ? j.status : 'failed', group: Boolean(j.group),
+    // Hỏng vì máy nhưng hôm nay đã được trả đủ hạn mức → sổ ghi failed + refund_denied (vẫn tính lượt).
+    refundDenied: j.refund_denied === true,
   }));
   return { error: null, days: out, recent: jobs };
 }

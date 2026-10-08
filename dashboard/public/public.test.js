@@ -540,3 +540,20 @@ test('xưởng: lượt đã dùng hôm nay và lượt còn (giờ Việt Nam),
   assert.equal(remainText(1, '9x'), 'Hôm nay đã dùng 1');
   assert.equal(remainText(null, '5'), '');
 });
+
+test('xưởng: Sức khoẻ máy chủ gộp lượt theo người, nhãn trạng thái dễ hiểu', async () => {
+  const { studioPeople, studioStatus, STUDIO_KINDS } = await import('./views/health.js');
+  const p = (uid, name, jobs, tokens, images = 0) => ({ uid, name, jobs, ok: jobs, failed: 0, refunded: 0, inputTokens: tokens, outputTokens: 0, images });
+  const rows = studioPeople([{ people: [p('1', 'Lan', 1, 10, 4), p('2', 'Nam', 1, 5)] }, { people: [p('2', '', 3, 1, 2)] }]);
+  assert.deepEqual(rows.map((r) => [r.name, r.jobs, r.tokens, r.images]), [['Nam', 4, 6, 2], ['Lan', 1, 10, 4]]);
+  assert.deepEqual(studioStatus('refunded'), ['idle', 'Trả lượt']);
+  assert.deepEqual(studioStatus('lạ'), ['danger', 'Không làm được']);
+  assert.deepEqual(Object.keys(STUDIO_KINDS), ['slide', 'giao_an', 'van_ban', 'van_ban_doan', 'van_ban_dang', 'de_kiem_tra', 'de_tieng_anh', 'skkn', 'tro_choi', 'thi_nghiem', 'video', 'video_bai_giang']);
+});
+
+test('xưởng: việc hỏng mà không được trả lượt (đã trả đủ hạn mức trong ngày) ghi rõ "lượt bị tính dù lỗi"', async () => {
+  const { jobBadge } = await import('./views/health.js');
+  assert.deepEqual(jobBadge({ status: 'failed', refundDenied: true }), { kind: 'danger', text: 'Không làm được', note: 'lượt bị tính dù lỗi' });
+  assert.deepEqual(jobBadge({ status: 'failed' }), { kind: 'danger', text: 'Không làm được', note: '' });
+  assert.deepEqual(jobBadge({ status: 'ok', refundDenied: true }), { kind: 'ok', text: 'Đã gửi', note: '' });
+});
