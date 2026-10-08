@@ -808,3 +808,15 @@ test('Lịch hẹn: trạng thái việc hẹn giờ, lọc không dấu, nhãn 
   assert.equal(filterJobs(jobs, '').length, 2);
   assert.equal(REPEAT_LABELS[2], 'Hằng tuần');
 });
+
+test('Kho tri thức: cỡ tệp dễ đọc; kiểm đuôi/cỡ trước khi gửi', async () => {
+  const { fmtSize, uploadProblem } = await import('./views/kb.js');
+  assert.equal(fmtSize(512), '512 B');
+  assert.equal(fmtSize(1536), '1,5 KB');
+  assert.equal(fmtSize(3.4 * 1024 * 1024), '3,4 MB');
+  const types = ['.docx', '.pdf', '.md', '.txt'];
+  assert.equal(uploadProblem({ name: 'a.PDF', size: 10 }, types, 100), '');
+  assert.match(uploadProblem({ name: 'a.exe', size: 10 }, types, 100), /Chỉ nhận/);
+  assert.match(uploadProblem({ name: 'a.pdf', size: 101 }, types, 100), /quá/);
+  assert.match(uploadProblem({ name: 'a.pdf', size: 0 }, types, 100), /rỗng/);
+});
