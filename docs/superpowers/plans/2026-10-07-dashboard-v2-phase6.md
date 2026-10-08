@@ -17,7 +17,7 @@
 - Người không phải chủ nhân **không bao giờ** nhận terminal, đọc/ghi tệp hệ thống, `.env`/khoá, chạy lệnh tuỳ ý — kể cả gián tiếp: lời gọi AI **không có `tools`**; dòng lệnh là danh sách cố định (không shell) chỉ chứa đường dẫn plugin tự dựng; nơi gửi trả lấy từ `_TURN`.
 - **Ảnh:** chỉ `images.py` vẽ/tải, ở tiến trình cha. AI chỉ gửi câu mô tả / từ khoá; trang chỉ trỏ `img:<mã>` của ảnh đã có trong thư mục việc; mọi tham chiếu ra ngoài khác bị từ chối. Tải web: https, phân giải rồi kiểm mọi IP là công cộng, nối thẳng IP đã kiểm (SNI/chứng chỉ theo tên gốc), ≤ 3 chuyển hướng kiểm lại, Content-Type ảnh + byte đầu PNG/JPEG, ≤ 8 MB, 30 s. Trần: slide ≤ 4 AI + 6 web; video ≤ 12 AI + 8 web.
 - Bộ dựng chạy với môi trường đã lọc (không khoá), thư mục việc riêng, hạn giờ + giết cả cây. Linux + root + `systemd-run` → hộp cát systemd (spec §17.6); bước nào không cần mạng thì `network=False`.
-- **Windows (`sys.platform == "win32"`): video luôn tắt** (plugin ép; dashboard khoá nút, ghi "Máy chủ Windows không có hộp cát — video tắt").
+- **Windows (`sys.platform == "win32"`): video luôn tắt** (plugin ép; dashboard khoá nút, ghi "Máy chủ Windows không có hộp cát — video tắt"). **Linux không dùng được hộp cát systemd** (không root, không `systemd-run`, `ZALO_STUDIO_SANDBOX=none`) **cũng tắt video** (`group_permissions.video_policy()`; dashboard đọc `studio-policy.json` do plugin ghi).
 - Video ≤ 180 giây, 720p. Hạn mức mặc định 3 việc/người/ngày; nội dung sai tính lượt, máy hỏng trả lượt. Chủ nhân không giới hạn.
 - Không thêm gói npm/Python. Dashboard: CSP giữ nguyên, không `style=`, không `innerHTML`. Chữ tiếng Việt thường, lỗi kèm bước tiếp theo ("—").
 - Repo `core.autocrlf=true`: áp khối `diff` bằng `git apply --ignore-whitespace`, sửa tay bằng công cụ Edit; đừng dùng script thay chuỗi giả định `\n`. Các dòng `<!-- @target:… -->` ngay trên một khối mã cho biết khối đó tạo tệp / nối vào cuối / thay chuỗi — người và máy đọc như nhau.
@@ -2271,7 +2271,7 @@ SLIDE_PAGE = """ĐẦU RA: đúng một thẻ <svg>…</svg> cho trang {index}/{
 - Thẻ gốc: xmlns="http://www.w3.org/2000/svg", viewBox="0 0 1280 720", width="1280", height="720", data-pptx-page-role="{role}".
 - Hình khối, đường, chữ (<text>), gradient; font "Segoe UI", Arial. Mọi trang cùng một hệ màu và bố cục.
 - Ảnh có sẵn (chỉ những mã này): {images}. Dùng bằng <image href="img:<mã>" x=… y=… width=… height=… preserveAspectRatio="xMidYMid slice"/>.
-- KHÔNG: <script>, <foreignObject>, <a>, <image> trỏ ra tệp/web, url() khác url(#id), thuộc tính on…, DOCTYPE.
+- KHÔNG: <script>, <foreignObject>, <a>, <style>, class, hoạt hình (<animate>, <set>…), <image> trỏ ra tệp/web hay ảnh data:, url() khác url(#id), dấu \\ trong thuộc tính, thuộc tính on…, DOCTYPE.
 - Chữ không tràn khung; cỡ chữ thân ≥ 22."""
 
 
@@ -3079,7 +3079,13 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 - Test: `test_zalo_studio.py` (nối thêm)
 
 **Interfaces:**
-- Consumes: Task 2–5.
+- Consumes: Task 2–5. Sau rà soát bảo mật Task 1–4 (báo cáo `.superpowers/sdd/2026-10-07-dashboard-v2-phase6/task-1-4-security-fix-report.md`):
+  - `images.save(picture, folder, name, *, root)` và `images.sources_manifest(entries, path, *, root)` — `root` (thư mục việc) BẮT BUỘC; mọi lần tiến trình cha ghi/đọc trong thư mục việc đi qua `sandbox.write_file(job_dir, path, data)` / `sandbox.read_file(job_dir, path, limit)` (không theo liên kết tượng trưng, không ra ngoài thư mục việc).
+  - `sandbox.prepare_job_dir` / `sandbox.scan_job_dir` ném `sandbox.UnsafeJobDir` (đã gỡ liên kết/tệp lạ) → `StudioError(refund=False)`; `sandbox.run` có thể ném `sandbox.SandboxConfigError` (đường dẫn cấu hình có khoảng trắng…) → `StudioError(refund=True)`.
+  - `validate.check_svg` không còn nhận ảnh `data:`, `<style>`, hoạt hình SMIL, dấu `\` trong thuộc tính; `validate.check_video` kiểm cả `nhip: … | anh: …` và trần lời đọc (180 giây × 18 ký tự/giây).
+  - `recipes.guide_paths` ném `ValueError` khi giá trị lựa chọn ngoài danh sách (Task 7 đã chặn trước, đây là lớp thứ hai).
+  - `group_permissions.video_policy()` / `publish_video_policy()` — `Studio.__init__` gọi `publish_video_policy()`.
+  - **Quy tắc trả lượt:** lỗi do NỘI DUNG (`validate.SourceError` sau lượt sửa, ký tự điều khiển làm trường rỗng, bộ dựng để lại liên kết/tệp lạ, ảnh/khung SVG bị chặn) → `refund=False` (vẫn tính lượt); lỗi của MÁY (thiếu cài đặt, hết giờ, cấu hình hộp cát sai, mạng ảnh, gateway khởi động lại) → `refund=True`.
 - Produces:
   - `ledger.vn_day`, `usage_path()`, `Ledger(path=None)`: `used_today(uid)`, `take(*, job_id, uid, name, kind, thread_id, is_group, quota) -> int|None|-1`, `finish(job_id, status, *, input_tokens=0, output_tokens=0, error="", images=0)`, `sweep_lost()`. Sổ: `days[ngày][uid] = {name, jobs, ok, failed, refunded, input_tokens, output_tokens, images, kinds}`, `jobs[…{images}]`.
   - `jobs.StudioError(message, *, refund)`, `Busy`, `Job`, `new_job_id()`, `Outcome(files, notes, usage, images)`, `collect`, `Builder` (`run(…, network=None)`, `picture`, `deck_images`, `vox_images`, `studio_cli`, `node_engine`, `doan_docx`, `markdown_docx`, `game_html`, `slides`, `lecture_video`), `_doan_report(validator, docx)`, `async produce(job, llm, job_dir, where=None) -> Outcome`, `Studio(...)` (`pending_for`, `submit`, `run_job`), `sweep_work_root()`; hằng `SLIDE_MAX_AI_IMAGES = 4`, `SLIDE_MAX_WEB_IMAGES = 6`, `IMAGE_TOOL_NAME`, `LECTURE_VOICE = "vi-VN-HoaiMyNeural"`, `DOAN_DRAFT_CODES`.
@@ -3720,6 +3726,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
 
 from . import author, builtin, doan_docx, images, recipes, sandbox, validate
+from .. import group_permissions as gp
 from .ledger import Ledger
 
 logger = logging.getLogger(__name__)
@@ -3801,7 +3808,12 @@ def _last_json(text: str) -> Dict[str, Any]:
 
 
 def collect(job_dir: Path, project: Path, outputs: Sequence[str]) -> List[Path]:
-    """Tệp kết quả: nằm trong thư mục việc, đúng đuôi, không quá cỡ; nhiều nhất 4 tệp."""
+    """Tệp kết quả: nằm trong thư mục việc, đúng đuôi, không quá cỡ; nhiều nhất 4 tệp. Quét lại thư mục việc trước
+    (liên kết tượng trưng/tệp lạ → dừng, tính lượt)."""
+    try:
+        sandbox.scan_job_dir(job_dir)
+    except sandbox.UnsafeJobDir:
+        raise StudioError("bộ dựng để lại tệp không an toàn nên đã dừng", refund=False) from None
     root = job_dir.resolve()
     found = []
     for path in sorted(project.rglob("*")):
@@ -3842,13 +3854,24 @@ class Builder:
     async def run(self, argv: Sequence[str], *, timeout: Optional[int] = None,
                   extra: Sequence[Optional[Path]] = (), extra_env: Optional[Dict[str, str]] = None,
                   network: Optional[bool] = None) -> sandbox.Result:
-        """``network``: None = theo công thức. Bước nào không cần mạng thì truyền False (lập kế hoạch ảnh, kiểm…)."""
-        sandbox.prepare_job_dir(self.job_dir)
-        read_only = sandbox.read_only_paths(str(self.where.python) if self.where.python else None,
-                                            self.where.studio, *extra)
-        return await sandbox.run(argv, self.job_dir, timeout=timeout or self.recipe.timeout,
-                                 network=self.recipe.network if network is None else network,
-                                 read_only=read_only, extra_env=extra_env)
+        """``network``: None = theo công thức. Bước nào không cần mạng thì truyền False (lập kế hoạch ảnh, kiểm…).
+
+        Trước MỖI bước, ``prepare_job_dir`` quét thư mục việc: bộ dựng (đã chạy nội dung của AI) để lại liên kết
+        tượng trưng / tệp đặc biệt / liên kết cứng → gỡ và dừng việc, TÍNH lượt (nghi do nội dung). Đường dẫn cấu
+        hình không dùng được cho systemd (khoảng trắng…) → lỗi máy, trả lượt."""
+        try:
+            sandbox.prepare_job_dir(self.job_dir)
+            read_only = sandbox.read_only_paths(str(self.where.python) if self.where.python else None,
+                                                self.where.studio, *extra)
+            return await sandbox.run(argv, self.job_dir, timeout=timeout or self.recipe.timeout,
+                                     network=self.recipe.network if network is None else network,
+                                     read_only=read_only, extra_env=extra_env)
+        except sandbox.UnsafeJobDir as exc:
+            logger.warning("[zalo] xưởng %s: %s", self.job.id, exc)
+            raise StudioError("bộ dựng để lại tệp không an toàn nên đã dừng", refund=False) from None
+        except sandbox.SandboxConfigError as exc:
+            logger.error("[zalo] xưởng %s: %s", self.job.id, exc)
+            raise StudioError("hộp cát trên máy chủ cấu hình sai", refund=True) from None
 
     # -- ảnh: chỉ plugin vẽ/tải, ở tiến trình cha (studio/images.py) --------------
     async def picture(self, request: Dict[str, str], *, size: str, orientation: str) -> images.Picture:
@@ -3869,7 +3892,7 @@ class Builder:
                 logger.info("[zalo] xưởng %s: bỏ ảnh %s — %s", self.job.id, request["id"], exc)
                 self.notes.append(f"không lấy được ảnh {request['id']} ({exc})")
                 continue
-            path = images.save(picture, folder, request["id"])
+            path = images.save(picture, folder, request["id"], root=self.job_dir)
             credit = ("ảnh vẽ bằng AI" if "ai" in request
                       else f"ảnh web — ghi nhỏ dưới ảnh: 'Ảnh: {picture.author} · {picture.license}'")
             got[request["id"]] = {"path": f"../images/{path.name}",
@@ -3935,7 +3958,10 @@ class Builder:
                 raise validate.SourceError(str(error.get("message") or "kế hoạch ảnh sai")[:600])
             raise StudioError("chưa lập được kế hoạch ảnh cho video", refund=True)
         try:
-            items = json.loads((self.project / "anh" / "ai" / "ke-hoach.json").read_text(encoding="utf-8"))["muc"]
+            raw = sandbox.read_file(self.job_dir, self.project / "anh" / "ai" / "ke-hoach.json", limit=2_000_000)
+            items = json.loads(raw.decode("utf-8"))["muc"]
+        except sandbox.UnsafeJobDir:
+            raise StudioError("kế hoạch ảnh của video không an toàn", refund=False) from None
         except (OSError, ValueError, KeyError, TypeError):
             raise StudioError("kế hoạch ảnh của video hỏng", refund=True) from None
         root = self.project.resolve()
@@ -3963,13 +3989,15 @@ class Builder:
                 picture = await self.picture(request, size=size, orientation="portrait" if width < height else "landscape")
             except images.ImageError as exc:
                 raise StudioError(f"không lấy được ảnh cho video ({exc})", refund=True) from None
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(picture.data)
+            try:
+                sandbox.write_file(self.job_dir, target, picture.data)   # không theo liên kết, không ra ngoài
+            except sandbox.UnsafeJobDir:
+                raise StudioError("thư mục ảnh của video không an toàn", refund=False) from None
             if source == "tim":
                 sources.append({"filename": target.name, "author": picture.author, "license_name": picture.license,
                                 "provider": picture.provider, "source_url": picture.source_url})
         if sources:
-            images.sources_manifest(sources, self.project / "anh" / "image_sources.json")
+            images.sources_manifest(sources, self.project / "anh" / "image_sources.json", root=self.job_dir)
         model = images.image_config().model
         done = await self.run([str(self.where.python), script, str(self.project), "--cong-cu", IMAGE_TOOL_NAME,
                                "--mo-hinh", model], timeout=900, network=False, extra=extra, extra_env=extra_env)
@@ -4130,6 +4158,11 @@ class Builder:
         )
         browsers = sandbox.browsers_dir()
         # video.py chụp slide bằng Chromium: chỉ cho nó đúng chỗ Chromium (môi trường đã lọc không có LOCALAPPDATA).
+        # video.py tự bật máy chủ xem trước (svg_editor/server.py --daemon) trên 127.0.0.1 rồi visual_review.py
+        # (Chromium) đọc nó, tắt khi xong — cả ba trong CÙNG một đơn vị systemd. Bước này chạy network=False →
+        # PrivateNetwork=yes: đơn vị có loopback riêng, nên 127.0.0.1 của đơn vị chạy được mà không chạm 127.0.0.1
+        # của máy (9router, dashboard, sidecar). Chỉ bước giọng đọc (edge-tts) có mạng, và bước đó không cần
+        # loopback (IPAddressDeny chặn localhost). Đừng đổi bước video.py sang network=True.
         extra_env = ({"PLAYWRIGHT_BROWSERS_PATH": str(browsers), "LOCALAPPDATA": str(browsers.parent)} if browsers else None)
         for argv, timeout, network in steps:
             result = await self.run(argv, timeout=timeout, network=network, extra=[browsers], extra_env=extra_env)
@@ -4215,6 +4248,8 @@ class Studio:
                 logger.info("[zalo] xưởng: %d việc dở từ lần chạy trước — đã trả lượt", lost)
         except Exception as exc:
             logger.warning("[zalo] xưởng: không dọn được việc cũ: %s", exc)
+        # Dashboard đọc studio-policy.json để khoá nút video + hiện ghi chú (Windows / Linux không hộp cát).
+        gp.publish_video_policy()
 
     # -- luồng nền ----------------------------------------------------------
     def _ensure_loop(self) -> asyncio.AbstractEventLoop:
@@ -4398,7 +4433,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 - Test: `test_zalo_studio.py` (nối thêm)
 
 **Interfaces:**
-- Consumes: `group_permissions.studio_settings`, `STUDIO_LABELS`, `STUDIO_TOOLS`, `VIDEO_BLOCKED` (Task 1); `jobs.Studio/Job/Busy`, `ledger.Ledger` (Task 6); `recipes.RECIPES`, `kinds_for` (Task 2).
+- Consumes: `group_permissions.studio_settings`, `STUDIO_LABELS`, `STUDIO_TOOLS`, `VIDEO_BLOCKED`, `video_policy()` (Task 1 + sửa bảo mật: video tắt cả khi Linux chạy không hộp cát systemd; test muốn video mở phải giả cả `VIDEO_BLOCKED=False` lẫn `sandbox_mode → "systemd"`); `jobs.Studio/Job/Busy`, `ledger.Ledger` (Task 6); `recipes.RECIPES`, `kinds_for` (Task 2).
 - Produces: công cụ công khai `zalo_studio({kind, brief, options?: {loai?, kieu?}})` (công khai thứ 21) → `{"success": true, "result": {"status":"queued","job_id","position","quota_left","note"}}` hoặc lỗi; `tools.set_studio_context(ctx)`; `tools.studio_turn_note(sender_uid, thread_id, is_group)`; `_studio_block` trong `_feature_block`; `_studio_deliver(job, files, caption) -> True|False|None`; `_studio_send(job, payload)`.
 
 - [ ] **Step 1: Viết test**
@@ -4484,7 +4519,8 @@ class StudioToolTest(unittest.IsolatedAsyncioTestCase):
             verdict = zalo_tools.guard_member_tool_call("zalo_studio", {"kind": "video_bai_giang", "brief": "x"})
             self.assertEqual(verdict["action"], "block")
             self.assertIn("chưa bật", json.loads(await zalo_tools.zalo_studio({"kind": "video", "brief": "Video về quang hợp"}))["error"])
-        with patch.object(gp, "VIDEO_BLOCKED", False):
+        # Video mở chỉ khi KHÔNG phải Windows VÀ có hộp cát systemd (group_permissions.video_policy).
+        with patch.object(gp, "VIDEO_BLOCKED", False), patch.object(gp, "sandbox_mode", lambda: "systemd"):
             self.assertIsNone(zalo_tools.guard_member_tool_call("zalo_studio", {"kind": "video", "brief": "x"}))
 
     async def test_turn_note_lists_what_this_person_may_order_and_lượt_left(self):
@@ -4898,7 +4934,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: lược đồ spec §17.5; `studio_settings` (Task 1).
-- Produces: `dm-rules.js` `STUDIO_KEYS`, `normalizeDm` giữ nút xưởng, `dmVerdict().features` đúng 8 khoá. `dashboard/lib/permissions.js`: `STUDIO_FEATURES`, `studioPolicy(platform) -> {videoBlocked, note}`, `DEFAULT_STUDIO_QUOTA`, `MAX_STUDIO_QUOTA`, `parseStudio`; `parseSettings` nhận `studio?`, `studioQuota?`; `parseDm` nhận `studio?`, `people[].studio?`; store: view có `defaults.studio`, `groups[id].studio/studioQuota`, `dm.studio`, `dm.people[].studio`, `studio`; `setStudio`.
+- Produces: `dm-rules.js` `STUDIO_KEYS`, `normalizeDm` giữ nút xưởng, `dmVerdict().features` đúng 8 khoá. `dashboard/lib/permissions.js`: `STUDIO_FEATURES`, `studioPolicy(platform, policyFile) -> {videoBlocked, note}` (Linux đọc `studio-policy.json` của plugin; thiếu/hỏng = tắt), `DEFAULT_STUDIO_QUOTA`, `MAX_STUDIO_QUOTA`, `parseStudio`; `parseSettings` nhận `studio?`, `studioQuota?`; `parseDm` nhận `studio?`, `people[].studio?`; store: view có `defaults.studio`, `groups[id].studio/studioQuota`, `dm.studio`, `dm.people[].studio`, `studio`; `setStudio`.
 
 - [ ] **Step 1: Viết test**
 
@@ -5049,10 +5085,22 @@ index 73174d2..4bccbd0 100644
 +    { quota: 0, people: [{ uid: P1, name: '', quota: 2 }] });
 +});
 +
-+test('xưởng: chính sách máy Windows — video tắt kèm ghi chú; Linux không chặn gì', () => {
++test('xưởng: chính sách máy chủ — Windows video tắt; Linux theo studio-policy.json của plugin, thiếu/hỏng = tắt', (t) => {
 +  assert.deepEqual(studioPolicy('win32'), { videoBlocked: true, note: 'Máy chủ Windows không có hộp cát — video tắt' });
-+  assert.deepEqual(studioPolicy('linux'), { videoBlocked: false, note: '' });
++  const dir = mkdtempSync(join(tmpdir(), 'studio-policy-'));
++  t.after(() => rmSync(dir, { recursive: true, force: true }));
++  const file = join(dir, 'studio-policy.json');
++  assert.equal(studioPolicy('linux', file).videoBlocked, true, 'chưa có tệp');
++  writeFileSync(file, '{hỏng');
++  assert.equal(studioPolicy('linux', file).videoBlocked, true, 'tệp hỏng');
++  writeFileSync(file, JSON.stringify({ version: 1, videoBlocked: false, note: '', sandbox: 'systemd' }));
++  assert.deepEqual(studioPolicy('linux', file), { videoBlocked: false, note: '' });
++  writeFileSync(file, JSON.stringify({ version: 1, videoBlocked: true, note: 'Máy chủ chưa dùng được hộp cát systemd — video tắt', sandbox: 'plain' }));
++  assert.deepEqual(studioPolicy('linux', file), { videoBlocked: true, note: 'Máy chủ chưa dùng được hộp cát systemd — video tắt' });
++  writeFileSync(file, JSON.stringify({ version: 1, videoBlocked: false, note: '' }));
++  assert.equal(studioPolicy('win32', file).videoBlocked, true, 'Windows luôn tắt, tệp nói gì cũng vậy');
 +});
++// (Nhập `mkdtempSync, rmSync, writeFileSync` từ 'node:fs', `tmpdir` từ 'node:os', `join` từ 'node:path' nếu tệp test chưa có.)
 ```
 
 Trong `dashboard/routes/permissions.test.js`, test `Chủ bot xem và sửa được phân quyền`, thay
@@ -5117,6 +5165,7 @@ rồi thêm vào `DashboardContractTest` (ngay sau `test_s3_…`):
 ```python
     async def test_s4_studio_switches_and_quotas_written_by_dashboard_are_read_by_plugin(self):
         self.enterContext(patch.object(gp, "VIDEO_BLOCKED", False))
+        self.enterContext(patch.object(gp, "sandbox_mode", lambda: "systemd"))
         all8 = {feature: True for feature in gp.DM_FEATURES}
         lan = "1234567890123456"
         off = {f: False for f in gp.STUDIO_FEATURES}
@@ -5207,12 +5256,23 @@ index dad6a31..f4ac9b9 100644
 +];
 +/**
 + * Chính sách cài đặt (spec §17.6): máy Windows không có hộp cát của hệ điều hành nên video luôn tắt (plugin ép tắt;
-+ * giao diện khoá nút và ghi chú). Linux theo cài đặt bình thường.
++ * giao diện khoá nút và ghi chú). Linux: video chỉ mở khi gateway dùng được hộp cát systemd — plugin ghi kết luận vào
++ * `<HERMES_HOME>/zalo/studio-policy.json` (group_permissions.publish_video_policy, lúc xưởng khởi động). Thiếu tệp,
++ * tệp hỏng → tắt (đóng), ghi chú nói rõ. Đọc lại mỗi lần gọi (gateway có thể khởi động sau dashboard).
 + */
-+export function studioPolicy(platform = process.platform) {
-+  const videoBlocked = platform === 'win32';
-+  return { videoBlocked, note: videoBlocked ? 'Máy chủ Windows không có hộp cát — video tắt' : '' };
++const WINDOWS_NOTE = 'Máy chủ Windows không có hộp cát — video tắt';
++const UNKNOWN_NOTE = 'Chưa biết máy chủ có hộp cát systemd không (gateway chưa khởi động xưởng) — video tắt';
++export function studioPolicy(platform = process.platform, policyFile = '') {
++  if (platform === 'win32') return { videoBlocked: true, note: WINDOWS_NOTE };
++  try {
++    const data = JSON.parse(readFileSync(policyFile, 'utf8'));
++    if (data && data.version === 1 && typeof data.videoBlocked === 'boolean') {
++      return { videoBlocked: data.videoBlocked, note: data.videoBlocked ? String(data.note || UNKNOWN_NOTE).slice(0, 200) : '' };
++    }
++  } catch { /* thiếu/hỏng → đóng */ }
++  return { videoBlocked: true, note: UNKNOWN_NOTE };
 +}
++// (`readFileSync` từ 'node:fs' — thêm vào import đầu tệp nếu chưa có.)
 +export const DEFAULT_STUDIO_QUOTA = 3;
 +export const MAX_STUDIO_QUOTA = 50;
 +const MAX_STUDIO_PEOPLE = 500;
@@ -5467,7 +5527,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `STUDIO_FEATURES`, `parseStudio`, `studioPolicy`, `permissions.setStudio` (Task 8); sổ lượt plugin (Task 6).
-- Produces: mọi phản hồi `/api/permissions*` có `studioFeatures`, `studioPolicy`; `permissionRoutes({…, platform = process.platform})`; `PUT /api/permissions/studio`; `describeQuotas`; `readStudioUsage(file, {days=14, recent=20})` (ngày/người có `images`); `GET /api/studio-usage`; `paths.studioUsageFile`; dep `studioUsageFile`.
+- Produces: mọi phản hồi `/api/permissions*` có `studioFeatures`, `studioPolicy`; `permissionRoutes({…, platform = process.platform, studioPolicyFile = ''})` (server.js truyền `paths.studioPolicyFile` = `<HERMES_HOME>/zalo/studio-policy.json` — thêm vào `resolveDashboardPaths` cạnh `studioUsageFile`; tệp do plugin ghi, xem Task 6 `gp.publish_video_policy()`); `PUT /api/permissions/studio`; `describeQuotas`; `readStudioUsage(file, {days=14, recent=20})` (ngày/người có `images`); `GET /api/studio-usage`; `paths.studioUsageFile`; dep `studioUsageFile`.
 
 - [ ] **Step 1: Viết test** — nối vào cuối `dashboard/routes/permissions.test.js`:
 
@@ -5502,9 +5562,19 @@ test('xưởng: phản hồi phân quyền mang chính sách máy chủ (Windows
   const win = await ready(t, { platform: 'win32' });
   const res = await win.call('/api/permissions', { cookie: win.owner });
   assert.deepEqual(res.json.studioPolicy, { videoBlocked: true, note: 'Máy chủ Windows không có hộp cát — video tắt' });
-  const lin = await ready(t, { platform: 'linux' });
-  assert.equal((await lin.call('/api/permissions', { cookie: lin.owner })).json.studioPolicy.videoBlocked, false);
+  // Linux: theo studio-policy.json của plugin (group_permissions.publish_video_policy); chưa có tệp → đóng.
+  const dir = mkdtempSync(join(tmpdir(), 'studio-policy-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, 'studio-policy.json');
+  const lin = await ready(t, { platform: 'linux', studioPolicyFile: file });
+  const policy = async () => (await lin.call('/api/permissions', { cookie: lin.owner })).json.studioPolicy;
+  assert.equal((await policy()).videoBlocked, true, 'plugin chưa ghi chính sách: video tắt');
+  writeFileSync(file, JSON.stringify({ version: 1, videoBlocked: false, note: '', sandbox: 'systemd' }));
+  assert.deepEqual(await policy(), { videoBlocked: false, note: '' });
+  writeFileSync(file, JSON.stringify({ version: 1, videoBlocked: true, note: 'Máy chủ chưa dùng được hộp cát systemd — video tắt', sandbox: 'plain' }));
+  assert.deepEqual(await policy(), { videoBlocked: true, note: 'Máy chủ chưa dùng được hộp cát systemd — video tắt' });
 });
+// (Nhập `mkdtempSync, rmSync, writeFileSync` từ 'node:fs', `tmpdir` từ 'node:os', `join` từ 'node:path' nếu tệp test chưa có.)
 ```
 
 Tạo `dashboard/routes/studio.test.js`:
@@ -5689,9 +5759,9 @@ index fe5fc29..4fc050c 100644
 +  return [`Mặc định ${s.quota} lượt/người/ngày`, s.people.length ? `${s.people.length} người có hạn mức riêng` : 'không ai có hạn mức riêng'].join(' · ');
 +}
 +
-+export function permissionRoutes({ permissions, sidecar, threadNames, activity, platform = process.platform }) {
++export function permissionRoutes({ permissions, sidecar, threadNames, activity, platform = process.platform, studioPolicyFile = '' }) {
    const r = express.Router();
-+  const policy = studioPolicy(platform);
++  const policy = () => studioPolicy(platform, studioPolicyFile);   // đọc lại mỗi lần: plugin có thể ghi sau
    const fail = (res, err, fallback) => {
      if (err?.name === 'InvalidPermissions') return res.status(400).json({ ok: false, error: err.message });
      console.error('[dashboard]', err);
@@ -5700,7 +5770,7 @@ index fe5fc29..4fc050c 100644
  
    r.get('/permissions', requireAuth, (req, res) => {
 -    try { res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, ...permissions.get() }); } catch (err) { fail(res, err, READ_FAIL); }
-+    try { res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, studioFeatures: STUDIO_FEATURES, studioPolicy: policy, ...permissions.get() }); } catch (err) { fail(res, err, READ_FAIL); }
++    try { res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, studioFeatures: STUDIO_FEATURES, studioPolicy: policy(), ...permissions.get() }); } catch (err) { fail(res, err, READ_FAIL); }
    });
  
    r.get('/groups', requireAuth, async (req, res) => {
@@ -5709,7 +5779,7 @@ index fe5fc29..4fc050c 100644
          activity.append({ actor: req.user.username, action: 'permissions_defaults', detail: describeSettings(s) });
        } catch (err) { console.error('[dashboard] không ghi được Nhật ký phân quyền:', err); }
 -      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, ...state });
-+      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, studioFeatures: STUDIO_FEATURES, studioPolicy: policy, ...state });
++      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, studioFeatures: STUDIO_FEATURES, studioPolicy: policy(), ...state });
      } catch (err) { fail(res, err, SAVE_FAIL); }
    });
  
@@ -5718,7 +5788,7 @@ index fe5fc29..4fc050c 100644
          activity.append({ actor: req.user.username, action: 'permissions_dm', detail: describeDm(s) });
        } catch (err) { console.error('[dashboard] không ghi được Nhật ký phân quyền:', err); }
 -      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, ...state });
-+      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, studioFeatures: STUDIO_FEATURES, studioPolicy: policy, ...state });
++      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, studioFeatures: STUDIO_FEATURES, studioPolicy: policy(), ...state });
 +    } catch (err) { fail(res, err, SAVE_FAIL); }
 +  });
 +
@@ -5729,7 +5799,7 @@ index fe5fc29..4fc050c 100644
 +      try {
 +        activity.append({ actor: req.user.username, action: 'permissions_studio', detail: describeQuotas(s) });
 +      } catch (err) { console.error('[dashboard] không ghi được Nhật ký phân quyền:', err); }
-+      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, studioFeatures: STUDIO_FEATURES, studioPolicy: policy, ...state });
++      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, studioFeatures: STUDIO_FEATURES, studioPolicy: policy(), ...state });
      } catch (err) { fail(res, err, SAVE_FAIL); }
    });
  
@@ -5738,7 +5808,7 @@ index fe5fc29..4fc050c 100644
          });
        } catch (err) { console.error('[dashboard] không ghi được Nhật ký phân quyền:', err); }
 -      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, ...state });
-+      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, studioFeatures: STUDIO_FEATURES, studioPolicy: policy, ...state });
++      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, studioFeatures: STUDIO_FEATURES, studioPolicy: policy(), ...state });
      } catch (err) { fail(res, err, SAVE_FAIL); }
    });
  
@@ -6736,6 +6806,6 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 
 **2. Placeholder:** chỉ còn `<ngày phát hành>` và `<hermes-agent>`, `<khoá 9router nếu có>` ở bước triển khai — biết lúc phát hành, có chỉ dẫn.
 
-**3. Nhất quán kiểu:** 4 khoá xưởng cùng thứ tự ở `group_permissions.STUDIO_FEATURES`, `dm-rules.STUDIO_KEYS`, `dashboard/lib/permissions.STUDIO_FEATURES` (test so với Python) và `dm-permissions.js`. 12 `kind` ở `RECIPES`, enum `zalo_studio`, `STUDIO_KINDS` (test ghim). 6 loại trò chơi ở `recipes.GAME_TYPES` = `validate.GAME_TYPES` = enum `options.loai` = `GAME_SHAPES` = renderer của `games.html`. `Ledger.finish(images=)` ↔ `Outcome.images` ↔ `readStudioUsage().images` ↔ `studioPeople().images`. `studioPolicy` (JS) ↔ `VIDEO_BLOCKED` (Python) cùng điều kiện `win32`.
+**3. Nhất quán kiểu:** 4 khoá xưởng cùng thứ tự ở `group_permissions.STUDIO_FEATURES`, `dm-rules.STUDIO_KEYS`, `dashboard/lib/permissions.STUDIO_FEATURES` (test so với Python) và `dm-permissions.js`. 12 `kind` ở `RECIPES`, enum `zalo_studio`, `STUDIO_KINDS` (test ghim). 6 loại trò chơi ở `recipes.GAME_TYPES` = `validate.GAME_TYPES` = enum `options.loai` = `GAME_SHAPES` = renderer của `games.html`. `Ledger.finish(images=)` ↔ `Outcome.images` ↔ `readStudioUsage().images` ↔ `studioPeople().images`. `studioPolicy` (JS) ↔ `video_policy()` (Python): `win32` → tắt; Linux → đọc `studio-policy.json` do `publish_video_policy()` ghi (không hộp cát systemd → tắt, cùng câu ghi chú).
 
 **4. Review Focus:** năm mục ở đầu đều có test trong task sở hữu mã. Đã chạy toàn bộ mã của kế hoạch trên một bản sao dựng lại từ chính kế hoạch (`feat/dashboard-v2-phase6`, áp lần lượt mọi khối theo dấu `@target`): `HERMES_HOME=E:/Hermes npm test` → JS 593 test (589 pass, 4 bỏ qua, 0 fail; trước đó 579), Python 362 xanh (trước đó 289). Kiểm thật trên Lăng Tiêu (AI giả, ảnh web thật từ Openverse, bộ dựng thật): slide có ảnh → `.pptx` 178 KB; video Vox có ảnh web → `video.mp4` 1,9 MB trong 26 s; video bài giảng 2 trang → `.mp4` trong 16 s (edge-tts + FFmpeg + Chromium); thí nghiệm ảo, NĐ30, Đảng như bản trước; văn bản Đoàn qua bộ kiểm thật của skill `status: pass`; 6 khuôn trò chơi chơi được trong Chromium, 0 lỗi; giao diện Phân quyền/Sức khoẻ ở 1280/390 px không lỗi CSP. Chưa kiểm thật: vẽ ảnh AI thật (tốn tiền của chủ bot — chỉ kiểm bằng giả lập cổng `images/generations`) và hộp cát `systemd-run` trên VPS (chỉ đọc trong giai đoạn lập kế hoạch) — để ở Task 12 Step 7.

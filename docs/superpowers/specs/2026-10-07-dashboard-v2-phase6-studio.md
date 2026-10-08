@@ -77,7 +77,7 @@ Người ngoài nhắn "@bot làm slide hô hấp tế bào lớp 10 có ảnh m
 | Gửi sang hội thoại khác | `zalo_studio` không có tham số đích; danh tính từ `_TURN`; sidecar kiểm `sourceThreadId`. |
 | Lời nhờ đi vào bước VIẾT, bảo "chạy lệnh" | Lời gọi không có `tools` — chỉ trả chữ. |
 | Đầu ra AI chứa mã để bộ dựng chạy | Thí nghiệm: chỉ mẫu có sẵn (cấm `moi`). Trò chơi: 6 khuôn cố định do **plugin** chọn theo `options.loai`, dữ liệu JSON thoát `<`, hiển thị bằng `textContent`, trang có CSP `default-src 'none'`, không ảnh/không mạng. Văn bản: JSON kiểu đóng; đường ra do plugin đặt; Đoàn do bộ sinh của plugin dựng. |
-| Đầu ra AI trỏ ra tệp/mạng (đọc `.env`, SSRF) | SVG: cấm DOCTYPE/ENTITY, script, foreignObject, `<a>`, `on…=`; `href` chỉ `#id`, ảnh `data:` PNG/JPEG/GIF/WebP, hoặc `img:<mã>` **có trong danh sách ảnh đã tải** (đổi thành `../images/…`). Video: `anh`/`nen`/`nhan-vat` chỉ `ve: <mô tả>` hoặc `tim: <từ khoá>`, cấm `/`, `\`, `..`, `http`, `file:`, `www.`; kế hoạch ảnh của 2Anh Studio bị kiểm lại (chỉ `ve`/`tim`, `file_goc` nằm trong dự án, đuôi `.png/.jpg`, cỡ `WxH`). |
+| Đầu ra AI trỏ ra tệp/mạng (đọc `.env`, SSRF) | SVG: chỉ thẻ không gian tên SVG; cấm DOCTYPE/ENTITY, script, foreignObject, `<a>`, `<style>`, hoạt hình SMIL (`animate`, `set`, `animateMotion`, `animateTransform`, `mpath`), `on…=`, dấu `\` trong thuộc tính; hàm CSS chỉ trong danh sách cho phép (không `image-set(`, `image(`, `src(`, `element(`…), `url()` chỉ `#id`; `href` chỉ `#id` hoặc `img:<mã>` **có trong danh sách ảnh đã tải** (đổi thành `../images/…`), không ảnh `data:`. Video: `anh`/`nen`/`nhan-vat` và vật `anh` trong nhịp Vox (`nhip: <cụm> | anh: …`) chỉ `ve: <mô tả>` hoặc `tim: <từ khoá>`, cấm `/`, `\`, `..`, `http`, `file:`, `www.`; kế hoạch ảnh của 2Anh Studio bị kiểm lại (chỉ `ve`/`tim`, `file_goc` nằm trong dự án, đuôi `.png/.jpg`, cỡ `WxH`). |
 | Lời xin ảnh dùng để tấn công mạng/tốn tiền | Ảnh AI: câu mô tả chỉ là chữ gửi tới cổng vẽ của chủ bot. Ảnh web: chỉ tìm ở `api.openverse.org`; tải kết quả qua `fetch` (https, phân giải rồi kiểm mọi IP là công cộng, nối thẳng IP đã kiểm với SNI/chứng chỉ của tên gốc, ≤ 3 chuyển hướng kiểm lại từng chặng, Content-Type ảnh, ≤ 8 MB, 30 giây). Trần: slide ≤ 4 ảnh AI + 6 ảnh web; video ≤ 12 AI + 8 web. |
 | Lộ khoá ảnh/AI | Khoá chỉ dùng ở tiến trình cha; hộp cát không có khoá, không có mạng ở bước xử lý ảnh. |
 | Lộ thông tin riêng của chủ bot | Lời gọi VIẾT chỉ có tài liệu công khai + lời nhờ. |
@@ -116,7 +116,7 @@ Không có: nhạc nền tải về (`nhac-nen`), ảnh/tệp người dùng có
 
 - 4 nút xưởng nằm chung `features`, **thiếu khoá = TẮT**. Mặc định và `dm` chỉ ghi nút đang bật; nhóm và người ghi phần khác lớp dưới. Nhóm = tắt ← `defaults` ← `groups[id]`; nhắn riêng = tắt ← `dm` ← `dm.people[uid]`.
 - Hạn mức (0–50): `studio.people[uid].quota` ← (trong nhóm) `groups[id].studioQuota` ← `studio.quota` ← 3. 0 = không được nhờ.
-- **Windows:** plugin ép `studioVideo = false` bất kể tệp (`group_permissions.VIDEO_BLOCKED`).
+- **Windows, hoặc Linux không dùng được hộp cát systemd** (không root, không `systemd-run`, `ZALO_STUDIO_SANDBOX=none`): plugin ép `studioVideo = false` bất kể tệp (`group_permissions.video_policy()`), ghi kết luận + câu ghi chú vào `<HERMES_HOME>/zalo/studio-policy.json` để dashboard khoá nút và hiện đúng câu đó (thiếu tệp = tắt).
 - Tương thích: bản v1.21–1.23 chỉ đọc khoá biết → bỏ qua. Dashboard cũ ghi tệp làm rơi khoá xưởng → xưởng tắt (an toàn). Dashboard v1.24 nhận thân PUT thiếu `studio` thì **giữ** nút xưởng đang có.
 - **Fail open = xưởng tắt**: không có tệp, tệp hỏng, không đọc được, lỗi bất ngờ → 4 nút tắt (guard và công cụ).
 
@@ -124,24 +124,29 @@ Không có: nhạc nền tải về (`nhac-nen`), ảnh/tệp người dùng có
 
 **Linux (VPS) — systemd** (`sandbox.mode() == "systemd"` khi Linux + root + có `systemd-run`):
 ```
-systemd-run --quiet --wait --pipe --collect --service-type=exec
+systemd-run --quiet --wait --pipe --collect --service-type=exec --unit=zalo-studio-<mã việc>
   -p User=nobody -p Group=nogroup -p NoNewPrivileges=yes -p PrivateTmp=yes -p PrivateDevices=yes
-  -p ProtectSystem=strict -p ProtectHome=tmpfs -p ReadWritePaths=<thư mục việc>
-  -p ProtectKernelTunables=yes -p ProtectKernelModules=yes -p ProtectControlGroups=yes
-  -p RestrictSUIDSGID=yes -p LockPersonality=yes -p CapabilityBoundingSet=
+  -p ProtectSystem=strict -p ProtectHome=tmpfs -p ProtectProc=invisible
+  -p ProtectKernelTunables=yes -p ProtectKernelModules=yes -p ProtectKernelLogs=yes -p ProtectControlGroups=yes
+  -p RestrictNamespaces=yes -p RestrictSUIDSGID=yes -p LockPersonality=yes -p CapabilityBoundingSet=
+  -p RestrictAddressFamilies="AF_INET AF_INET6 AF_UNIX"
   -p MemoryMax=1536M -p CPUQuota=200% -p TasksMax=256 -p RuntimeMaxSec=<hạn giờ>
-  -p PrivateNetwork=yes            (bước có mạng — giọng đọc edge-tts, dựng video: IPAddressDeny=localhost link-local multicast 10/8 172.16/12 192.168/16 100.64/10)
-  -p BindReadOnlyPaths=<kho Python uv> [<Chromium>] [<skill văn bản>]   (chỉ thư mục dưới /root, /home)
+  -p TemporaryFileSystem=<chỗ bị che>:ro   (/opt /srv /mnt /media, HERMES_HOME, ZALO_SIDECAR_DIR, thư mục chứa các việc, ZALO_STUDIO_HIDE — chỉ thư mục có thật, ngoài /root, /home)
+  -p BindPaths=<thư mục việc> -p ReadWritePaths=<thư mục việc>
+  -p PrivateNetwork=yes            (bước có mạng — giọng đọc edge-tts, dựng video giải thích: IPAddressDeny=localhost link-local multicast 0/8 10/8 100.64/10 172.16/12 192.168/16 198.18/15 fc00::/7 fe80::/10 fec0::/10 <địa chỉ của chính máy chủ>)
+  -p BindReadOnlyPaths=<2Anh Studio> <kho Python uv> [<Chromium>] [<skill văn bản>]   (chỉ thư mục nằm dưới chỗ bị che)
+  -p InaccessiblePaths=<thư mục gắn lại>/.env   (nếu có)
   -E <môi trường đã lọc> -- <python|node> <script cố định> <tham số cố định>
 ```
-Thư mục việc `/var/lib/zalo-studio/<id>` (không ở `/tmp`, `/var/tmp` vì `PrivateTmp`), trao cho `nobody`. Lập kế hoạch ảnh, xử lý ảnh, kiểm slide, xuất PPTX: **không mạng**. Vẽ/tải ảnh: tiến trình cha (không trong hộp cát) qua `images.py`.
+Đường dẫn cấu hình có khoảng trắng, nháy, `\`, `:`, `%`, `;` → lỗi rõ (`SandboxConfigError`), việc dừng, trả lượt. Hết giờ / huỷ: `systemctl stop zalo-studio-<mã việc>` rồi giết client. Video bài giảng: bước `video.py` (máy chủ xem trước trên 127.0.0.1 + Chromium) chạy KHÔNG mạng → loopback riêng của đơn vị, không đụng 127.0.0.1 của máy.
+Thư mục việc `/var/lib/zalo-studio/<id>` (không ở `/tmp`, `/var/tmp` vì `PrivateTmp`), trao cho `nobody` (`chown` không theo liên kết). Trước mỗi bước và khi gom kết quả: liên kết tượng trưng, tệp đặc biệt, liên kết cứng → gỡ, dừng việc, tính lượt. Tiến trình cha chỉ đọc/ghi trong thư mục việc qua `sandbox.read_file`/`write_file` (không theo liên kết, không ra ngoài). Lập kế hoạch ảnh, xử lý ảnh, kiểm slide, xuất PPTX: **không mạng**. Vẽ/tải ảnh: tiến trình cha (không trong hộp cát) qua `images.py`.
 
-**Windows (Lăng Tiêu) — không có hộp cát OS → chính sách cài đặt:** video **luôn tắt** (plugin ép tắt, dashboard khoá nút + ghi chú "Máy chủ Windows không có hộp cát — video tắt"). Các loại khác mặc định tắt cho mọi nhóm (thiếu khoá = tắt) — chủ bot chỉ bật cho nhóm/người tin cậy. Hàng rào còn lại: bước viết không công cụ; `validate.py`; dòng lệnh cố định; môi trường chỉ `PATH`, `SYSTEMROOT`… (không khoá); `TEMP`/`HOME`/`USERPROFILE` vào thư mục việc; hạn giờ + `taskkill /T`; `CREATE_NO_WINDOW`; ảnh vẫn qua `images.py`.
+**Windows (Lăng Tiêu), và Linux không dùng được systemd — không có hộp cát OS → chính sách cài đặt:** video **luôn tắt** (plugin ép tắt, dashboard khoá nút + ghi chú "Máy chủ Windows không có hộp cát — video tắt" / câu riêng cho Linux không hộp cát). POSIX: bộ dựng chạy trong nhóm tiến trình riêng, hết giờ giết cả nhóm (`killpg`). Các loại khác mặc định tắt cho mọi nhóm (thiếu khoá = tắt) — chủ bot chỉ bật cho nhóm/người tin cậy. Hàng rào còn lại: bước viết không công cụ; `validate.py`; dòng lệnh cố định; môi trường chỉ `PATH`, `SYSTEMROOT`… (không khoá); `TEMP`/`HOME`/`USERPROFILE` vào thư mục việc; hạn giờ + `taskkill /T`; `CREATE_NO_WINDOW`; ảnh vẫn qua `images.py`.
 
 ## 17.7 Hàng đợi, giới hạn, dọn dẹp, gửi trả
 
 - `zalo_studio` trả lời ngay; việc chạy trên luồng `zalo-studio`. `ZALO_STUDIO_CONCURRENCY` 1 (tối đa 2), 5 chờ, 1 việc chưa xong/người.
-- Trần: lời nhờ 8.000 ký tự; tệp nguồn 60.000; trang SVG 120.000 (+1,5 MB ảnh `data:`); ảnh ≤ 8 MB, PNG/JPEG; slide ≤ 12 trang, ≤ 4 AI + 6 web; video ≤ 180 s, 720p, ≤ 12 AI + 8 web; tệp kết quả 50 MB (mp4 200 MB), ≤ 4 tệp. Lời gọi AI `timeout=300`; vẽ ảnh 150 s; tải ảnh 30 s.
+- Trần: lời nhờ 8.000 ký tự; tệp nguồn 60.000; trang SVG 120.000 (không ảnh `data:` — chỉ `img:<mã>`); ảnh ≤ 8 MB, PNG/JPEG, ≤ 8192 px mỗi cạnh, ≤ 40 MP; lời đọc video ≤ 180 s × 18 ký tự/s, ≤ 40 cảnh; slide ≤ 12 trang, ≤ 4 AI + 6 web; video ≤ 180 s, 720p, ≤ 12 AI + 8 web; tệp kết quả 50 MB (mp4 200 MB), ≤ 4 tệp. Lời gọi AI `timeout=300`; vẽ ảnh 150 s; tải ảnh 30 s.
 - Nội dung sai → viết lại đúng một lần. Ảnh slide không lấy được → bỏ ảnh đó (trang không được dùng mã của nó) và ghi chú; ảnh Vox không lấy được → việc hỏng, trả lượt.
 - Lỗi do máy (thiếu cài đặt, quá giờ, bộ dựng/bộ kiểm hỏng, ảnh không lấy được ở Vox, gửi không được, gateway khởi động lại, chủ bot vừa tắt nút) → trả lượt. Lỗi do nội dung → tính lượt. Lỗi lạ → trả lượt, câu chung.
 - Gửi: kiểm lại nút + nhóm "Hoạt động" + `dm_allows`, gửi dưới danh tính đã chụp. "Sidecar không phản hồi" → giữ thư mục 15 phút. Khởi động: việc dở → `refunded`; thư mục việc > 24 giờ → xoá.
@@ -172,6 +177,8 @@ Thư mục việc `/var/lib/zalo-studio/<id>` (không ở `/tmp`, `/var/tmp` vì
 | `ZALO_STUDIO_SANDBOX` | `auto` | `none` tắt hộp cát (chỉ gỡ lỗi) |
 | `ZALO_STUDIO_CONCURRENCY` | `1` | Tối đa 2 |
 | `ZALO_STUDIO_BIND` | — | Thư mục chỉ đọc thêm cho hộp cát |
+| `ZALO_SIDECAR_DIR` | — | Thư mục cài sidecar (`.env`, `data/` của bot) — che khỏi hộp cát nếu không nằm dưới `/root`, `/home`, `/opt`, `/srv`, `/mnt`, `/media` |
+| `ZALO_STUDIO_HIDE` | — | Thư mục che thêm khỏi hộp cát (cách nhau bằng dấu phẩy) |
 | `PLAYWRIGHT_BROWSERS_PATH` | Linux `~/.cache/ms-playwright`, Windows `%LOCALAPPDATA%\ms-playwright` | Chromium cho video |
 
 ## 17.11 Triển khai
