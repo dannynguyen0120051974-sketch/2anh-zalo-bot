@@ -67,6 +67,12 @@ export function createPeopleStore({ file, now = Date.now }) {
     updatedAt: Number.isFinite(p?.updated_at) ? p.updated_at * 1000 : null,
     updatedBy: String(p?.updated_by ?? ''),
   });
+  /** Khách đã thấy hồ sơ ở mốc `expectedUpdatedAt` (null = chưa có); bot sửa sau đó thì mốc khác → 409. `undefined` = không kiểm. */
+  function checkSeen(data, uid, expected) {
+    if (expected === undefined) return;
+    const stored = data[uid] && typeof data[uid] === 'object' ? view(uid, data[uid]).updatedAt : null;
+    if ((expected ?? null) !== stored) throw err(409, 'Hồ sơ vừa được bot cập nhật — tải lại rồi sửa');
+  }
   return {
     /** Mọi hồ sơ, mới sửa trước. Tệp hỏng → lỗi 503. */
     list() {
@@ -75,9 +81,10 @@ export function createPeopleStore({ file, now = Date.now }) {
         .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
     },
     /** Thay cả hồ sơ của `uid` (tạo mới nếu chưa có). `by` = tên người dùng dashboard. */
-    put(uid, person, by) {
+    put(uid, person, by, { expectedUpdatedAt } = {}) {
       if (!ZALO_UID.test(String(uid))) throw err(400, 'UID Zalo không hợp lệ — chọn lại người trong danh sách.');
       const { data, stamp } = load();
+      checkSeen(data, uid, expectedUpdatedAt);
       if (!data[uid] && Object.keys(data).length >= 5000) throw err(400, 'Sổ người quen đã đủ 5000 người — xoá bớt hồ sơ cũ trước.');
       const entry = { ...(data[uid] || {}) };
       for (const k of ['name', 'note']) { if (person[k]) entry[k] = person[k]; else delete entry[k]; }
@@ -89,9 +96,10 @@ export function createPeopleStore({ file, now = Date.now }) {
       return view(uid, entry);
     },
     /** Xoá hồ sơ; trả false nếu không có. */
-    remove(uid) {
+    remove(uid, { expectedUpdatedAt } = {}) {
       const { data, stamp } = load();
       if (!Object.hasOwn(data, uid)) return false;
+      checkSeen(data, uid, expectedUpdatedAt);
       delete data[uid];
       save(data, stamp);
       return true;

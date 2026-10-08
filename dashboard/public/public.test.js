@@ -791,10 +791,13 @@ test('Trí nhớ: bản nháp hồ sơ luôn có dòng trống, thân gửi bỏ
   const d = personDraft({ name: 'Lan', note: '', fields: [{ key: 'môn', value: 'Hoá' }] });
   assert.deepEqual(d.fields, [{ key: 'môn', value: 'Hoá' }, { key: '', value: '' }]);
   assert.deepEqual(personPayload(d), { name: 'Lan', note: '', fields: [{ key: 'môn', value: 'Hoá' }] });
+  assert.equal(personPayload(d, 1234).updatedAt, 1234, 'gửi mốc sửa khách đã thấy');
+  assert.equal(personPayload(d, null).updatedAt, null);
   assert.equal(usageText(1100, 2200), '1.100/2.200 ký tự (50 %)');
   assert.equal(usageText(3000, 2200), '3.000/2.200 ký tự (100 %)');
   const src = readFileSync(join(root, 'views', 'memory.js'), 'utf8');
   assert.match(src, /me\?\.role === 'admin' \? html`<\$\{AgentMemory\}/, 'bộ nhớ trợ lý chỉ hiện cho Quản trị');
+  assert.match(src, /err\.status === 409\) onStale/, 'gặp 409 thì tải lại danh sách');
 });
 
 test('Lịch hẹn: trạng thái việc hẹn giờ, lọc không dấu, nhãn lặp lại của lời nhắc', async () => {

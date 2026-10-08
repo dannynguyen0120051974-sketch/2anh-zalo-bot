@@ -40,3 +40,24 @@ test('sổ người quen hỏng: đọc báo 503 có bước tiếp theo, không
   assert.match(r.json.error, /báo người cài đặt/);
   assert.doesNotMatch(r.json.error, /[\\/]zalo[\\/]/);
 });
+
+test('sổ người quen: gửi updatedAt cũ (bot vừa sửa) → 409 cho cả PUT lẫn DELETE, không ghi; đúng mốc thì ghi được', async (t) => {
+  const deps = makeDeps(t);
+  seed(deps, { [A]: { name: 'Cô Lan', note: 'Tổ Hoá', updated_at: 100 } });
+  const { call } = await startApp(t, deps);
+  const owner = await loginAs(t, deps, call, { username: 'khach', role: 'owner' });
+  const file = join(deps.dir, 'zalo', 'people.json');
+  const stale = await call(`/api/people/${A}`, { method: 'PUT', cookie: owner, body: { name: 'Mới', note: 'x', updatedAt: 50_000 } });
+  assert.equal(stale.status, 409);
+  assert.match(stale.json.error, /vừa được bot cập nhật/);
+  assert.equal(JSON.parse(readFileSync(file, 'utf8'))[A].name, 'Cô Lan');
+  assert.equal((await call(`/api/people/${A}`, { method: 'DELETE', cookie: owner, body: { updatedAt: 50_000 } })).status, 409);
+  assert.ok(JSON.parse(readFileSync(file, 'utf8'))[A], 'không xoá');
+  assert.equal((await call(`/api/people/${A}`, { method: 'PUT', cookie: owner, body: { name: 'Cô Lan 2', note: '', updatedAt: 100_000 } })).status, 200);
+  const seen = (await call('/api/people', { cookie: owner })).json.people[0].updatedAt;
+  assert.equal((await call(`/api/people/${A}`, { method: 'DELETE', cookie: owner, body: { updatedAt: seen } })).status, 200);
+  // Người mới (chưa có hồ sơ): mốc null khớp; mốc khác null nghĩa là hồ sơ đã bị xoá/đổi → 409.
+  const B = '2222222222222222222';
+  assert.equal((await call(`/api/people/${B}`, { method: 'PUT', cookie: owner, body: { name: 'Minh', updatedAt: 7 } })).status, 409);
+  assert.equal((await call(`/api/people/${B}`, { method: 'PUT', cookie: owner, body: { name: 'Minh', updatedAt: null } })).status, 200);
+});

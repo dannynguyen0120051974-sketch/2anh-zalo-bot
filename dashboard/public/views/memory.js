@@ -9,8 +9,10 @@ export function personDraft(p) {
 }
 
 /** Thân PUT /api/people/:uid — bỏ dòng thông tin thêm trống hoàn toàn. */
-export function personPayload(d) {
-  return { name: d.name, note: d.note, fields: d.fields.filter((f) => f.key.trim() || f.value.trim()) };
+export function personPayload(d, updatedAt) {
+  const out = { name: d.name, note: d.note, fields: d.fields.filter((f) => f.key.trim() || f.value.trim()) };
+  if (updatedAt !== undefined) out.updatedAt = updatedAt;   // mốc sửa khách đã thấy: bot sửa sau đó thì server trả 409
+  return out;
 }
 
 /** "1.234/2.200 ký tự (56 %)" cho thanh dung lượng bộ nhớ. */
@@ -19,19 +21,19 @@ export function usageText(used, limit) {
   return `${n.format(used)}/${n.format(limit)} ký tự (${limit ? Math.min(100, Math.round((used / limit) * 100)) : 0} %)`;
 }
 
-function PersonEditor({ person, onDone }) {
+function PersonEditor({ person, onDone, onStale }) {
   const [d, setD] = useState(personDraft(person));
   const [msg, setMsg] = useState({});
   const [busy, setBusy] = useState(false);
   const setField = (i, k, v) => { const fields = d.fields.map((f, j) => (j === i ? { ...f, [k]: v } : f)); if (i === fields.length - 1 && v) fields.push({ key: '', value: '' }); setD({ ...d, fields }); };
   async function save(e) {
     e.preventDefault(); setBusy(true); setMsg({});
-    try { await api(`/api/people/${person.uid}`, { method: 'PUT', body: personPayload(d) }); onDone('Đã lưu hồ sơ.'); } catch (err) { setMsg({ error: err.message }); } finally { setBusy(false); }
+    try { await api(`/api/people/${person.uid}`, { method: 'PUT', body: personPayload(d, person.updatedAt ?? null) }); onDone('Đã lưu hồ sơ.'); } catch (err) { if (err.status === 409) onStale(err.message); else setMsg({ error: err.message }); } finally { setBusy(false); }
   }
   async function remove() {
     if (!confirm(`Xoá hồ sơ của ${person.name || person.uid}? Bot sẽ không còn nhớ người này.`)) return;
     setBusy(true); setMsg({});
-    try { await api(`/api/people/${person.uid}`, { method: 'DELETE' }); onDone('Đã xoá hồ sơ.'); } catch (err) { setMsg({ error: err.message }); setBusy(false); }
+    try { await api(`/api/people/${person.uid}`, { method: 'DELETE', body: { updatedAt: person.updatedAt ?? null } }); onDone('Đã xoá hồ sơ.'); } catch (err) { if (err.status === 409) onStale(err.message); else { setMsg({ error: err.message }); setBusy(false); } }
   }
   return html`<form class="mem-editor" onSubmit=${save} novalidate>
     <div class="field"><label for=${`pn-${person.uid}`}>Tên gọi</label>
@@ -61,6 +63,7 @@ function People() {
   const load = () => api(`/api/people?${new URLSearchParams({ q })}`).then((r) => setData(r)).catch((e) => setMsg({ error: e.message }));
   useEffect(() => { const id = setTimeout(load, 250); return () => clearTimeout(id); }, [q]);
   const done = (text) => { setOpen(''); setMsg(text ? { ok: text } : {}); load(); };
+  const stale = (text) => { setOpen(''); setMsg({ error: text }); load(); };   // bot vừa sửa hồ sơ: đóng form, tải lại danh sách
   return html`<section class="card">
     <h2>Sổ người quen</h2>
     <p class="muted small">Bot tự ghi khi được dặn "nhớ giúp…" (tự khai — không dùng để cấp quyền). Sửa ở đây có hiệu lực ngay từ tin nhắn sau.</p>
@@ -76,7 +79,7 @@ function People() {
         ${p.fields.length ? html`<small class="muted">${p.fields.map((f) => `${f.key}: ${f.value}`).join(' · ')}</small>` : null}
         <small class="muted">Sửa lần cuối ${fmtTime(p.updatedAt)}${p.updatedBy.startsWith('dashboard:') ? ` trên dashboard (${p.updatedBy.slice(10)})` : ''}</small></span>
       <button type="button" class="btn btn-secondary btn-sm" aria-expanded=${open === p.uid ? 'true' : 'false'} onClick=${() => setOpen(open === p.uid ? '' : p.uid)}>Sửa</button>
-      ${open === p.uid ? html`<${PersonEditor} person=${p} onDone=${done} />` : null}
+      ${open === p.uid ? html`<${PersonEditor} person=${p} onDone=${done} onStale=${stale} />` : null}
     </li>`)}</ul>
   </section>`;
 }

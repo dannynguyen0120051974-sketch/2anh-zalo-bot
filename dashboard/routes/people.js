@@ -19,6 +19,13 @@ export function peopleRoutes({ people, activity }) {
     try { activity.append({ actor: req.user.username, action, detail }); } catch (e) { console.error('[dashboard] không ghi được Nhật ký:', e); }
   };
 
+  /** `updatedAt` khách đã thấy (số hoặc null); không gửi = không kiểm. */
+  const seen = (req) => {
+    const b = req.body && typeof req.body === 'object' ? req.body : {};
+    if (!Object.hasOwn(b, 'updatedAt')) return undefined;
+    return b.updatedAt === null || Number.isFinite(b.updatedAt) ? b.updatedAt : NaN;
+  };
+
   r.get('/people', requireAuth, (req, res) => {
     try {
       const q = fold(String(req.query.q ?? '')).trim().slice(0, 100);
@@ -31,7 +38,7 @@ export function peopleRoutes({ people, activity }) {
   r.put('/people/:uid', requireAuth, (req, res) => {
     try {
       if (!ZALO_UID.test(req.params.uid)) return res.status(400).json({ ok: false, error: 'UID Zalo không hợp lệ — chọn lại người trong danh sách.' });
-      const person = people.put(req.params.uid, parsePerson(req.body), req.user.username);
+      const person = people.put(req.params.uid, parsePerson(req.body), req.user.username, { expectedUpdatedAt: seen(req) });
       log(req, 'people_update', person.name || req.params.uid);
       res.json({ ok: true, person });
     } catch (err) { fail(res, err, 'Chưa lưu được hồ sơ — thử lại, nếu vẫn lỗi hãy báo người cài đặt.'); }
@@ -40,7 +47,7 @@ export function peopleRoutes({ people, activity }) {
   r.delete('/people/:uid', requireAuth, (req, res) => {
     try {
       if (!ZALO_UID.test(req.params.uid)) return res.status(400).json({ ok: false, error: 'UID Zalo không hợp lệ — chọn lại người trong danh sách.' });
-      if (!people.remove(req.params.uid)) return res.status(404).json({ ok: false, error: 'Hồ sơ này không còn — tải lại trang.' });
+      if (!people.remove(req.params.uid, { expectedUpdatedAt: seen(req) })) return res.status(404).json({ ok: false, error: 'Hồ sơ này không còn — tải lại trang.' });
       log(req, 'people_delete', req.params.uid);
       res.json({ ok: true });
     } catch (err) { fail(res, err, 'Chưa xoá được hồ sơ — thử lại, nếu vẫn lỗi hãy báo người cài đặt.'); }
