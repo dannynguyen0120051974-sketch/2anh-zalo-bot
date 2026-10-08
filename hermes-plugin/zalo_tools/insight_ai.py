@@ -11,6 +11,9 @@ thoại là chữ của thành viên nhóm — dữ liệu, không phải lời 
 không làm được gì ngoài viết chữ, và chữ đó chỉ hiện trên dashboard (textContent).
 
 Trần: ``ZALO_INSIGHT_DAILY`` lần/ngày (mặc định 10, 0 = tắt), đoạn hội thoại ≤ 30.000 ký tự, đầu ra ≤ 1.200 token.
+Nhiều tiến trình Hermes cùng nạp plugin nên mỗi yêu cầu được "nhận" bằng đổi tên nguyên tử (``<id>.json`` →
+``<id>.json.claimed``) và ``usage.json`` được khoá tệp; luồng nền chỉ làm việc trong tiến trình gateway.
+
 Mọi lỗi → tệp kết quả ``ok: false`` + câu dễ hiểu; không bao giờ làm hỏng gateway. ``ZALO_INSIGHT_AI=off`` tắt hẳn.
 """
 
@@ -18,20 +21,34 @@ import json
 import logging
 import os
 import re
+import sys
 import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
+# Khoá tệp: giống tools/memory_tool.py của Hermes (fcntl trên POSIX, msvcrt trên Windows).
+msvcrt = None
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+    try:
+        import msvcrt
+    except ImportError:
+        pass
+
 logger = logging.getLogger(__name__)
 
 POLL_S = 3.0
-MAX_REQUEST_BYTES = 64_000
+MAX_REQUEST_BYTES = 256_000
 MAX_TRANSCRIPT = 30_000
 DEFAULT_DAILY = 10
 MAX_OUTPUT_TOKENS = 1200
 CALL_TIMEOUT = 120
+STALE_CLAIM_S = 15 * 60   # yêu cầu đã nhận mà quá 15 phút chưa xong (tiến trình chết giữa chừng) → xếp lại một lần
 _ID = re.compile(r"^[0-9a-f]{16,32}$")
 _VN = timezone(timedelta(hours=7))
 # Mọi dấu "<" (kể cả bản toàn độ rộng / nhỏ) → "‹": thành viên nhóm không dựng lại được thẻ đóng </hoi_thoai>.
@@ -90,22 +107,54 @@ def _write_json(path: Path, data: Dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
+@contextmanager
+def _file_lock(path: Path):
+    """Khoá độc quyền giữa các tiến trình cho read-modify-write (tệp ``.lock`` riêng, như memory_tool của Hermes)."""
+    lock_path = path.with_name(path.name + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    if fcntl is None and msvcrt is None:
+        yield
+        return
+    fd = open(lock_path, "a+", encoding="utf-8")
+    try:
+        if fcntl:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        else:
+            fd.seek(0)
+            msvcrt.locking(fd.fileno(), msvcrt.LK_LOCK, 1)
+        yield
+    finally:
+        try:
+            if fcntl:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            else:
+                fd.seek(0)
+                msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
+        except (OSError, IOError):
+            pass
+        fd.close()
+
+
 def _take_quota(base: Path, limit: int) -> bool:
     """Trừ một lượt của hôm nay (giờ VN); hết lượt → False. Tệp hỏng → bắt đầu lại từ 0 cho hôm nay."""
     if limit <= 0:
         return False
     path = base / "usage.json"
     today = datetime.now(_VN).strftime("%Y-%m-%d")
-    try:
-        usage = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(usage, dict):
+    with _file_lock(path):
+        try:
+            usage = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(usage, dict):
+                usage = {}
+        except (OSError, ValueError):
             usage = {}
-    except (OSError, ValueError):
-        usage = {}
-    used = int(usage.get(today) or 0)
-    if used >= limit:
-        return False
-    _write_json(path, {today: used + 1})   # chỉ giữ hôm nay
+        try:
+            used = int(usage.get(today) or 0)
+        except (TypeError, ValueError):
+            used = 0
+        if used >= limit:
+            return False
+        _write_json(path, {today: used + 1})   # chỉ giữ hôm nay
     return True
 
 
@@ -123,7 +172,11 @@ def process_request(path: Path, llm: Any, *, limit: Optional[int] = None) -> Dic
         return {"ok": False, "error": "Yêu cầu hỏng — bấm Tóm tắt lại."}
     if llm is None:
         return {"ok": False, "error": "Trợ lý trên máy chủ chưa hỗ trợ tóm tắt (thiếu ctx.llm) — báo người cài đặt cập nhật Hermes."}
-    if not _take_quota(base, daily_limit() if limit is None else limit):
+    try:
+        has_quota = _take_quota(base, daily_limit() if limit is None else limit)
+    except OSError:
+        return {"ok": False, "error": "Máy chủ đang bận — bấm Tóm tắt lại sau ít phút."}
+    if not has_quota:
         return {"ok": False, "error": "Đã hết lượt tóm tắt hôm nay — thử lại ngày mai (người cài đặt có thể đổi ZALO_INSIGHT_DAILY)."}
     group = _clip(req.get("groupName"), 80).translate(_ANGLE)
     try:
@@ -149,6 +202,39 @@ def process_request(path: Path, llm: Any, *, limit: Optional[int] = None) -> Dic
         return {"ok": False, "error": "AI trả lời sai dạng — bấm Tóm tắt lại.", **out}
 
 
+def _recover_stale(base: Path, req_dir: Path) -> None:
+    """Yêu cầu đã nhận quá ``STALE_CLAIM_S`` mà chưa xong: xếp lại đúng một lần, lần hai thì báo lỗi."""
+    now = time.time()
+    for claimed in req_dir.glob("*.json.claimed"):
+        stem = claimed.name[: -len(".json.claimed")]
+        try:
+            if now - claimed.stat().st_mtime < STALE_CLAIM_S:
+                continue
+            taken = claimed.with_name(f"{stem}.json.recover")
+            os.rename(claimed, taken)          # chỉ một tiến trình thắng
+        except OSError:
+            continue
+        marker = req_dir / f"{stem}.retried"
+        try:
+            os.close(os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+            first_time = True
+        except FileExistsError:
+            first_time = False
+        except OSError:
+            first_time = False
+        try:
+            if first_time:
+                os.utime(taken)
+                os.rename(taken, req_dir / f"{stem}.json")
+            else:
+                _write_json(base / "results" / f"{stem}.json",
+                            {"ok": False, "error": "Lần tóm tắt này bị gián đoạn — bấm Tóm tắt lại.", "at": int(now * 1000)})
+                taken.unlink(missing_ok=True)
+                marker.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("[zalo] tóm tắt nhóm: không xếp lại được yêu cầu %s", stem, exc_info=True)
+
+
 def run_once(llm_getter: Callable[[], Any], base: Optional[Path] = None) -> int:
     """Xử lý mọi yêu cầu đang chờ; trả số yêu cầu đã xử lý."""
     base = base or insight_dir()
@@ -156,23 +242,39 @@ def run_once(llm_getter: Callable[[], Any], base: Optional[Path] = None) -> int:
     done = 0
     if not req_dir.is_dir():
         return 0
+    _recover_stale(base, req_dir)
     for path in sorted(req_dir.glob("*.json")):
         if not _ID.match(path.stem):
             path.unlink(missing_ok=True)
+            continue
+        # Nhận yêu cầu bằng đổi tên nguyên tử: tiến trình khác nhanh tay hơn thì rename lỗi → bỏ qua.
+        claimed = path.with_name(path.name + ".claimed")
+        try:
+            os.rename(path, claimed)
+        except OSError:
             continue
         llm = None
         try:
             llm = llm_getter()
         except Exception:
             llm = None
-        payload = process_request(path, llm)
+        payload = process_request(claimed, llm)
         payload["at"] = int(time.time() * 1000)
         try:
             _write_json(base / "results" / f"{path.stem}.json", payload)
         finally:
-            path.unlink(missing_ok=True)
+            claimed.unlink(missing_ok=True)
+            (req_dir / f"{path.stem}.retried").unlink(missing_ok=True)
         done += 1
     return done
+
+
+def in_gateway_process() -> bool:
+    """Tiến trình này là gateway Hermes? ``gateway/run.py`` đặt ``_HERMES_GATEWAY=1`` ngay khi được nạp."""
+    if os.environ.get("_HERMES_GATEWAY") == "1" or "gateway.run" in sys.modules:
+        return True
+    argv = [a.lower() for a in sys.argv[1:]]
+    return any(a == "gateway" and i + 1 < len(argv) and argv[i + 1] == "run" for i, a in enumerate(argv))
 
 
 _started = False
@@ -180,7 +282,11 @@ _start_lock = threading.Lock()
 
 
 def start_insight_worker(llm_getter: Callable[[], Any]) -> bool:
-    """Bật luồng nền (một lần mỗi tiến trình). ``ZALO_INSIGHT_AI=off`` → không bật."""
+    """Bật luồng nền (một lần mỗi tiến trình). ``ZALO_INSIGHT_AI=off`` → không bật.
+
+    Plugin có thể được nạp trước khi ``gateway.run`` được import (CLI chat, dashboard, ``hermes gateway`` nạp plugin
+    sớm), nên luồng kiểm ``in_gateway_process()`` ở MỖI vòng và chỉ xử lý yêu cầu khi đúng là gateway.
+    """
     global _started
     if (os.getenv("ZALO_INSIGHT_AI") or "").strip().lower() in {"off", "0", "false", "no"}:
         return False
@@ -192,7 +298,8 @@ def start_insight_worker(llm_getter: Callable[[], Any]) -> bool:
     def loop() -> None:
         while True:
             try:
-                run_once(llm_getter)
+                if in_gateway_process():
+                    run_once(llm_getter)
             except Exception:  # không bao giờ để luồng chết vì một tệp lạ
                 logger.warning("[zalo] tóm tắt nhóm: vòng xử lý lỗi", exc_info=True)
             time.sleep(POLL_S)

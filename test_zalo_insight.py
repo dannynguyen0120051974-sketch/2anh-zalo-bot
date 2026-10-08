@@ -5,6 +5,8 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -99,6 +101,79 @@ class InsightQueueTest(unittest.TestCase):
         self.assertEqual(out["open_questions"], [])
         with self.assertRaises(ValueError):
             insight_ai.parse_summary('{"mood":"x"}')
+
+    def test_request_is_claimed_atomically_and_lost_race_is_skipped(self):
+        llm = FakeLlm()
+        self.request()
+        real_rename = os.rename
+
+        def lost_race(src, dst):
+            if str(dst).endswith(".claimed"):
+                raise FileNotFoundError("tiến trình khác đã nhận")
+            return real_rename(src, dst)
+
+        with patch("os.rename", side_effect=lost_race):
+            self.assertEqual(insight_ai.run_once(lambda: llm), 0)
+        self.assertEqual(llm.calls, [], "không nhận được thì không gọi AI")
+        self.assertEqual(insight_ai.run_once(lambda: llm), 1)
+        self.assertEqual(len(llm.calls), 1)
+        # Yêu cầu đang được tiến trình khác xử lý (đã .claimed) thì không ai chạm vào.
+        req = os.path.join(self.dir, "requests")
+        with open(os.path.join(req, "aaaaaaaaaaaaaaaa.json.claimed"), "w", encoding="utf-8") as fh:
+            fh.write("{}")
+        self.assertEqual(insight_ai.run_once(lambda: llm), 0)
+        self.assertTrue(os.path.exists(os.path.join(req, "aaaaaaaaaaaaaaaa.json.claimed")))
+
+    def test_quota_is_exact_under_concurrent_claims(self):
+        results = []
+
+        def take():
+            results.append(insight_ai._take_quota(__import__("pathlib").Path(self.dir), 3))
+
+        threads = [threading.Thread(target=take) for _ in range(12)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(sum(results), 3)
+        with open(os.path.join(self.dir, "usage.json"), encoding="utf-8") as fh:
+            self.assertEqual(list(json.load(fh).values()), [3])
+
+    def test_stale_claim_is_requeued_once_then_failed(self):
+        llm = FakeLlm()
+        req = os.path.join(self.dir, "requests")
+        claimed = os.path.join(req, f"{REQ_ID}.json.claimed")
+        self.request()
+        os.rename(os.path.join(req, f"{REQ_ID}.json"), claimed)
+        self.assertEqual(insight_ai.run_once(lambda: llm), 0, "mới nhận chưa quá hạn thì để yên")
+        old = time.time() - insight_ai.STALE_CLAIM_S - 60
+        os.utime(claimed, (old, old))
+        self.assertEqual(insight_ai.run_once(lambda: llm), 1, "quá 15 phút → xếp lại và xử lý")
+        self.assertTrue(self.result()["ok"])
+        self.assertEqual(os.listdir(req), [])
+        # Lần thứ hai cùng yêu cầu vẫn kẹt → báo lỗi thay vì lặp mãi.
+        open(os.path.join(req, f"{REQ_ID}.retried"), "w").close()
+        with open(claimed, "w", encoding="utf-8") as fh:
+            fh.write("{}")
+        os.utime(claimed, (old, old))
+        self.assertEqual(insight_ai.run_once(lambda: llm), 0)
+        self.assertIn("gián đoạn", self.result()["error"])
+        self.assertEqual(len(llm.calls), 1)
+        self.assertEqual(os.listdir(req), [])
+
+    def test_request_size_cap_is_256k(self):
+        self.assertEqual(insight_ai.MAX_REQUEST_BYTES, 256_000)
+
+    def test_gateway_only_detection(self):
+        with patch.dict(os.environ, {}, clear=False), patch.object(sys, "argv", ["hermes", "chat"]), patch.dict(sys.modules):
+            os.environ.pop("_HERMES_GATEWAY", None)
+            sys.modules.pop("gateway.run", None)
+            self.assertFalse(insight_ai.in_gateway_process())
+            os.environ["_HERMES_GATEWAY"] = "1"
+            self.assertTrue(insight_ai.in_gateway_process())
+            os.environ.pop("_HERMES_GATEWAY")
+            with patch.object(sys, "argv", ["hermes", "gateway", "run"]):
+                self.assertTrue(insight_ai.in_gateway_process())
 
     def test_worker_can_be_disabled(self):
         with patch.dict(os.environ, {"ZALO_INSIGHT_AI": "off"}):

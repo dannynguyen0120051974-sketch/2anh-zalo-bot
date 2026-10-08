@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInsightAi } from './insight-ai.js';
@@ -36,6 +36,18 @@ test('kết quả: done khi plugin ghi; quá 3 phút không có → timeout; id 
   assert.throws(() => ai.result('ffffffffffffffff'), (e) => e.statusCode === 404);
   // Yêu cầu bỏ rơi quá hạn được dọn để lần sau gửi được.
   utimesSync(join(dir, 'requests', `${id}.json`), 1, 1);
+  assert.ok(ai.request({ groupId: '200', days: 7, transcript: 'y', by: 'anh' }));
+});
+
+test('plugin đã nhận yêu cầu (.json.claimed): vẫn là đang chờ, vẫn chặn yêu cầu thứ hai; nhận quá 3 phút → timeout và không chặn nữa', (t) => {
+  const clock = { now: Date.now() };
+  const { dir, ai } = setup(t, clock);
+  const id = ai.request({ groupId: '200', days: 7, transcript: 'x', by: 'anh' });
+  renameSync(join(dir, 'requests', `${id}.json`), join(dir, 'requests', `${id}.json.claimed`));
+  assert.deepEqual(ai.result(id), { status: 'pending' });
+  assert.throws(() => ai.request({ groupId: '200', days: 7, transcript: 'y', by: 'anh' }), (e) => e.statusCode === 409);
+  clock.now += 4 * 60_000;
+  assert.deepEqual(ai.result(id), { status: 'timeout' });
   assert.ok(ai.request({ groupId: '200', days: 7, transcript: 'y', by: 'anh' }));
 });
 

@@ -18,7 +18,9 @@ const err = (statusCode, message) => Object.assign(new Error(message), { statusC
 export function createInsightAi({ dir, now = Date.now, newId = () => randomBytes(8).toString('hex') }) {
   const reqDir = join(dir, 'requests');
   const resDir = join(dir, 'results');
+  const readdirSafe = (d) => { try { return readdirSync(d); } catch { return []; } };
   const files = (d) => { try { return readdirSync(d).filter((f) => f.endsWith('.json')); } catch { return []; } };
+  const CLAIMED = '.json.claimed'; // plugin đã nhận yêu cầu (đổi tên nguyên tử) và đang xử lý
   const age = (f) => { try { return now() - statSync(f).mtimeMs; } catch { return Infinity; } };
 
   function cleanup() {
@@ -32,7 +34,9 @@ export function createInsightAi({ dir, now = Date.now, newId = () => randomBytes
     request({ groupId, groupName, days, transcript, by }) {
       cleanup();
       if (!String(transcript || '').trim()) throw err(400, 'Nhóm chưa có tin nào trong khoảng này để tóm tắt.');
-      if (files(reqDir).length) throw err(409, 'Đang tóm tắt một nhóm khác — đợi xong rồi bấm lại.');
+      const busy = files(reqDir).length > 0
+        || readdirSafe(reqDir).some((f) => f.endsWith(CLAIMED) && age(join(reqDir, f)) <= PENDING_TIMEOUT_MS);
+      if (busy) throw err(409, 'Đang tóm tắt một nhóm khác — đợi xong rồi bấm lại.');
       const id = newId();
       writeJsonAtomic(join(reqDir, `${id}.json`), { v: 1, id, groupId: String(groupId), groupName: String(groupName || '').slice(0, 80), days, transcript, by: String(by), createdAt: now() });
       return id;
@@ -44,8 +48,8 @@ export function createInsightAi({ dir, now = Date.now, newId = () => randomBytes
       if (existsSync(res)) {
         try { return { status: 'done', result: JSON.parse(readFileSync(res, 'utf8')) }; } catch { return { status: 'done', result: { ok: false, error: 'Kết quả hỏng — bấm Tóm tắt lại.' } }; }
       }
-      const req = join(reqDir, `${id}.json`);
-      if (existsSync(req)) return age(req) > PENDING_TIMEOUT_MS ? { status: 'timeout' } : { status: 'pending' };
+      const req = [join(reqDir, `${id}.json`), join(reqDir, `${id}${CLAIMED}`)].find((f) => existsSync(f));
+      if (req) return age(req) > PENDING_TIMEOUT_MS ? { status: 'timeout' } : { status: 'pending' };
       throw err(404, 'Không thấy yêu cầu này — bấm Tóm tắt lại.');
     },
   };
