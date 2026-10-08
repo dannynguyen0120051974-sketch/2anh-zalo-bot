@@ -451,7 +451,7 @@ Hai nút trên đầu khung tin:
 - **Kính lúp — Tìm trong hội thoại:** chỉ tìm trong hội thoại đang mở, cũng không phân biệt hoa thường và dấu. Bấm một kết quả thì khung tin nhảy tới đúng tin đó và viền vàng tin trong giây lát. Kéo xuống để xem các tin sau đó, hoặc bấm **Về tin mới nhất**.
 - **Ảnh/Video · Tệp · Link:** mở bảng bên phải (điện thoại: phủ cả màn hình) với ba thẻ. **Ảnh/Video** là lưới ảnh, bấm để xem lớn; video có biểu tượng phát và mở ở thẻ mới. **Tệp** liệt kê tên tệp, người gửi, ngày gửi và nút **Tải về**. **Link** liệt kê các link mọi người gửi trong hội thoại (thẻ link và link trong chữ). Bấm **Xem thêm** để tải tiếp.
 
-Ảnh đi qua dashboard (trình duyệt không tải thẳng từ Zalo): dashboard chỉ tải ảnh từ máy chủ ảnh của Zalo (`*.zdn.vn`, `*.zadn.vn`), tối đa 8 MB mỗi ảnh và 120 ảnh mỗi phút cho mỗi người. Tệp và video không đi qua dashboard — nút **Tải về** mở thẳng link của Zalo ở thẻ mới.
+Ảnh đi qua dashboard (trình duyệt không tải thẳng từ Zalo): dashboard chỉ tải ảnh từ máy chủ ảnh của Zalo (`*.zdn.vn`, `*.zadn.vn`), tối đa 5 MB mỗi ảnh, mỗi người tải cùng lúc tối đa 4 ảnh và 120 ảnh mỗi phút (cả dashboard tối đa 6 ảnh cùng lúc). Khi dashboard đang bận, ảnh tự thử lại một lần; nếu vẫn bận, khung ảnh hiện "Đang tải nhiều ảnh — bấm để thử lại". Đăng xuất thì trình duyệt xoá ảnh đã đệm. Tệp và video không đi qua dashboard — nút **Tải về** mở thẳng link của Zalo ở thẻ mới.
 
 Ô soạn ở dưới gửi tin **dưới tên bot** — dùng khi cần trả lời thay bot hoặc sửa một câu bot trả lời sai. Mỗi tin gửi tay được ghi vào Nhật ký kèm tên người gửi. Mỗi người gửi tối đa 10 tin mỗi phút. Chỉ gửi được vào hội thoại đã có trong lịch sử.
 

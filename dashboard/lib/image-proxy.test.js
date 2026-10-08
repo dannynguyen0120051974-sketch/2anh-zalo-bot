@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { checkImageUrl, createImageFetcher, isPublicAddress, magicMatches } from './image-proxy.js';
+import { checkImageUrl, createImageFetcher, isPublicAddress, magicMatches, MAX_IMAGE_BYTES, pinAddresses } from './image-proxy.js';
 import { pngOf } from '../test-helpers.js';
 
 const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(200, 1)]);
@@ -43,10 +43,44 @@ const img = (body, type = 'image/jpeg', extra = {}) => ({ headers: { 'content-ty
 test('địa chỉ IP: chặn máy mình, mạng nội bộ, link-local (IMDS), đa hướng, IPv6 nội bộ và dạng IPv4 lồng IPv6', () => {
   for (const ip of ['127.0.0.1', '10.1.2.3', '172.16.0.1', '172.31.255.255', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0',
     '224.0.0.1', '255.255.255.255', '198.18.0.1', '::1', '::', 'fe80::1', 'fc00::1', 'fd00:ec2::254', 'ff02::1',
-    '::ffff:127.0.0.1', '::ffff:10.0.0.1', '::ffff:7f00:1', '64:ff9b::7f00:1', 'abc', '']) {
+    '::ffff:127.0.0.1', '::ffff:10.0.0.1', '::ffff:7f00:1', '64:ff9b::7f00:1', 'abc', '',
+    // IPv4-compatible cũ (::/96), NAT64 cục bộ (64:ff9b:1::/48), Teredo (2001::/32) — đều có thể trỏ ngược vào IPv4 nội bộ.
+    '::7f00:1', '::a00:1', '::808:808', '::127.0.0.1', '64:ff9b:1::a00:1', '64:ff9b:1:ffff::1', '2001:0:4136:e378:8000:63bf:3fff:fdd2', '2001::1']) {
     assert.equal(isPublicAddress(ip), false, ip);
   }
-  for (const ip of ['203.113.1.10', '8.8.8.8', '172.32.0.1', '2404:6800:4005::200e', '::ffff:8.8.8.8']) assert.equal(isPublicAddress(ip), true, ip);
+  for (const ip of ['203.113.1.10', '8.8.8.8', '172.32.0.1', '2404:6800:4005::200e', '::ffff:8.8.8.8', '2001:4860:4860::8888', '64:ff9b:2::1']) {
+    assert.equal(isPublicAddress(ip), true, ip);
+  }
+});
+
+test('nhiều địa chỉ: kiểm hết, nối được bằng IPv4 khi DNS trả AAAA trước (máy chủ không có IPv6)', async () => {
+  assert.deepEqual(pinAddresses([{ address: '2404:6800:4005::200e', family: 6 }, { address: '203.113.1.10', family: 4 }, { address: '203.113.1.11', family: 4 }]), [
+    { address: '203.113.1.10', family: 4 }, { address: '203.113.1.11', family: 4 }, { address: '2404:6800:4005::200e', family: 6 },
+  ]);
+  const dns = { [HOST]: [{ address: '2404:6800:4005::200e', family: 6 }, { address: '203.113.1.10', family: 4 }] };
+  const net = fakeNet({ [`${HOST}/gr/jpg/4465/a.jpg`]: img(JPEG) }, dns);
+  await createImageFetcher(net)(URL1);
+  const got = [];
+  net.requests[0].lookup(HOST, {}, (err, address, family) => got.push([address, family]));
+  net.requests[0].lookup(HOST, { all: true }, (err, list) => got.push(list));
+  assert.deepEqual(got, [['203.113.1.10', 4], [{ address: '203.113.1.10', family: 4 }, { address: '2404:6800:4005::200e', family: 6 }]]);
+  // Chỉ IPv6 vẫn dùng được; một địa chỉ IPv6 nội bộ lẫn trong danh sách thì chặn cả.
+  const v6 = fakeNet({ [`${HOST}/gr/jpg/4465/a.jpg`]: img(JPEG) }, { [HOST]: [{ address: '2404:6800:4005::200e', family: 6 }] });
+  await createImageFetcher(v6)(URL1);
+  const mixed = fakeNet({ [`${HOST}/gr/jpg/4465/a.jpg`]: img(JPEG) }, { [HOST]: [...PUBLIC, { address: '2001::1', family: 6 }] });
+  await assert.rejects(createImageFetcher(mixed)(URL1), { code: 'blocked_address' });
+  assert.equal(mixed.requests.length, 0);
+});
+
+test('chuyển hướng tới máy trong danh sách nhưng tên máy trỏ về IP nội bộ: chặn, không mở kết nối thứ hai', async () => {
+  for (const evil of [[{ address: '127.0.0.1', family: 4 }], [{ address: '169.254.169.254', family: 4 }], [{ address: '::ffff:10.0.0.1', family: 6 }],
+    [{ address: 'fd00::1', family: 6 }], [{ address: '203.113.1.12', family: 4 }, { address: '192.168.1.1', family: 4 }]]) {
+    const dns = { [HOST]: PUBLIC, 'rebind.zdn.vn': evil };
+    const net = fakeNet({ [`${HOST}/gr/jpg/4465/a.jpg`]: { status: 302, headers: { location: 'https://rebind.zdn.vn/x.jpg' } }, 'rebind.zdn.vn/x.jpg': img(JPEG) }, dns);
+    await assert.rejects(createImageFetcher(net)(URL1), { code: 'blocked_address' }, JSON.stringify(evil));
+    assert.deepEqual(net.lookups, [HOST, 'rebind.zdn.vn']);
+    assert.deepEqual(net.requests.map((r) => r.hostname), [HOST]);
+  }
 });
 
 test('danh sách máy cho phép: chỉ https, tên miền con của zdn.vn/zadn.vn; còn lại từ chối trước khi phân giải tên', async () => {
@@ -91,6 +125,9 @@ test('loại ảnh: chỉ jpeg/png/webp/gif, byte đầu tệp phải khớp lo�
     [img(JPEG, 'image/jpeg; charset=binary'), 'ok'], [img(PNG, 'image/png'), 'ok'], [img(GIF, 'image/gif'), 'ok'], [img(WEBP, 'image/webp'), 'ok'],
     [img(JPEG, 'image/png'), 'bad_type'], [img(PNG, 'image/jpg'), 'bad_type'], [img(Buffer.from('<html><script>alert(1)</script>'), 'image/jpeg'), 'bad_type'],
     [img(Buffer.from('<svg onload=alert(1)>'), 'image/svg+xml'), 'bad_type'], [img(JPEG, 'text/html'), 'bad_type'], [img(JPEG, ''), 'bad_type'],
+    // Zalo trả application/octet-stream cho vài ảnh cũ ở *.zadn.vn: nhận khi byte đầu là ảnh, còn lại từ chối.
+    [img(Buffer.from('<html><script>alert(1)</script>'), 'application/octet-stream'), 'bad_type'],
+    [img(Buffer.from('<svg onload=alert(1)>'), 'application/octet-stream'), 'bad_type'], [img(Buffer.alloc(0), 'application/octet-stream'), 'bad_type'],
     [img(Buffer.alloc(0), 'image/jpeg'), 'bad_type'],
   ];
   for (const [route, want] of cases) {
@@ -98,6 +135,10 @@ test('loại ảnh: chỉ jpeg/png/webp/gif, byte đầu tệp phải khớp lo�
     const p = createImageFetcher(net)(URL1);
     if (want === 'ok') assert.equal((await p).body.length, route.body.length);
     else await assert.rejects(p, { code: want }, route.headers['content-type']);
+  }
+  for (const [body, want] of [[JPEG, 'image/jpeg'], [PNG, 'image/png'], [GIF, 'image/gif'], [WEBP, 'image/webp']]) {
+    const sniffed = fakeNet({ [`${HOST}/gr/jpg/4465/a.jpg`]: img(body, 'application/octet-stream') }, { [HOST]: PUBLIC });
+    assert.equal((await createImageFetcher(sniffed)(URL1)).type, want);
   }
   // Zalo khai "image/jpg" cho ảnh JPEG thật: nhận, trả ra loại chuẩn image/jpeg.
   const zalo = fakeNet({ [`${HOST}/gr/jpg/4465/a.jpg`]: img(JPEG, 'image/jpg') }, { [HOST]: PUBLIC });
@@ -143,5 +184,13 @@ test('quá hạn: máy ảnh không trả lời hoặc phân giải tên quá l�
   const down = fakeNet({}, { [HOST]: PUBLIC });
   await assert.rejects(createImageFetcher(down)(URL1), { code: 'upstream' });
   const gone = fakeNet({ [`${HOST}/gr/jpg/4465/a.jpg`]: { status: 404, headers: { 'content-type': 'text/html' }, body: Buffer.from('x') } }, { [HOST]: PUBLIC });
-  await assert.rejects(createImageFetcher(gone)(URL1), { code: 'upstream_status' });
+  await assert.rejects(createImageFetcher(gone)(URL1), { code: 'not_found' }); // Zalo đã xoá ảnh cũ
+  const broken = fakeNet({ [`${HOST}/gr/jpg/4465/a.jpg`]: { status: 500, headers: {}, body: Buffer.from('x') } }, { [HOST]: PUBLIC });
+  await assert.rejects(createImageFetcher(broken)(URL1), { code: 'upstream_status' });
+});
+
+test('trần mặc định 5 MB: ảnh khai 5 MB + 1 byte bị bỏ, không đọc thân', async () => {
+  assert.equal(MAX_IMAGE_BYTES, 5 * 1024 * 1024);
+  const net = fakeNet({ [`${HOST}/gr/jpg/4465/a.jpg`]: img(JPEG, 'image/jpeg', { 'content-length': String(MAX_IMAGE_BYTES + 1) }) }, { [HOST]: PUBLIC });
+  await assert.rejects(createImageFetcher(net)(URL1), { code: 'too_large' });
 });

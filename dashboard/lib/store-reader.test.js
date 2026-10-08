@@ -509,6 +509,30 @@ test('trang quanh một tin: chừng 25 tin mỗi phía, con trỏ hai chiều n
   assert.equal(r.getMessagesAround('100', 0, `${firstMsg.ts}:${firstMsg.id}`).nextBefore, null);
 });
 
+test('trang quanh tin và tải tin mới hơn không bao giờ trả tin mã đăng nhập dashboard', (t) => {
+  const s = setup(t);
+  const code = 'Mã đăng nhập dashboard: 123456\nMã có hiệu lực 5 phút. Đừng đưa mã này cho ai.';
+  s.write(Array.from({ length: 20 }, (_, i) => m(i + 1, { ts: 1000 + i, ...(i % 3 === 0 ? { text: code, isSelf: true } : {}) })));
+  const r = s.reader();
+  const all = r.getMessages('100', 0, { limit: 100 }).messages;
+  assert.equal(all.some((x) => x.text.includes('123456')), false);
+  const mid = all[5];
+  const around = r.getMessagesAround('100', 0, `${mid.ts}:${mid.id}`, { limit: 3 });
+  assert.equal(around.messages.some((x) => x.text.includes('123456')), false);
+  assert.equal(around.messages.length, 7);
+  let after = around.nextAfter; const rest = [];
+  while (after) { const p = r.getMessagesAfter('100', 0, after, { limit: 2 }); rest.push(...p.messages); after = p.nextAfter; }
+  assert.equal(rest.some((x) => x.text.includes('123456')), false);
+  assert.deepEqual([...around.messages, ...rest].map((x) => x.id).slice(3), all.slice(5).map((x) => x.id));
+  // Con trỏ trỏ đúng vào tin mã (đoán mò từ ts:rowid): vẫn không lộ.
+  const raw = new DatabaseSync(s.path, { readOnly: true });
+  const secret = raw.prepare("SELECT rowid AS id, timestamp_ms AS ts FROM messages WHERE text LIKE 'Mã đăng nhập%' LIMIT 1").get();
+  raw.close();
+  const guess = r.getMessagesAround('100', 0, `${secret.ts}:${secret.id}`);
+  assert.equal(guess.messages.some((x) => x.text.includes('123456')), false);
+  assert.equal(r.getMessagesAfter('100', 0, `${secret.ts - 1}:0`).messages.some((x) => x.text.includes('123456')), false);
+});
+
 test('kế hoạch truy vấn: tìm trong hội thoại, bảng media và trang quanh tin đi theo idx_messages_thread_time, không quét cả bảng', (t) => {
   const s = setup(t);
   seedBig(s.path, { rows: 2000, today: 10_000_000 });

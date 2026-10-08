@@ -24,17 +24,115 @@ export function FileBadge({ ext: e }) {
   return html`<span class=${`file-ico file-ico-${b.tone}`} aria-hidden="true">${b.label}</span>`;
 }
 
-/** Ảnh thu nhỏ qua bộ tải của dashboard; tải hỏng thì hiện chữ + link mở ảnh gốc. */
-export function Thumb({ url, alt = 'Ảnh', onOpen, className = 'thumb', compact = false }) {
-  const [broken, setBroken] = useState(false);
-  if (broken) {
-    return html`<span class=${`${className} thumb-broken`} title="Không tải được ảnh — ảnh cũ có thể đã bị Zalo xoá."><${Icon} name="image" size=${18} />
-      <span>${compact ? 'Không tải được' : 'Không tải được ảnh — ảnh cũ có thể đã bị Zalo xoá.'}
-      <a href=${url} target="_blank" rel="noopener noreferrer">${compact ? 'Mở gốc' : 'Thử mở ảnh gốc'}</a></span></span>`;
+// Dashboard đang bận (giới hạn tải cùng lúc/mỗi phút) hoặc Zalo lỗi tạm: tự thử lại một lần sau chừng này.
+const RETRY_MIN_MS = 1200;
+const RETRY_SPREAD_MS = 1800;
+const TRANSIENT = [0, 200, 429, 502, 503, 504]; // 0: mất mạng; 200: lần hỏi lại đã được → lỗi tạm
+
+/**
+ * Ảnh không hiện được → làm gì, theo mã trả về của /api/media/img:
+ * 'gone' (404: Zalo đã xoá) · 'retry' (bận/lỗi tạm, chưa thử lại) · 'busy' (đã thử lại vẫn bận) · 'failed' (lỗi khác).
+ */
+export function imageFailure(status, retried) {
+  if (status === 404) return 'gone';
+  if (TRANSIENT.includes(status)) return retried ? 'busy' : 'retry';
+  return 'failed';
+}
+
+// Hàng chờ ảnh thu nhỏ của cả trang: tối đa IMAGE_SLOTS ảnh tải cùng lúc — dưới mức 4 ảnh/người của máy chủ,
+// nên một trang không tự làm mình bị 429, và lần hỏi lại mã lỗi chạy trong chính chỗ của ảnh đó.
+export const IMAGE_SLOTS = 3;
+let slotsUsed = 0;
+const slotWaiters = [];
+export function acquireSlot() {
+  return new Promise((resolve) => { if (slotsUsed < IMAGE_SLOTS) { slotsUsed += 1; resolve(); } else slotWaiters.push(resolve); });
+}
+export function releaseSlot() {
+  const next = slotWaiters.shift();
+  if (next) next(); else slotsUsed = Math.max(0, slotsUsed - 1);
+}
+
+/**
+ * Ảnh qua dashboard: chờ chỗ trong hàng (trừ khi queued=false), hỏng thì hỏi mã lỗi,
+ * bận thì tự thử lại một lần, sau đó để người dùng bấm thử lại.
+ */
+function useProxiedImage(url, { queued = true } = {}) {
+  const [st, setSt] = useState({ phase: 'ok', attempt: 0, retried: false });
+  const [ready, setReady] = useState(!queued);
+  const alive = useRef(true);
+  const held = useRef(false);
+  const free = () => { if (held.current) { held.current = false; releaseSlot(); } };
+  useEffect(() => () => { alive.current = false; free(); }, []);
+  useEffect(() => { setSt({ phase: 'ok', attempt: 0, retried: false }); }, [url]);
+  useEffect(() => {
+    if (!queued || st.phase !== 'ok') return undefined;
+    let cancelled = false;
+    setReady(false);
+    acquireSlot().then(() => {
+      if (cancelled || !alive.current) { releaseSlot(); return; }
+      held.current = true; setReady(true);
+    });
+    return () => { cancelled = true; free(); };
+  }, [url, st.attempt, st.phase]);
+  const src = `${proxied(url)}${st.attempt ? `&r=${st.attempt}` : ''}`;
+  async function onError() {
+    const retried = st.retried;
+    let status = 0;
+    try { status = (await fetch(src, { credentials: 'same-origin' })).status; } catch { /* mất mạng */ }
+    free();
+    if (!alive.current) return;
+    const next = imageFailure(status, retried);
+    if (next !== 'retry') { setSt((s) => ({ ...s, phase: next })); return; }
+    setSt((s) => ({ ...s, phase: 'wait' }));
+    setTimeout(() => { if (alive.current) setSt((s) => ({ phase: 'ok', attempt: s.attempt + 1, retried: true })); },
+      RETRY_MIN_MS + Math.random() * RETRY_SPREAD_MS);
   }
+  const retry = () => setSt((s) => ({ phase: 'ok', attempt: s.attempt + 1, retried: false }));
+  return { src, phase: st.phase, ready: !queued || ready, onError, onLoad: free, retry };
+}
+
+/** Chữ báo ảnh không hiện: chỉ 404 mới nói Zalo đã xoá. */
+export const IMAGE_TEXT = {
+  wait: 'Đang thử tải lại…',
+  gone: 'Ảnh không còn trên Zalo — có thể Zalo đã xoá ảnh cũ.',
+  goneShort: 'Zalo đã xoá ảnh',
+  busy: 'Đang tải nhiều ảnh — bấm để thử lại',
+  failed: 'Không tải được ảnh.',
+  failedLarge: 'Không tải được ảnh này — thử “Ảnh gốc” ở trên hoặc xem trong ứng dụng Zalo.',
+};
+const GONE = IMAGE_TEXT.gone;
+const BUSY = IMAGE_TEXT.busy;
+
+/** Ảnh thu nhỏ qua bộ tải của dashboard; hỏng thì báo đúng lý do. */
+export function Thumb({ url, alt = 'Ảnh', onOpen, className = 'thumb', compact = false }) {
+  const img = useProxiedImage(url);
+  if (img.phase === 'busy') {
+    return html`<button type="button" class=${`${className} thumb-broken thumb-retry`} onClick=${img.retry}>
+      <${Icon} name="refresh" size=${18} /><span>${BUSY}</span></button>`;
+  }
+  if (img.phase !== 'ok') {
+    const text = { wait: IMAGE_TEXT.wait, gone: compact ? IMAGE_TEXT.goneShort : GONE, failed: IMAGE_TEXT.failed }[img.phase];
+    return html`<span class=${`${className} thumb-broken`} title=${img.phase === 'gone' ? GONE : undefined}><${Icon} name="image" size=${18} />
+      <span>${text}${img.phase === 'failed'
+        ? html` <a href=${url} target="_blank" rel="noopener noreferrer">${compact ? 'Mở gốc' : 'Thử mở ảnh gốc'}</a>` : null}</span></span>`;
+  }
+  if (!img.ready) return html`<span class=${`${className} thumb-pending`} role="img" aria-label=${`Đang chờ tải: ${alt}`}></span>`;
   return html`<button type="button" class=${`${className} thumb-btn`} onClick=${onOpen} aria-label=${`Xem lớn: ${alt}`}>
-    <img src=${proxied(url)} alt=${alt} loading="lazy" decoding="async" onError=${() => setBroken(true)} />
+    <img key=${img.src} src=${img.src} alt=${alt} decoding="async" onLoad=${img.onLoad} onError=${img.onError} />
   </button>`;
+}
+
+const FOCUSABLE = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/** Tab/Shift+Tab chạy vòng trong `box` (khung xem ảnh là hộp thoại modal). */
+export function trapTab(e, box) {
+  if (e.key !== 'Tab' || !box) return;
+  const list = [...box.querySelectorAll(FOCUSABLE)];
+  if (!list.length) return;
+  const first = list[0]; const last = list[list.length - 1];
+  const at = list.indexOf(document.activeElement);
+  if (e.shiftKey && at <= 0) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && (at === -1 || at === list.length - 1)) { e.preventDefault(); first.focus(); }
 }
 
 export function FileCard({ name, url, ext: e }) {
@@ -52,27 +150,46 @@ export function VideoCard({ url }) {
   </a>`;
 }
 
-/** Khung xem ảnh lớn: ← → chuyển ảnh, Esc đóng; đóng xong trả tiêu điểm về chỗ cũ. */
+/**
+ * Khung xem ảnh lớn: ← → chuyển ảnh, Esc đóng, Tab chạy vòng bên trong, trang phía sau không cuộn;
+ * đóng xong trả tiêu điểm về chỗ cũ.
+ */
 export function Lightbox({ items, index, onIndex, onClose }) {
   const closeBtn = useRef(null);
-  const [broken, setBroken] = useState(null); // url ảnh không tải được
+  const box = useRef(null);
   const item = items[index];
+  const img = useProxiedImage(item?.url || '', { queued: false }); // ảnh đang xem lớn không xếp hàng sau lưới
   useEffect(() => {
     const back = document.activeElement;
     closeBtn.current?.focus();
-    return () => { if (back && typeof back.focus === 'function') back.focus(); };
+    document.body.classList.add('no-scroll');
+    return () => {
+      document.body.classList.remove('no-scroll');
+      if (back && typeof back.focus === 'function' && back.isConnected) back.focus();
+    };
   }, []);
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape') onClose();
       else if (e.key === 'ArrowLeft' && index > 0) onIndex(index - 1);
       else if (e.key === 'ArrowRight' && index < items.length - 1) onIndex(index + 1);
+      else trapTab(e, box.current);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [index, items.length]);
   if (!item) return null;
-  return html`<div class="lightbox" role="dialog" aria-modal="true" aria-label="Xem ảnh" onClick=${(e) => { if (e.target === e.currentTarget) onClose(); }}>
+  let stage;
+  if (img.phase === 'ok') stage = html`<img class="lightbox-img" key=${img.src} src=${img.src} alt=${item.caption || 'Ảnh'} onError=${img.onError} />`;
+  else if (img.phase === 'busy') stage = html`<button type="button" class="btn btn-secondary lightbox-retry" onClick=${img.retry}><${Icon} name="refresh" /> ${BUSY}</button>`;
+  else {
+    stage = html`<p class="lightbox-broken">${{
+      wait: IMAGE_TEXT.wait,
+      gone: `${GONE} Xem ảnh này trong ứng dụng Zalo.`,
+      failed: IMAGE_TEXT.failedLarge,
+    }[img.phase]}</p>`;
+  }
+  return html`<div class="lightbox" ref=${box} role="dialog" aria-modal="true" aria-label="Xem ảnh" onClick=${(e) => { if (e.target === e.currentTarget) onClose(); }}>
     <div class="lightbox-bar">
       <span class="lightbox-count">${index + 1}/${items.length}${item.senderName ? ` · ${item.senderName}` : ''}${item.ts ? ` · ${fmtTime(item.ts)}` : ''}</span>
       <a class="btn btn-ghost btn-sm lightbox-btn" href=${item.url} target="_blank" rel="noopener noreferrer"><${Icon} name="external" size=${16} /> Ảnh gốc</a>
@@ -80,9 +197,7 @@ export function Lightbox({ items, index, onIndex, onClose }) {
     </div>
     <div class="lightbox-stage">
       <button type="button" class="lightbox-nav" disabled=${index === 0} onClick=${() => onIndex(index - 1)} aria-label="Ảnh trước"><${Icon} name="prev" size=${28} /></button>
-      ${broken === item.url
-        ? html`<p class="lightbox-broken">Không tải được ảnh này — ảnh cũ có thể đã bị Zalo xoá. Thử “Ảnh gốc” ở trên hoặc xem trong ứng dụng Zalo.</p>`
-        : html`<img class="lightbox-img" key=${item.url} src=${proxied(item.url)} alt=${item.caption || 'Ảnh'} onError=${() => setBroken(item.url)} />`}
+      ${stage}
       <button type="button" class="lightbox-nav" disabled=${index >= items.length - 1} onClick=${() => onIndex(index + 1)} aria-label="Ảnh sau"><${Icon} name="next" size=${28} /></button>
     </div>
     ${item.caption ? html`<p class="lightbox-caption">${item.caption}</p>` : null}
@@ -121,7 +236,9 @@ export function MediaPanel({ conv, onClose, onOpenPhoto }) {
   const photos = (data.photo?.items || []).filter((x) => !x.video);
   let body;
   if (!cur) body = error ? null : html`<${Spinner} />`;
-  else if (!cur.items.length) body = html`<p class="muted small panel-empty">${EMPTY[tab]}</p>`;
+  // Trang link có thể rỗng mà vẫn còn tin cũ chưa đọc (máy chủ dừng sau một số lô) — chỉ báo "chưa có" khi đã hết.
+  else if (!cur.items.length) body = cur.next ? html`<p class="muted small panel-empty">Chưa thấy mục nào trong các tin gần đây — bấm Xem thêm để tìm tiếp.</p>`
+    : html`<p class="muted small panel-empty">${EMPTY[tab]}</p>`;
   else if (tab === 'photo') {
     body = html`<ul class="media-grid">${cur.items.map((x) => html`<li key=${x.id}>
       ${x.video

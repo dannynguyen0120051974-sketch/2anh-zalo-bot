@@ -13,7 +13,7 @@ Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
 ### An toàn
 
-- Ảnh đi qua dashboard (`/api/media/img`) vì CSP chỉ cho ảnh cùng nguồn. Chỉ nhận https và tên miền con của `zdn.vn`/`zadn.vn`; tự phân giải tên máy, từ chối nếu có địa chỉ nội bộ/máy mình/link-local rồi nối thẳng vào đúng IP đã kiểm (giữ SNI và kiểm chứng chỉ); chuyển hướng tối đa 2 lần, mỗi lần kiểm lại; quá hạn 10 giây; tối đa 8 MB đọc dần; chỉ jpeg/png/webp/gif và byte đầu tệp phải đúng loại; trả kèm `Cache-Control: private`, `nosniff`, `Content-Security-Policy: default-src 'none'`; mỗi người tối đa 120 ảnh/phút. Không đệm ảnh trên máy chủ.
+- Ảnh đi qua dashboard (`/api/media/img`) vì CSP chỉ cho ảnh cùng nguồn. Chỉ nhận https và tên miền con của `zdn.vn`/`zadn.vn`; tự phân giải tên máy, từ chối nếu có địa chỉ nội bộ/máy mình/link-local rồi nối thẳng vào đúng IP đã kiểm (giữ SNI và kiểm chứng chỉ); chuyển hướng tối đa 2 lần, mỗi lần kiểm lại; quá hạn 10 giây; tối đa 5 MB đọc dần; chỉ jpeg/png/webp/gif và byte đầu tệp phải đúng loại; trả kèm `Cache-Control: private, max-age=3600`, `nosniff`, `Content-Security-Policy: default-src 'none'`; mỗi người tối đa 4 ảnh cùng lúc và 120 ảnh/phút, cả dashboard tối đa 6 ảnh cùng lúc (giữ RAM của VPS). Chặn thêm IPv4-compatible (`::/96`), NAT64 cục bộ (`64:ff9b:1::/48`), Teredo (`2001::/32`). Không đệm ảnh trên máy chủ; đăng xuất gửi `Clear-Site-Data: "cache"` để trình duyệt xoá ảnh đã đệm.
 - Tệp và video không bao giờ đi qua dashboard: chỉ là link ngoài mở thẻ mới (`rel="noopener noreferrer"`), và chỉ khi là https trên máy chủ tệp/video của Zalo.
 
 ## [1.24.0] — 2026-10-08

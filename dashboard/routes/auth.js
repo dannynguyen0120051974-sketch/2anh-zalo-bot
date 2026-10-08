@@ -95,11 +95,13 @@ export function authRoutes({ users, sessions, guard, setupToken, activity, sidec
     res.json({ ok: true });
   });
 
+  // Đăng xuất thì xoá cả ảnh Zalo trình duyệt đã đệm (Phiên chat) — người dùng sau trên cùng máy không thấy lại.
+  const CLEAR_CACHE = { 'Clear-Site-Data': '"cache"' };
   r.post('/auth/logout', requireAuth, (req, res) => {
-    sessions.destroy(req.sessionToken); clearSessionCookie(res); res.json({ ok: true });
+    sessions.destroy(req.sessionToken); clearSessionCookie(res); res.set(CLEAR_CACHE).json({ ok: true });
   });
   r.post('/auth/logout-all', requireAuth, (req, res) => {
-    sessions.destroyAll(req.user.username); clearSessionCookie(res);
+    sessions.destroyAll(req.user.username); clearSessionCookie(res); res.set(CLEAR_CACHE);
     activity.append({ actor: req.user.username, action: 'logout_all' });
     res.json({ ok: true });
   });

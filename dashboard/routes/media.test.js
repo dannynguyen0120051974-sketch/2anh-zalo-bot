@@ -35,7 +35,7 @@ test('cả Quản trị và Chủ bot đều xem được ảnh; trả đúng by
     assert.equal(res.status, 200, role);
     assert.ok(Buffer.from(await res.arrayBuffer()).equals(PNG));
     assert.equal(res.headers.get('content-type'), 'image/png');
-    assert.equal(res.headers.get('cache-control'), 'private, max-age=86400');
+    assert.equal(res.headers.get('cache-control'), 'private, max-age=3600');
     assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
     assert.equal(res.headers.get('content-security-policy'), "default-src 'none'");
     assert.deepEqual(seen, [URL1]);
@@ -74,7 +74,8 @@ test('giới hạn mỗi người: quá số lần trong một phút → 429 có
 test('lỗi khi tải: quá hạn 504, quá lớn/không tải được 502 — câu dễ hiểu, không lộ chi tiết kỹ thuật', async (t) => {
   let err = new ImageProxyError('timeout');
   const { call, cookie } = await ready(t, { imageFetch: async () => { throw err; } });
-  const expect = [['timeout', 504, /chậm/], ['too_large', 502, /8 MB/], ['blocked_address', 502, /thử lại sau/], ['bad_type', 502, /thử lại sau/], ['redirect', 502, /thử lại sau/]];
+  const expect = [['timeout', 504, /chậm/], ['too_large', 413, /5 MB/], ['not_found', 404, /Zalo đã xoá/], ['blocked_address', 502, /thử lại sau/],
+    ['bad_type', 415, /không phải ảnh/], ['redirect', 502, /thử lại sau/], ['upstream_status', 502, /thử lại sau/]];
   for (const [code, status, re] of expect) {
     err = new ImageProxyError(code);
     const res = await call(q(URL1), { cookie });
@@ -82,6 +83,49 @@ test('lỗi khi tải: quá hạn 504, quá lớn/không tải được 502 — 
     assert.match(res.json.error, re, code);
     assert.match(res.json.error, /—/, code);
     assert.doesNotMatch(res.json.error, new RegExp(code), code);
+  }
+});
+
+test('giới hạn tải cùng lúc: mỗi người 4 (429), toàn máy chủ 6 (503); xong thì nhả chỗ, kể cả khi lỗi', async (t) => {
+  const pending = [];
+  const imageFetch = () => new Promise((resolve, reject) => pending.push({ resolve, reject }));
+  const deps = makeDeps(t, { imageFetch });
+  const { call, base } = await startApp(t, deps);
+  const cookies = {};
+  for (const [name, role] of [['mot', 'owner'], ['hai', 'admin'], ['bon', 'owner']]) cookies[name] = await loginAs(t, deps, call, { username: name, role });
+  const open = (who) => fetch(base + q(URL1), { headers: { Cookie: cookies[who] } });
+  const waitPending = async (n) => { for (let i = 0; i < 200 && pending.length < n; i += 1) await new Promise((r) => setTimeout(r, 5)); assert.equal(pending.length, n); };
+
+  const first = [1, 2, 3, 4].map(() => open('mot'));
+  await waitPending(4);
+  const perUser = await call(q(URL1), { cookie: cookies.mot });
+  assert.equal(perUser.status, 429);
+  assert.match(perUser.json.error, /—/);
+  const second = [1, 2].map(() => open('hai'));
+  await waitPending(6);
+  const global = await call(q(URL1), { cookie: cookies.bon });
+  assert.equal(global.status, 503);
+  assert.match(global.json.error, /thử lại/);
+  assert.equal(pending.length, 6); // lần bị từ chối không gọi tải
+
+  pending[0].reject(new Error('hỏng')); // lỗi vẫn nhả chỗ
+  for (const p of pending.slice(1)) p.resolve({ type: 'image/png', body: PNG });
+  const statuses = (await Promise.all([...first, ...second])).map((r) => r.status);
+  assert.deepEqual(statuses.sort(), [200, 200, 200, 200, 200, 502]);
+  const again = open('bon');
+  await waitPending(7);
+  pending[6].resolve({ type: 'image/png', body: PNG });
+  assert.equal((await again).status, 200);
+});
+
+test('đăng xuất (một máy và mọi máy) xoá đệm của trình duyệt — ảnh Zalo không còn cho người dùng sau', async (t) => {
+  const deps = makeDeps(t);
+  const { call } = await startApp(t, deps);
+  for (const path of ['/api/auth/logout', '/api/auth/logout-all']) {
+    const cookie = await loginAs(t, deps, call, { username: 'xoa', role: 'owner' });
+    const res = await call(path, { method: 'POST', cookie });
+    assert.equal(res.status, 200, path);
+    assert.equal(res.headers.get('clear-site-data'), '"cache"', path);
   }
 });
 

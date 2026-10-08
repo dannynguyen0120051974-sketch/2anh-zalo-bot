@@ -295,7 +295,8 @@ function Thread({ conv, onBack }) {
       setMsgs(r.messages); setOlder(r.nextBefore); setNewer(r.nextAfter);
       if (!r.nextAfter) detached.current = false;
       setFlash(hit.id); setError('');
-      if (narrow()) setSide(null); // điện thoại: bảng tìm phủ cả màn hình — đóng để thấy tin
+      // Điện thoại: bảng tìm phủ cả màn hình — đóng để thấy tin, tiêu điểm về khung tin.
+      if (narrow()) { setSide(null); setTimeout(() => box.current?.focus({ preventScroll: true }), 0); }
     } catch (err) {
       if (v === view.current) { detached.current = was; setError(err.message); }
     }
@@ -319,15 +320,18 @@ function Thread({ conv, onBack }) {
   }
 
   const toggle = (name) => setSide((cur) => (cur === name ? null : name));
+  const toggles = { search: useRef(null), media: useRef(null) };
+  // Đóng bảng thì trả tiêu điểm về đúng nút đã mở nó trên đầu khung tin.
+  const closeSide = (name) => { setSide(null); setTimeout(() => toggles[name].current?.focus(), 0); };
   const group = conv.threadType === 1;
   return html`
     <header class="thread-head">
       <button type="button" class="btn btn-ghost btn-sm only-mobile" onClick=${onBack}>← Danh sách</button>
       <h2>${conv.name}</h2>
       ${group ? html`<span class="tag">Nhóm</span>` : null}
-      <button type="button" class=${`btn btn-ghost btn-sm head-tool${side === 'search' ? ' active' : ''}`} aria-pressed=${side === 'search' ? 'true' : 'false'}
+      <button type="button" ref=${toggles.search} class=${`btn btn-ghost btn-sm head-tool${side === 'search' ? ' active' : ''}`} aria-pressed=${side === 'search' ? 'true' : 'false'}
         onClick=${() => toggle('search')} aria-label="Tìm trong hội thoại" title="Tìm trong hội thoại"><${Icon} name="search" /></button>
-      <button type="button" class=${`btn btn-ghost btn-sm head-tool${side === 'media' ? ' active' : ''}`} aria-pressed=${side === 'media' ? 'true' : 'false'}
+      <button type="button" ref=${toggles.media} class=${`btn btn-ghost btn-sm head-tool${side === 'media' ? ' active' : ''}`} aria-pressed=${side === 'media' ? 'true' : 'false'}
         onClick=${() => toggle('media')} aria-label="Ảnh/Video · Tệp · Link" title="Ảnh/Video · Tệp · Link"><${Icon} name="image" /><span class="head-tool-label">Ảnh/Video · Tệp · Link</span></button>
     </header>
     <${Live} error=${error} />
@@ -344,8 +348,8 @@ function Thread({ conv, onBack }) {
         ${newer ? html`<li class="msgs-top"><button type="button" class="btn btn-ghost btn-sm" disabled=${loadingNewer} onClick=${loadNewer}>${loadingNewer ? 'Đang tải…' : 'Tải tin mới hơn'}</button></li>` : null}
       </ol>`}
     <${Compose} conv=${conv} onSent=${() => kick.current()} />
-    ${side === 'search' ? html`<${ThreadSearch} conv=${conv} onJump=${jumpTo} onClose=${() => setSide(null)} />` : null}
-    ${side === 'media' ? html`<${MediaPanel} conv=${conv} onClose=${() => setSide(null)} onOpenPhoto=${(items, index) => setLightbox({ items, index })} />` : null}
+    ${side === 'search' ? html`<${ThreadSearch} conv=${conv} onJump=${jumpTo} onClose=${() => closeSide('search')} />` : null}
+    ${side === 'media' ? html`<${MediaPanel} conv=${conv} onClose=${() => closeSide('media')} onOpenPhoto=${(items, index) => setLightbox({ items, index })} />` : null}
     ${lightbox ? html`<${Lightbox} items=${lightbox.items} index=${lightbox.index}
       onIndex=${(index) => setLightbox((cur) => ({ ...cur, index }))} onClose=${() => setLightbox(null)} />` : null}`;
 }

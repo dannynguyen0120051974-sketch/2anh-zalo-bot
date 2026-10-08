@@ -7,15 +7,16 @@
  *      rồi nối thẳng vào đúng địa chỉ đã kiểm (lookup cố định) — tên máy vẫn dùng cho SNI và kiểm chứng chỉ,
  *      nên không bị đổi DNS giữa chừng (DNS rebinding);
  *   3. chuyển hướng: tối đa MAX_REDIRECTS lần, mỗi lần kiểm lại từ bước 1;
- *   4. quá hạn 10 s cho cả chuỗi; tối đa 8 MB, đọc dần và cắt ngay khi vượt;
- *   5. chỉ nhận image/jpeg|png|webp|gif và byte đầu tệp phải đúng loại đã khai.
+ *   4. quá hạn 10 s cho cả chuỗi; tối đa 5 MB, đọc dần và cắt ngay khi vượt;
+ *   5. chỉ nhận image/jpeg|png|webp|gif và byte đầu tệp phải đúng loại đã khai; Zalo khai "application/octet-stream"
+ *      thì loại ảnh lấy từ byte đầu (phải là một trong bốn loại trên), không bao giờ trả lại octet-stream.
  */
 import https from 'node:https';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { BlockList, isIP } from 'node:net';
 import { httpsUrl, hostUnder, IMAGE_HOSTS } from '../public/media.js';
 
-export const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 export const IMAGE_TIMEOUT_MS = 10_000;
 export const MAX_REDIRECTS = 2;
 
@@ -26,8 +27,9 @@ const DENIED = [
   ['192.88.99.0', 24, 'ipv4'], ['192.168.0.0', 16, 'ipv4'], ['198.18.0.0', 15, 'ipv4'], ['198.51.100.0', 24, 'ipv4'],
   ['203.0.113.0', 24, 'ipv4'], ['224.0.0.0', 4, 'ipv4'], ['240.0.0.0', 4, 'ipv4'],
   // Không thêm ::ffff:0:0/96 vào đây: BlockList so cả địa chỉ IPv4 với luật đó nên sẽ chặn mọi IPv4 — xử lý riêng bên dưới.
-  ['::', 128, 'ipv6'], ['::1', 128, 'ipv6'], ['64:ff9b::', 96, 'ipv6'], ['100::', 64, 'ipv6'],
-  ['2001:db8::', 32, 'ipv6'], ['2002::', 16, 'ipv6'], ['fc00::', 7, 'ipv6'], ['fe80::', 10, 'ipv6'], ['fec0::', 10, 'ipv6'],
+  // ::/96 = IPv4-compatible cũ (gồm cả :: và ::1); 64:ff9b::/96 và 64:ff9b:1::/48 = NAT64; 2001::/32 = Teredo; 2002::/16 = 6to4.
+  ['::', 96, 'ipv6'], ['64:ff9b::', 96, 'ipv6'], ['64:ff9b:1::', 48, 'ipv6'], ['100::', 64, 'ipv6'],
+  ['2001::', 32, 'ipv6'], ['2001:db8::', 32, 'ipv6'], ['2002::', 16, 'ipv6'], ['fc00::', 7, 'ipv6'], ['fe80::', 10, 'ipv6'], ['fec0::', 10, 'ipv6'],
   ['ff00::', 8, 'ipv6'],
 ];
 const BLOCKED = new BlockList();
@@ -67,6 +69,15 @@ export class ImageProxyError extends Error {
   constructor(code, message) { super(message || code); this.name = 'ImageProxyError'; this.code = code; }
 }
 
+/**
+ * Mọi địa chỉ đã kiểm, IPv4 trước: máy chủ không có IPv6 mà DNS trả AAAA trước thì vẫn nối được
+ * (một địa chỉ → thử IPv4; { all: true } → Node tự thử lần lượt).
+ */
+export function pinAddresses(addrs) {
+  const list = addrs.map((a) => ({ address: a.address, family: isIP(a.address) }));
+  return [...list.filter((a) => a.family === 4), ...list.filter((a) => a.family === 6)];
+}
+
 async function defaultResolve(hostname) {
   return dnsLookup(hostname, { all: true, verbatim: true });
 }
@@ -87,8 +98,7 @@ export function createImageFetcher({
     }
     if (!Array.isArray(addrs) || !addrs.length) throw new ImageProxyError('dns');
     if (addrs.some((a) => !isPublicAddress(a?.address))) throw new ImageProxyError('blocked_address');
-    const { address } = addrs[0];
-    const family = isIP(address);
+    const pinned = pinAddresses(addrs);
     return new Promise((resolveP, reject) => {
       let done = false;
       let req = null;
@@ -101,18 +111,21 @@ export function createImageFetcher({
         protocol: 'https:', hostname: u.hostname, servername: u.hostname, port: 443, method: 'GET',
         path: `${u.pathname}${u.search}`, agent: false,
         headers: { accept: 'image/webp,image/png,image/jpeg,image/gif;q=0.9', 'user-agent': 'Mozilla/5.0 (zalo-dashboard)' },
-        // Nối vào đúng địa chỉ vừa kiểm; Node 22 có thể hỏi dạng { all: true }.
-        lookup: (host, opts, cb) => (opts && opts.all ? cb(null, [{ address, family }]) : cb(null, address, family)),
+        // Chỉ nối vào các địa chỉ vừa kiểm; Node 22 có thể hỏi dạng { all: true }.
+        lookup: (host, opts, cb) => (opts && opts.all ? cb(null, pinned) : cb(null, pinned[0].address, pinned[0].family)),
       }, (res) => {
         const status = Number(res.statusCode);
         if (status >= 300 && status < 400) {
           res.resume();
           return finish(resolveP, { redirect: res.headers?.location || '' });
         }
+        if (status === 404 || status === 410) { res.resume(); return finish(reject, new ImageProxyError('not_found')); }
         if (status !== 200) { res.resume(); return finish(reject, new ImageProxyError('upstream_status')); }
         const declaredType = String(res.headers?.['content-type'] || '').split(';')[0].trim().toLowerCase();
-        const type = TYPE_ALIASES[declaredType] || declaredType;
-        if (!IMAGE_TYPES.includes(type)) { res.destroy(); return finish(reject, new ImageProxyError('bad_type')); }
+        // "application/octet-stream": Zalo trả kiểu này cho một số ảnh cũ ở *.zadn.vn — nhận dạng bằng byte đầu (sniff = true).
+        const sniff = declaredType === 'application/octet-stream';
+        const type = sniff ? null : TYPE_ALIASES[declaredType] || declaredType;
+        if (!sniff && !IMAGE_TYPES.includes(type)) { res.destroy(); return finish(reject, new ImageProxyError('bad_type')); }
         const declared = Number(res.headers?.['content-length']);
         if (Number.isFinite(declared) && declared > maxBytes) { res.destroy(); return finish(reject, new ImageProxyError('too_large')); }
         const chunks = []; let size = 0;
@@ -123,8 +136,9 @@ export function createImageFetcher({
         });
         res.on('end', () => {
           const body = Buffer.concat(chunks);
-          if (!magicMatches(type, body)) return finish(reject, new ImageProxyError('bad_type'));
-          finish(resolveP, { type, body });
+          const real = sniff ? IMAGE_TYPES.find((t) => magicMatches(t, body)) : type;
+          if (!real || !magicMatches(real, body)) return finish(reject, new ImageProxyError('bad_type'));
+          finish(resolveP, { type: real, body });
         });
         res.on('error', () => finish(reject, new ImageProxyError('upstream')));
       });

@@ -637,6 +637,67 @@ test('media: link — thẻ link có tiêu đề, link trong chữ, bỏ link �
   assert.deepEqual(linksOf('share.file', 'a.pdf\nhttps://file-stal-1.dlfl.vn/x'), []);
 });
 
+test('Phiên chat: ảnh lỗi — 404 là Zalo đã xoá; bận/lỗi tạm thì tự thử lại một lần rồi mới báo "bấm để thử lại"', async () => {
+  const { imageFailure, IMAGE_TEXT } = await import('./views/chat-media.js');
+  assert.equal(imageFailure(404, false), 'gone');
+  assert.equal(imageFailure(404, true), 'gone');
+  for (const s of [429, 503, 502, 504, 0, 200]) {
+    assert.equal(imageFailure(s, false), 'retry', String(s));
+    assert.equal(imageFailure(s, true), 'busy', String(s));
+  }
+  for (const s of [400, 401, 403, 500]) assert.equal(imageFailure(s, false), 'failed', String(s));
+  assert.equal(IMAGE_TEXT.busy, 'Đang tải nhiều ảnh — bấm để thử lại');
+  // "Zalo đã xoá" chỉ dùng cho 404.
+  for (const [k, v] of Object.entries(IMAGE_TEXT)) {
+    if (k.startsWith('gone')) assert.match(v, /Zalo đã xoá/, k); else assert.doesNotMatch(v, /xoá/, k);
+  }
+});
+
+test('Phiên chat: hàng chờ ảnh — tối đa 3 ảnh cùng lúc (dưới mức 4 ảnh/người của máy chủ), nhả chỗ thì người chờ tiếp theo vào', async () => {
+  const { acquireSlot, releaseSlot, IMAGE_SLOTS } = await import('./views/chat-media.js');
+  assert.equal(IMAGE_SLOTS, 3);
+  const got = [];
+  const all = Array.from({ length: 5 }, (_, i) => acquireSlot().then(() => got.push(i)));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(got, [0, 1, 2]);
+  releaseSlot(); await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(got, [0, 1, 2, 3]);
+  releaseSlot(); await Promise.all(all);
+  assert.deepEqual(got, [0, 1, 2, 3, 4]);
+  for (let i = 0; i < 3; i += 1) releaseSlot();
+  // Trả hết chỗ: lại vào ngay được 3.
+  const again = []; for (let i = 0; i < 3; i += 1) acquireSlot().then(() => again.push(i));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(again.length, 3);
+  for (let i = 0; i < 3; i += 1) releaseSlot();
+});
+
+test('Phiên chat: khung xem ảnh giữ Tab bên trong, khoá cuộn trang; bảng bên trả tiêu điểm về nút mở', async () => {
+  const { trapTab } = await import('./views/chat-media.js');
+  const a = { focus() { globalThis.document.activeElement = a; } };
+  const b = { focus() { globalThis.document.activeElement = b; } };
+  const box = { querySelectorAll: () => [a, b] };
+  const prevDoc = globalThis.document;
+  globalThis.document = { activeElement: b };
+  try {
+    let prevented = false;
+    trapTab({ key: 'Tab', shiftKey: false, preventDefault: () => { prevented = true; } }, box);
+    assert.equal(globalThis.document.activeElement, a); assert.equal(prevented, true);
+    trapTab({ key: 'Tab', shiftKey: true, preventDefault: () => {} }, box);
+    assert.equal(globalThis.document.activeElement, b);
+    prevented = false;
+    trapTab({ key: 'Tab', shiftKey: true, preventDefault: () => { prevented = true; } }, box); // b → a: để trình duyệt tự đi
+    assert.equal(prevented, false);
+  } finally { globalThis.document = prevDoc; }
+  const media = readFileSync(join(root, 'views/chat-media.js'), 'utf8');
+  assert.match(media, /classList\.add\('no-scroll'\)/);
+  assert.match(media, /classList\.remove\('no-scroll'\)/);
+  assert.match(readFileSync(join(root, 'style.css'), 'utf8'), /body\.no-scroll \{ overflow: hidden; \}/);
+  const chats = readFileSync(join(root, 'views/chats.js'), 'utf8');
+  assert.match(chats, /onClose=\$\{\(\) => closeSide\('search'\)\}/);
+  assert.match(chats, /onClose=\$\{\(\) => closeSide\('media'\)\}/);
+});
+
 test('Phiên chat: biểu tượng tệp theo đuôi, đoạn chữ quanh chỗ trùng, đường ảnh đi qua dashboard', async () => {
   const { fileBadge } = await import('./views/chat-media.js');
   const { snippet } = await import('./views/chats.js');
