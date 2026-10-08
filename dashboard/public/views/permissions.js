@@ -1,15 +1,21 @@
-// Phân quyền Bot (spec §9): trái là "Mặc định" + danh sách nhóm có ô tìm; phải là Hoạt động,
-// Chỉ trả lời khi được tag và 9 nút tính năng. Lưu là có hiệu lực ngay.
+// Phân quyền Bot (spec §9): trái là "Nhắn riêng", "Hạn mức xưởng", "Mặc định" + danh sách nhóm có ô tìm; phải là
+// Hoạt động, Chỉ trả lời khi được tag, 9 nút tính năng và hộp Xưởng tạo sản phẩm (spec §17). Lưu là có hiệu lực ngay.
 import { useEffect, useState } from '../vendor/hooks.mjs';
 import { api } from '../api.js';
 import { html, Icon, Live, Notice, PageHead, SaveBar, Spinner, Toggle, onText } from '../ui.js';
 import { fold } from '../fold.js';
 import { DmEditor, dmBadge } from './dm-permissions.js';
+import { StudioBox, parseQuota, studioComplete } from './studio-box.js';
+import { QuotaEditor, quotaBadge } from './studio-quota.js';
 
 export const DEFAULTS_KEY = 'defaults';
-// Mục "Nhắn riêng" ở đầu danh sách; mã nhóm Zalo luôn là số nên không trùng.
+// Mục "Nhắn riêng" và "Hạn mức xưởng" ở đầu danh sách; mã nhóm Zalo luôn là số nên không trùng.
 export const DM_KEY = 'dm';
-const pick = (s) => ({ active: s.active, replyOnlyTagged: s.replyOnlyTagged, features: { ...s.features } });
+export const QUOTA_KEY = 'studio';
+const pick = (s) => ({ active: s.active, replyOnlyTagged: s.replyOnlyTagged, features: { ...s.features },
+  studio: { ...(s.studio || {}) }, studioQuota: s.studioQuota ?? null });
+const sameBools = (a = {}, b = {}) => Object.keys({ ...a, ...b }).every((k) => a[k] === b[k]);
+const quotaText = (v) => (v === null || v === undefined ? '' : String(v));
 
 /**
  * Gộp danh sách nhóm của bot với permissions.json: nhóm bot đang ở (theo thứ tự bot trả) trước,
@@ -32,15 +38,24 @@ export function mergeGroups(groups, perms) {
 }
 
 export function sameSettings(a, b) {
-  return a.active === b.active && a.replyOnlyTagged === b.replyOnlyTagged
-    && Object.keys({ ...a.features, ...b.features }).every((k) => a.features[k] === b.features[k]);
+  return a.active === b.active && a.replyOnlyTagged === b.replyOnlyTagged && sameBools(a.features, b.features)
+    && sameBools(a.studio, b.studio) && (a.studioQuota ?? null) === (b.studioQuota ?? null);
 }
 
-/** Số thay đổi của một nhóm/mặc định: Hoạt động, Chỉ trả lời khi được tag, từng tính năng. */
+/** Số thay đổi của một nhóm/mặc định: Hoạt động, Chỉ trả lời khi được tag, từng tính năng, từng nút xưởng, số lượt. */
 export function changeCount(a, b) {
-  let n = (a.active !== b.active) + (a.replyOnlyTagged !== b.replyOnlyTagged);
+  let n = (a.active !== b.active) + (a.replyOnlyTagged !== b.replyOnlyTagged) + ((a.studioQuota ?? null) !== (b.studioQuota ?? null));
   for (const k of Object.keys({ ...a.features, ...b.features })) if (a.features[k] !== b.features[k]) n += 1;
+  for (const k of Object.keys({ ...a.studio, ...b.studio })) if (a.studio?.[k] !== b.studio?.[k]) n += 1;
   return n;
+}
+
+/** Thân PUT của nhóm/mặc định: nút xưởng chỉ gửi khi đủ khoá; số lượt chỉ có ở nhóm. */
+export function settingsPayload(d, { isGroup, studioFeatures = [] }) {
+  const body = { active: d.active, replyOnlyTagged: d.replyOnlyTagged, features: { ...d.features } };
+  if (studioComplete(d.studio, studioFeatures)) body.studio = { ...d.studio };
+  if (isGroup) body.studioQuota = d.studioQuota ?? null;
+  return body;
 }
 
 /** Nhãn ngắn cạnh tên nhóm trong danh sách; null khi nhóm đang đúng mặc định. */
@@ -61,15 +76,17 @@ export function mayLeave(dirty, ask) {
 
 /** Sau khi lưu, nhóm còn trong danh sách không — nhóm chỉ có trong tệp, đưa về mặc định thì mất mục trong tệp. */
 export function staysListed(id, perms, groups) {
-  return id === DEFAULTS_KEY || id === DM_KEY || Boolean(perms.groups[id]) || (groups || []).some((g) => g.id === id);
+  return id === DEFAULTS_KEY || id === DM_KEY || id === QUOTA_KEY || Boolean(perms.groups[id]) || (groups || []).some((g) => g.id === id);
 }
 
-function Editor({ target, value, defaults, features, onSaved, onBack, onDirty }) {
+function Editor({ target, value, defaults, features, studioFeatures, studioPolicy, defaultQuota, onSaved, onBack, onDirty }) {
   const isGroup = target.id !== DEFAULTS_KEY;
   const [draft, setDraft] = useState(() => pick(value));
+  const [qText, setQText] = useState(() => quotaText(value.studioQuota));
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState({});
-  const dirty = !sameSettings(draft, value);
+  const quota = parseQuota(qText);
+  const dirty = !sameSettings(draft, value) || quotaText(draft.studioQuota) !== qText.trim();
   useEffect(() => { onDirty(dirty); }, [dirty]);
   useEffect(() => () => onDirty(false), []);
   const set = (patch) => { setDraft((d) => ({ ...d, ...patch })); setMsg({}); };
@@ -78,10 +95,11 @@ function Editor({ target, value, defaults, features, onSaved, onBack, onDirty })
   async function save(e) {
     e.preventDefault();
     if (busy || !dirty) return;
+    if (quota.error) { setMsg({ error: `Số lượt xưởng: ${quota.error} Sửa ô đó rồi lưu lại, hoặc để trống để theo mặc định.` }); return; }
     setBusy(true); setMsg({});
     try {
       const path = isGroup ? `/api/permissions/groups/${encodeURIComponent(target.id)}` : '/api/permissions/defaults';
-      const r = await api(path, { method: 'PUT', body: draft });
+      const r = await api(path, { method: 'PUT', body: settingsPayload(draft, { isGroup, studioFeatures }) });
       if (onSaved(r, target.id)) setMsg({ ok: 'Đã lưu — bot áp dụng ngay, không cần khởi động lại.' });
     } catch (err) { setMsg({ error: err.message }); } finally { setBusy(false); }
   }
@@ -98,7 +116,7 @@ function Editor({ target, value, defaults, features, onSaved, onBack, onDirty })
         ? 'Chỉ áp cho thành viên trong nhóm này. Chủ nhân bot luôn dùng được mọi tính năng.'
         : 'Áp cho mọi nhóm. Nhóm chỉnh riêng chỉ giữ những mục khác mặc định; mục còn lại đi theo Mặc định. Chủ nhân bot luôn dùng được mọi tính năng; tin nhắn riêng chỉnh ở mục Nhắn riêng.'}</p>
       ${isGroup ? html`<button type="button" class="btn btn-secondary btn-sm" disabled=${busy || sameSettings(draft, defaults)}
-        onClick=${() => set(pick(defaults))}>Dùng mặc định</button>` : null}
+        onClick=${() => { set(pick(defaults)); setQText(''); }}>Dùng mặc định</button>` : null}
     </div>
     <fieldset class="perm-box">
       <legend>Cách bot trả lời</legend>
@@ -119,8 +137,13 @@ function Editor({ target, value, defaults, features, onSaved, onBack, onDirty })
           onChange=${(v) => setFeature(f.key, v)} label=${f.label} hint=${f.hint} />`)}
       </fieldset>
     </details>
-    <${SaveBar} count=${changeCount(draft, value)} busy=${busy} canSave=${dirty} msg=${msg}
-      onUndo=${() => { setDraft(pick(value)); setMsg({}); }} />
+    <${StudioBox} id=${`${p}-studio`} studio=${draft.studio} features=${studioFeatures} disabled=${!draft.active}
+      onChange=${(studio) => set({ studio })} policy=${studioPolicy} quota=${qText} defaultQuota=${defaultQuota} quotaError=${quota.error}
+      quotaHint=${isGroup ? `Để trống để theo mặc định (${defaultQuota}); 0 là tắt cho cả nhóm. Hạn mức riêng từng người đặt ở mục Hạn mức xưởng.` : ''}
+      onQuota=${isGroup ? (text) => { setQText(text); setMsg({}); const q = parseQuota(text); if (!q.error) set({ studioQuota: q.value }); } : null}
+      note=${isGroup ? '' : `Số lượt mỗi người mỗi ngày chỉnh ở mục Hạn mức xưởng (đang là ${defaultQuota}).`} />
+    <${SaveBar} count=${changeCount(draft, value) || (dirty ? 1 : 0)} busy=${busy} canSave=${dirty && !quota.error} msg=${msg}
+      onUndo=${() => { setDraft(pick(value)); setQText(quotaText(value.studioQuota)); setMsg({}); }} />
   </form>`;
 }
 
@@ -197,7 +220,7 @@ export function Permissions({ me }) {
     ${perms.corrupt ? html`<${Notice} kind="warn">Tệp phân quyền bị hỏng nên bot đang dùng mặc định (mọi tính năng bật). Lưu lại một mục bất kỳ để ghi tệp mới.<//>` : null}
     ${groupsError ? html`<${Notice} kind="warn">Chưa lấy được danh sách nhóm: ${groupsError} Danh sách dưới đây chỉ có nhóm đã chỉnh trước đó hoặc đã có trong Phiên chat.<//>` : null}
     <${Live} ok=${flash} />
-    <div class=${`perm${target || selected === DM_KEY ? ' has-sel' : ''}`}>
+    <div class=${`perm${target || selected === DM_KEY || selected === QUOTA_KEY ? ' has-sel' : ''}`}>
       <section class="card perm-list" aria-label="Nhóm">
         <div class="chat-search">
           <label for="perm-q" class="sr-only">Lọc nhóm theo tên</label>
@@ -211,6 +234,12 @@ export function Permissions({ me }) {
               <span class=${`badge badge-${dmBadge(perms.dm).kind}`}>${dmBadge(perms.dm).text}</span></span>
             <span class="conv-preview">Ai được nhắn riêng với bot và bot được làm gì trong tin nhắn riêng.</span>
           </button></li>
+          ${perms.studioFeatures ? html`<li><button type="button" class=${`conv${selected === QUOTA_KEY ? ' active' : ''}`}
+            aria-current=${selected === QUOTA_KEY ? 'true' : undefined} onClick=${() => choose(QUOTA_KEY)}>
+            <span class="conv-top"><span class="conv-name"><${Icon} name="list" size=${16} /> Hạn mức xưởng</span>
+              <span class="badge badge-idle">${quotaBadge(perms.studio)}</span></span>
+            <span class="conv-preview">Mỗi người được nhờ xưởng làm bao nhiêu sản phẩm mỗi ngày.</span>
+          </button></li>` : null}
           <li><button type="button" class=${`conv${selected === DEFAULTS_KEY ? ' active' : ''}`}
             aria-current=${selected === DEFAULTS_KEY ? 'true' : undefined} onClick=${() => choose(DEFAULTS_KEY)}>
             <span class="conv-top"><span class="conv-name"><${Icon} name="shield" size=${16} /> Mặc định cho nhóm mới</span></span>
@@ -229,14 +258,18 @@ export function Permissions({ me }) {
         ${list.length && !shown.length ? html`<p class="muted small">Không có nhóm nào trùng tên — xoá bớt chữ trong ô lọc.</p>` : null}
         ${!list.length && !groupsError ? html`<p class="muted small">Bot chưa ở nhóm nào — thêm bot vào nhóm Zalo rồi tải lại trang.</p>` : null}
       </section>
-      <section class="card perm-edit" aria-label=${selected === DM_KEY ? 'Quyền nhắn riêng' : 'Quyền của nhóm'}>
+      <section class="card perm-edit" aria-label=${selected === DM_KEY ? 'Quyền nhắn riêng' : selected === QUOTA_KEY ? 'Hạn mức xưởng' : 'Quyền của nhóm'}>
         ${selected === DM_KEY
-          ? html`<${DmEditor} key=${DM_KEY} dm=${perms.dm} features=${perms.dmFeatures} admin=${me?.role === 'admin'}
+          ? html`<${DmEditor} key=${DM_KEY} dm=${perms.dm} features=${perms.dmFeatures} studioFeatures=${perms.studioFeatures || []}
+              studioPolicy=${perms.studioPolicy} admin=${me?.role === 'admin'} onSaved=${(r) => setPerms(r)} onDirty=${setDirty} onBack=${() => choose(null)} />`
+          : selected === QUOTA_KEY
+          ? html`<${QuotaEditor} key=${QUOTA_KEY} studio=${perms.studio} admin=${me?.role === 'admin'}
               onSaved=${(r) => setPerms(r)} onDirty=${setDirty} onBack=${() => choose(null)} />`
           : target
           ? html`<${Editor} key=${target.id} target=${target} value=${pick(target)}
-              defaults=${pick(perms.defaults)} features=${perms.features} onSaved=${onSaved} onDirty=${setDirty} onBack=${() => choose(null)} />`
-          : html`<p class="muted chat-empty">Chọn "Nhắn riêng", "Mặc định" hoặc một nhóm bên trái để chỉnh.</p>`}
+              defaults=${pick(perms.defaults)} features=${perms.features} studioFeatures=${perms.studioFeatures || []} studioPolicy=${perms.studioPolicy}
+              defaultQuota=${perms.studio?.quota ?? 3} onSaved=${onSaved} onDirty=${setDirty} onBack=${() => choose(null)} />`
+          : html`<p class="muted chat-empty">Chọn "Nhắn riêng", "Hạn mức xưởng", "Mặc định" hoặc một nhóm bên trái để chỉnh.</p>`}
       </section>
     </div>`;
 }

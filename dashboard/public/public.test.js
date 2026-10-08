@@ -441,3 +441,102 @@ test('Phân quyền: thanh Lưu dính, hộp gập, không còn làm mờ cả h
   assert.match(dm, /aria-controls=/);
   assert.match(dm, /<details class="dm-add-box">/, '"+ Thêm người" gập sẵn');
 });
+
+// --- Xưởng tạo sản phẩm (spec §17) ---
+const SF = [{ key: 'studioSlides' }, { key: 'studioDocs' }, { key: 'studioExams' }, { key: 'studioVideo' }];
+const S_OFF = { studioSlides: false, studioDocs: false, studioExams: false, studioVideo: false };
+
+test('xưởng: ô số lượt, gửi nút xưởng chỉ khi đủ khoá, đếm thay đổi gồm nút xưởng và số lượt', async () => {
+  const { parseQuota, studioComplete } = await import('./views/studio-box.js');
+  const { settingsPayload, changeCount, sameSettings } = await import('./views/permissions.js');
+  assert.deepEqual(parseQuota(''), { value: null });
+  assert.deepEqual(parseQuota(' 7 '), { value: 7 });
+  assert.deepEqual(parseQuota('0'), { value: 0 });
+  for (const bad of ['51', '-1', '2.5', 'ba', '100']) assert.match(parseQuota(bad).error, /0 đến 50/, bad);
+  assert.match(parseQuota('', { allowEmpty: false }).error, /Nhập số lượt/);
+  assert.equal(studioComplete(S_OFF, SF), true);
+  assert.equal(studioComplete({ studioSlides: true }, SF), false);
+  assert.equal(studioComplete(undefined, SF), false);
+  const base = { active: true, replyOnlyTagged: true, features: { web: true }, studio: S_OFF, studioQuota: null };
+  const d = { ...base, studio: { ...S_OFF, studioVideo: true }, studioQuota: 5 };
+  assert.deepEqual(settingsPayload(d, { isGroup: true, studioFeatures: SF }),
+    { active: true, replyOnlyTagged: true, features: { web: true }, studio: { ...S_OFF, studioVideo: true }, studioQuota: 5 });
+  assert.deepEqual(settingsPayload({ ...d, studio: {} }, { isGroup: false, studioFeatures: SF }),
+    { active: true, replyOnlyTagged: true, features: { web: true } }, 'mặc định không gửi số lượt; dữ liệu cũ không gửi nút xưởng');
+  assert.equal(changeCount(d, base), 2);
+  assert.equal(sameSettings(d, base), false);
+  assert.equal(sameSettings({ ...base, studioQuota: undefined }, base), true, 'thiếu số lượt = theo mặc định');
+});
+
+test('xưởng: máy Windows khoá nút video (chính sách cài đặt), máy khác không', async () => {
+  const { lockedByPolicy, quotaSummary } = await import('./views/studio-box.js');
+  assert.equal(quotaSummary('', 3), '3 lượt/người/ngày (mặc định)');
+  assert.equal(quotaSummary('0', 3), '0 lượt/người/ngày');
+  assert.equal(quotaSummary('77', 3), 'số lượt chưa đúng');
+  const win ={ videoBlocked: true, note: 'Máy chủ Windows không có hộp cát — video tắt' };
+  assert.equal(lockedByPolicy('studioVideo', win), true);
+  assert.equal(lockedByPolicy('studioSlides', win), false);
+  assert.equal(lockedByPolicy('studioVideo', { videoBlocked: false }), false);
+  assert.equal(lockedByPolicy('studioVideo', undefined), false);
+});
+
+test('xưởng: hạn mức theo người — bản nháp, kiểm số, thêm người (UID, trùng), đếm thay đổi', async () => {
+  const { quotaDraft, quotaPayload, quotaChangeCount, addQuotaPerson, quotaBadge } = await import('./views/studio-quota.js');
+  const saved = quotaDraft({ quota: 3, people: [{ uid: '1234567890123456', name: 'Cô Lan', quota: 10 }] });
+  assert.deepEqual(saved, { quota: '3', people: [{ uid: '1234567890123456', name: 'Cô Lan', quota: '10' }] });
+  assert.deepEqual(quotaPayload(saved), { body: { quota: 3, people: [{ uid: '1234567890123456', name: 'Cô Lan', quota: 10 }] } });
+  assert.match(quotaPayload({ ...saved, quota: '' }).error, /Số lượt mặc định: Nhập số lượt/);
+  assert.match(quotaPayload({ ...saved, people: [{ ...saved.people[0], quota: '99' }] }).error, /^Cô Lan: /);
+  const added = addQuotaPerson(saved, ' 2234567890123456 ', 'Thầy Nam');
+  assert.deepEqual(added.draft.people[1], { uid: '2234567890123456', name: 'Thầy Nam', quota: '3' }, 'mặc định lấy số lượt chung');
+  assert.match(addQuotaPerson(saved, '0912345678').error, /không phải số điện thoại — .*\/sethome/);
+  assert.match(addQuotaPerson(saved, '1234567890123456').error, /đã có hạn mức riêng/);
+  assert.equal(quotaChangeCount(saved, saved), 0);
+  assert.equal(quotaChangeCount({ ...added.draft, quota: '4' }, saved), 2);
+  assert.equal(quotaBadge({ quota: 5 }), '5 lượt/ngày');
+  assert.equal(quotaBadge(undefined), '3 lượt/ngày');
+});
+
+test('xưởng: nhắn riêng gửi nút xưởng chung và của người có tính năng riêng; người theo chung không gửi', async () => {
+  const { dmDraft, dmPayload, dmChangeCount, addPerson } = await import('./views/dm-permissions.js');
+  const dm = { who: 'everyone', explicit: true, gatewayOpen: true, features: ALL_ON, studio: { ...S_OFF, studioDocs: true },
+    people: [{ uid: '1234567890123456', name: 'Cô Lan', custom: true, features: ALL_ON, studio: { ...S_OFF, studioVideo: true } },
+      { uid: '2234567890123456', name: '', custom: false, features: ALL_ON, studio: { ...S_OFF, studioDocs: true } }] };
+  const body = dmPayload(dmDraft(dm));
+  assert.deepEqual(body.studio, { ...S_OFF, studioDocs: true });
+  assert.deepEqual(body.people[0].studio, { ...S_OFF, studioVideo: true });
+  assert.equal('studio' in body.people[1], false);
+  const d = dmDraft(dm);
+  d.studio.studioSlides = true;
+  assert.equal(dmChangeCount(d, dm), 1);
+  assert.deepEqual(addPerson(dmDraft(dm), '3234567890123456').draft.people[2].studio, { ...S_OFF, studioDocs: true });
+});
+
+test('xưởng: hàng gập của một người nhắn riêng tóm tắt cả nút xưởng (nút bị máy chủ khoá tính là tắt)', async () => {
+  const { personSummary } = await import('./views/dm-permissions.js');
+  const SFL = [{ key: 'studioSlides', label: 'Slide PowerPoint' }, { key: 'studioDocs', label: 'Văn bản và giáo án' },
+    { key: 'studioExams', label: 'Đề thi' }, { key: 'studioVideo', label: 'Video' }];
+  const win = { videoBlocked: true };
+  assert.deepEqual(personSummary({ custom: true, features: ALL_ON, studio: { ...S_OFF, studioSlides: true, studioVideo: true } }, DM_F, SFL, win),
+    { kind: 'ok', text: 'Riêng · bật tất cả · xưởng 1/4', detail: 'Xưởng bật: Slide PowerPoint' });
+  assert.deepEqual(personSummary({ custom: true, features: { ...ALL_ON, voice: false }, studio: S_OFF }, DM_F, SFL),
+    { kind: 'warn', text: 'Riêng · 1 tính năng tắt · xưởng 0/4', detail: 'Đang tắt: Tin nhắn thoại. Xưởng tắt hết' });
+  assert.equal(personSummary({ custom: false, features: ALL_ON, studio: S_OFF }, DM_F, SFL).text, 'Theo cài đặt chung');
+});
+
+test('xưởng: lượt đã dùng hôm nay và lượt còn (giờ Việt Nam), chỉ khi sổ có số của hôm nay', async () => {
+  const { vnToday } = await import('./views/studio-box.js');
+  const { usedToday, remainText } = await import('./views/studio-quota.js');
+  assert.equal(vnToday(Date.UTC(2026, 9, 7, 17, 30)), '2026-10-08', '00:30 sáng giờ Việt Nam đã sang ngày mới');
+  const usage = { days: [{ date: '2026-10-08', people: [{ uid: '1234567890123456', jobs: 3, refunded: 1 }] }] };
+  assert.equal(usedToday(usage, '1234567890123456', '2026-10-08'), 2, 'việc được trả lượt không tính');
+  assert.equal(usedToday(usage, '2234567890123456', '2026-10-08'), 0);
+  assert.equal(usedToday(usage, '1234567890123456', '2026-10-09'), 0, 'số của hôm qua không tính cho hôm nay');
+  assert.equal(usedToday(null, '1234567890123456', '2026-10-08'), null, 'chưa đọc được sổ → không hiện');
+  assert.equal(usedToday({ error: 'unreadable', days: [] }, '1234567890123456', '2026-10-08'), null);
+  assert.equal(remainText(2, '5'), 'Hôm nay đã dùng 2 · còn 3');
+  assert.equal(remainText(7, '5'), 'Hôm nay đã dùng 7 · hết lượt');
+  assert.equal(remainText(0, '0'), 'Hôm nay đã dùng 0 · hết lượt');
+  assert.equal(remainText(1, '9x'), 'Hôm nay đã dùng 1');
+  assert.equal(remainText(null, '5'), '');
+});

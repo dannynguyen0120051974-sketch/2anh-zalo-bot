@@ -415,6 +415,23 @@ fieldset:disabled .radio-card { cursor: not-allowed; }
 .dm-panel-actions { margin-top: 6px; }
 .dm-more { margin-top: 6px; }
 .dm-empty { margin: 8px 0; }
+/* Xưởng tạo sản phẩm (spec §17): ô số lượt, ghi chú, nút bị máy chủ khoá, nút xưởng riêng từng người, Hạn mức xưởng. */
+.studio-note { margin: 8px 0 0; }
+.studio-foot { margin: 0 0 10px; }
+.studio-quota { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 0 10px; }
+.studio-quota label { font-weight: 600; }
+.studio-quota input, .quota-input { width: 5.5em; flex: none; }
+.studio-quota small { flex: 1 1 100%; }
+.studio-quota-error { color: var(--danger); }
+.studio-today { margin: 0 0 8px; }
+.check:has(input:disabled) { cursor: not-allowed; }
+.check input:disabled { opacity: .45; }
+.dm-studio-head { margin: 8px 0 0; font-weight: 650; }
+.quota-row { flex-wrap: wrap; row-gap: 0; }
+.quota-edit { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.quota-use { flex: 1 1 100%; margin: -4px 0 4px; }
+.quota-use:empty { display: none; }
+.studio-recent-head { font-size: 15px; margin: 16px 0 4px; }
 /* Thanh Lưu dính đáy khung sửa: luôn thấy số thay đổi + Hoàn tác + Lưu. */
 .perm-form { display: flex; flex-direction: column; }
 .save-bar {
