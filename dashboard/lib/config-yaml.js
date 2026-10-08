@@ -3,7 +3,7 @@
  * lại cả tệp — giữ nguyên chú thích, thứ tự khoá, khối chữ nhiều dòng anh viết tay. Mỗi lần sửa:
  *   1. tìm đúng khoá theo đường dẫn (vd. ['platforms','zalo','extra','reply_only_tagged']) bằng thụt lề;
  *   2. thay cả vùng giá trị của khoá (một dòng, hoặc khối con/danh sách bên dưới) bằng MỘT dòng mới;
- *      khoá chưa có thì chèn vào cuối khối cha (khối cha phải có sẵn);
+ *      khoá chưa có thì chèn vào cuối khối cha (khối cha phải có sẵn, trừ vài đường dẫn cho phép tạo khối cha cấp 1);
  *   3. phân tích lại cả tệp: kết quả phải BẰNG bản cũ với đúng các khoá đã sửa — khác một chút là từ chối, giữ tệp cũ.
  * Ghi: theo symlink, giữ quyền + chủ sở hữu, `.bak`, tệp tạm rồi đổi tên; tệp bị tiến trình khác (lệnh /model) ghi
  * chen giữa lúc đọc và lúc đổi tên → 409, giữ bản của tiến trình kia.
@@ -16,7 +16,10 @@ import { writeFileAtomic } from './json-store.js';
 const err = (message, statusCode = 400) => Object.assign(new Error(message), { statusCode });
 // Chuỗi để trần được: không bắt đầu bằng ký tự chỉ thị YAML (@ - : …), không kết thúc bằng ":".
 const PLAIN = /^[A-Za-z0-9._/][A-Za-z0-9._/@:+-]*$/;
-const RESERVED = /^(true|false|yes|no|on|off|null|~|[-+]?(\d[\d_]*(\.\d*)?|\.\d+)([eE][-+]?\d+)?|0x[0-9a-f]+|\.inf|\.nan)$/i;
+// Gồm cả các chuỗi YAML 1.1 mơ hồ (ngày, 0b/0o/0x, sáu mươi phân như 1:30, .inf/.nan): bộ đọc khác có thể hiểu thành số/ngày.
+const RESERVED = /^(true|false|yes|no|on|off|null|~|[-+]?(\d[\d_]*(\.\d*)?|\.\d+)([eE][-+]?\d+)?|0x[0-9a-f_]+|0b[01_]+|0o[0-7_]+|\d{4}-\d{2}-\d{2}.*|[-+]?\d[\d_]*(:[0-5]?\d)+(\.\d*)?|[-+]?\.inf|\.nan)$/i;
+// Đường dẫn được phép TẠO khối cha cấp 1 khi config.yaml chưa có (vd. VPS chưa có mục `agent:`).
+const CREATABLE_PARENT = new Set(['agent.reasoning_effort']);
 
 /** Giá trị → chữ YAML một dòng: chuỗi thường để trần, còn lại JSON (hợp lệ trong YAML); mảng thành [..]. */
 export function renderScalar(v) {
@@ -91,6 +94,12 @@ export function applyYamlEdits(text, edits) {
   for (const { path, value } of edits) {
     const at = locate(lines, path);
     const key = path.at(-1);
+    if (!at && path.length === 2 && CREATABLE_PARENT.has(path.join('.')) && locate(lines, [path[0]])?.missing) {
+      const at0 = lines.length && lines.at(-1) === '' ? lines.length - 1 : lines.length;
+      lines.splice(at0, 0, `${path[0]}:`, `  ${key}: ${renderScalar(value)}`);
+      setIn(expected, path, value);
+      continue;
+    }
     if (!at) throw err(`Không tìm thấy mục ${path.slice(0, -1).join('.')} trong config.yaml — báo người cài đặt.`);
     if (at.missing) {
       if (at.parentIndex < 0 && path.length > 1) throw err(`Không tìm thấy mục ${path.slice(0, -1).join('.')} trong config.yaml.`);

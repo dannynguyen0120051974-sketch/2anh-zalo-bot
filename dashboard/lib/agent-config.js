@@ -81,7 +81,8 @@ export function createSoul({ hermesHome, historyDir, now = Date.now }) {
     })).sort((a, b) => (a.original ? 1 : b.original ? -1 : b.at - a.at));
   }
   function write(text, by) {
-    const t = String(text ?? '').replace(/\r\n/g, '\n');
+    if (typeof text !== 'string') throw err(400, 'Tính cách phải là chữ — tải lại trang rồi thử lại.');
+    const t = text.replace(/\r\n/g, '\n');
     if (!t.trim()) throw err(400, 'Tính cách đang trống — viết ít nhất vài dòng, hoặc khôi phục một bản cũ.');
     if (t.length > MAX_SOUL) throw err(400, `Tối đa ${MAX_SOUL} ký tự — rút gọn rồi lưu.`);
     const cur = read();

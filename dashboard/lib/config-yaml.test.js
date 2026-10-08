@@ -129,6 +129,27 @@ test('config.yaml thật của máy này (nếu có): sửa thử trong bộ nh�
   const out = applyYamlEdits(real, [
     { path: ['model', 'default'], value: 'thu-nghiem' },
     { path: ['platforms', 'zalo', 'extra', 'reply_only_tagged'], value: true },
+    { path: ['agent', 'reasoning_effort'], value: 'high' },
   ]);
+  assert.equal(YAML.parse(out).agent.reasoning_effort, 'high');
   assert.equal(YAML.parse(out).model.default, 'thu-nghiem');
+});
+
+test('thiếu khối cha cấp 1 (VPS chưa có agent:): đường dẫn cho phép được tạo ở cuối tệp, giữ dòng cuối + kiểu xuống dòng', () => {
+  const base = ['model:', '  default: hermes', ''];
+  const lf = applyYamlEdits(base.join('\n'), [{ path: ['agent', 'reasoning_effort'], value: 'high' }]);
+  assert.equal(lf, 'model:\n  default: hermes\nagent:\n  reasoning_effort: high\n');
+  const crlf = applyYamlEdits(base.join('\r\n'), [{ path: ['agent', 'reasoning_effort'], value: 'low' }]);
+  assert.equal(crlf, 'model:\r\n  default: hermes\r\nagent:\r\n  reasoning_effort: low\r\n');
+  const noNl = applyYamlEdits('model:\n  default: hermes', [{ path: ['agent', 'reasoning_effort'], value: 'low' }]);
+  assert.equal(noNl, 'model:\n  default: hermes\nagent:\n  reasoning_effort: low');
+  assert.throws(() => applyYamlEdits('model:\n  default: hermes\n', [{ path: ['khac', 'khoa'], value: 1 }]), (e) => e.statusCode === 400, 'đường dẫn ngoài danh sách vẫn 400');
+});
+
+test('chuỗi mơ hồ của YAML 1.1 được bọc nháy khi ghi', () => {
+  for (const s of ['2026-10-09', '0b101', '0o17', '0x1F', '1:30', '.inf', '-.inf', '.nan']) {
+    assert.equal(renderScalar(s), JSON.stringify(s), s);
+    assert.equal(YAML.parse('k: ' + renderScalar(s)).k, s);
+  }
+  assert.equal(renderScalar('high'), 'high');
 });

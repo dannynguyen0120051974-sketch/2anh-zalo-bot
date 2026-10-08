@@ -87,3 +87,16 @@ test('SOUL.md: giữ 30 bản cũ + bản gốc; bản gốc không bao giờ b�
   assert.equal(soul.snapshot('original'), 'Bản 0');
   assert.equal(soul.snapshot(hist[0].id), 'Bản 34', 'bản mới nhất là bản ngay trước bản hiện tại');
 });
+
+test('mức suy nghĩ: config.yaml chưa có mục agent: → tạo mới', (t) => {
+  const h = home(t);
+  writeFileSync(join(h, 'config.yaml'), 'model:\n  default: hermes\n');
+  createAgentConfig({ configFile: join(h, 'config.yaml') }).setReasoning('high');
+  assert.equal(YAML.parse(readFileSync(join(h, 'config.yaml'), 'utf8')).agent.reasoning_effort, 'high');
+});
+
+test('SOUL.md: text không phải chuỗi → 400', (t) => {
+  const h = home(t);
+  const soul = createSoul({ hermesHome: h, historyDir: join(h, 'soul-history') });
+  for (const bad of [undefined, null, 5, ['a'], { a: 1 }]) assert.throws(() => soul.save(bad, 'anh'), (e) => e.statusCode === 400);
+});
