@@ -80,6 +80,8 @@ function classify(command) {
   if (command.type === 'history') return { minimumRole: 'public', category: 'read', dangerous: false };
   // Đọc cả một khoảng thời gian (có thể hàng nghìn tin) chỉ dành cho chủ nhân.
   if (command.type === 'history_range') return { minimumRole: 'owner', category: 'read', dangerous: false };
+  // Tra lịch sử của thành viên (spec §19.5): chỉ đọc kho, tối đa 40 tin, đúng hội thoại đang thao tác (sameThread bên dưới).
+  if (command.type === 'history_search') return { minimumRole: 'public', category: 'read', dangerous: false };
   if (command.type === 'undo') return { minimumRole: 'owner', category: 'undo', dangerous: true };
   if (command.type === 'welcome_config') return { minimumRole: 'owner', category: 'admin', dangerous: false };
   // Kết bạn rồi tạo nhóm (zalo-friends.js): chủ bot duyệt lúc ra lệnh, sidecar tự tạo nhóm sau.
@@ -112,7 +114,8 @@ function dmDenial(command, auth, owners, dmRules) {
   const verdict = dmVerdict(dm, auth.actorUid);
   // Câu trả lời /sethome (chỉ cho người lạ biết UID của chính họ) vẫn phải đi được.
   if (verdict.allowed === false && !(command.type === 'send' && auth.notice === 'sethome')) return 'dm_not_allowed';
-  const feature = command.type === 'invoke' ? DM_METHOD_FEATURE.get(String(command.method || '')) : null;
+  const feature = command.type === 'history_search' ? 'history'
+    : command.type === 'invoke' ? DM_METHOD_FEATURE.get(String(command.method || '')) : null;
   if (feature && verdict.features[feature] === false) return 'feature_disabled';
   return null;
 }

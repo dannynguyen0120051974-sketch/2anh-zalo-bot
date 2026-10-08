@@ -19,12 +19,12 @@ test('normalizeDm: giữ khoá biết, đúng kiểu; bỏ who lạ, UID không 
     people: { [A]: { name: 'Cô Lan', features: { voice: false } }, [B]: { features: {} } },
   });
   assert.equal(normalizeDm({ who: 'all' }).who, undefined);
-  assert.deepEqual(DM_FEATURE_KEYS, ['web', 'files', 'voice', 'reminders', 'kb', 'people', 'academic', 'video']);
+  assert.deepEqual(DM_FEATURE_KEYS, ['web', 'files', 'voice', 'reminders', 'kb', 'people', 'academic', 'video', 'history']);
 });
 
 test('dmVerdict: who quyết ai vào; tính năng gộp mặc định ← dm ← người', () => {
   const dm = normalizeDm({ who: 'list', features: { web: false }, people: { [A]: { features: { web: true, video: false } } } });
-  assert.deepEqual(dmVerdict(dm, A), { allowed: true, features: { web: true, files: true, voice: true, reminders: true, kb: true, people: true, academic: true, video: false } });
+  assert.deepEqual(dmVerdict(dm, A), { allowed: true, features: { web: true, files: true, voice: true, reminders: true, kb: true, people: true, academic: true, video: false, history: true } });
   assert.equal(dmVerdict(dm, B).allowed, false);
   assert.equal(dmVerdict(dm, B).features.web, false);
   assert.equal(dmVerdict({ ...dm, who: 'everyone' }, B).allowed, true);

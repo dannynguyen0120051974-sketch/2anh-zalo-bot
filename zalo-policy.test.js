@@ -201,3 +201,18 @@ test('nhắn riêng: không có mục dm, chưa chọn who, hoặc đọc lỗi 
     assert.equal(authorizeBridgeCommand({ ...sendTo('stranger'), auth: dmAuth('stranger') }, { ownerUids: new Set(['owner-1']), dmRules }).allowed, true);
   }
 });
+
+test('history_search (spec §19.5): thành viên tra đúng hội thoại đang thao tác; nhắn riêng tôn trọng nút "history"', () => {
+  const cmd = (threadId, threadType, a) => ({ type: 'history_search', threadId, threadType, query: 'x', auth: a });
+  assert.deepEqual(authorizeBridgeCommand(cmd('group-1', 1, publicAuth), policyOptions), {
+    allowed: true, role: 'public', code: 'allowed', category: 'read',
+  });
+  assert.equal(authorizeBridgeCommand(cmd('other-group', 1, publicAuth), policyOptions).code, 'cross_thread_denied');
+  assert.equal(authorizeBridgeCommand(cmd('group-1', 0, publicAuth), policyOptions).code, 'cross_thread_denied');
+  const system = { actorUid: '', actorRole: 'system', sourceThreadId: '', sourceThreadType: 0, confirmed: false };
+  assert.equal(authorizeBridgeCommand(cmd('group-1', 1, system), policyOptions).code, 'auth_required');
+  const off = dmOptions({ who: 'everyone', features: { history: false }, people: { vip: { features: { history: true } } } });
+  assert.equal(authorizeBridgeCommand(cmd('u2', 0, dmAuth('u2')), off).code, 'feature_disabled');
+  assert.equal(authorizeBridgeCommand(cmd('vip', 0, dmAuth('vip')), off).allowed, true);
+  assert.equal(authorizeBridgeCommand(cmd('owner-1', 0, dmAuth('owner-1')), off).allowed, true, 'chủ nhân luôn được miễn');
+});

@@ -1038,6 +1038,20 @@ async function handleCommand(ws, cmd) {
       break;
     }
 
+    case 'history_search': {
+      // Tra lịch sử của thành viên (spec §19.5): chỉ đọc kho SQLite, không gọi Zalo, không backfill.
+      // zalo-policy.js đã ép threadId/threadType trùng hội thoại của lượt này.
+      const found = activeStore
+        ? activeStore.searchHistory(activeAccountId, String(cmd.threadId), threadType === ThreadType.Group ? 1 : 0, {
+          query: cmd.query, sender: cmd.sender, sinceMs: cmd.sinceMs, limit: cmd.limit,
+        })
+        : { messages: [], scanned: 0, truncated: false };
+      if (cmd.reqId) {
+        send(ws, { type: 'ack', reqId: cmd.reqId, ok: true, result: { count: found.messages.length, ...found } });
+      }
+      break;
+    }
+
     case 'welcome_config': {
       // Cấu hình chào thành viên mới (zalo-welcome.js). Chỉ chủ bot — xem zalo-policy.js.
       let result;

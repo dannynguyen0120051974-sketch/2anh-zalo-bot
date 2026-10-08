@@ -2,8 +2,14 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { fold } from './dashboard/public/fold.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+// Tin chứa mã đăng nhập dashboard (server.js gửi với remember:false, nhưng bản cũ từng lưu lại) — không bao giờ trả cho công cụ.
+export const LOGIN_CODE_MARK = 'Mã đăng nhập dashboard:';
+// Tra lịch sử cho thành viên (spec §19.5): quét tối đa chừng này tin gần nhất trong khoảng thời gian, trả tối đa 40 tin.
+export const HISTORY_SEARCH_SCAN = 20_000;
+export const HISTORY_SEARCH_MAX = 40;
 
 function text(value) {
   return value == null ? '' : String(value);
@@ -290,6 +296,31 @@ export function openZaloStore({ path, retentionDays = 365, now = Date.now } = {}
     };
   }
 
+  /**
+   * Tìm tin trong MỘT hội thoại cho công cụ tra lịch sử của thành viên (spec §19.5). Chỉ đọc kho, không gọi Zalo.
+   * Khớp không phân biệt hoa thường và dấu ("bao cao" khớp "Báo cáo"); `sender` khớp một phần tên người gửi.
+   * Bỏ tin chứa mã đăng nhập dashboard và tin thu hồi/xoá. Trả cũ trước mới sau, tối đa HISTORY_SEARCH_MAX tin mới nhất.
+   */
+  function searchHistory(accountId, threadId, threadType, { query = '', sender = '', sinceMs = 0, limit = 20 } = {}) {
+    const safeLimit = Math.min(Math.max(Math.trunc(Number(limit)) || 20, 1), HISTORY_SEARCH_MAX);
+    const needle = fold(String(query ?? '').trim()).slice(0, 100);
+    const who = fold(String(sender ?? '').trim()).slice(0, 60);
+    const rows = db.prepare(`
+      SELECT * FROM messages
+      WHERE account_id = ? AND thread_id = ? AND thread_type = ? AND timestamp_ms >= ?
+        AND instr(text, ?) = 0 AND msg_type NOT IN ('chat.delete', 'chat.undo')
+      ORDER BY timestamp_ms DESC, rowid DESC LIMIT ?
+    `).all(String(accountId), String(threadId), Number(threadType), Number(sinceMs) || 0, LOGIN_CODE_MARK, HISTORY_SEARCH_SCAN);
+    const found = [];
+    for (const row of rows) {
+      if (needle && !fold(row.text).includes(needle)) continue;
+      if (who && !fold(row.sender_name).includes(who)) continue;
+      found.push(mapMessage(row));
+      if (found.length >= safeLimit) break;
+    }
+    return { messages: found.reverse(), scanned: rows.length, truncated: rows.length >= HISTORY_SEARCH_SCAN };
+  }
+
   function findOwnMessage(accountId, threadId, threadType, ids = null) {
     const conditions = [
       'account_id = ?', 'thread_id = ?', 'thread_type = ?', 'is_self = 1',
@@ -418,6 +449,7 @@ export function openZaloStore({ path, retentionDays = 365, now = Date.now } = {}
     insertMessages,
     getHistory,
     getRange,
+    searchHistory,
     findOwnMessage,
     pruneMessages,
     beginAudit,
