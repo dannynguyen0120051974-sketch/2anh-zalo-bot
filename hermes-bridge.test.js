@@ -1409,3 +1409,25 @@ test('nhắn riêng: cầu nối áp mục dm của permissions.json — ngườ
     stopHermesBridge();
   }
 });
+
+test('auditDashboardAction: ghi attempted → succeeded/failed với tên người dùng dashboard; lỗi được ném lại', async (t) => {
+  const { auditDashboardAction } = await import('./hermes-bridge.js');
+  const store = testStore(t);
+  const ids = [];
+  const beginAudit = store.beginAudit;
+  store.beginAudit = (entry) => { ids.push(entry.requestId); return beginAudit(entry); };
+  const server = startHermesBridge({ api: {}, profile: { user_id: 'bot' }, port: 0, store });
+  await new Promise((resolve) => server.once('listening', resolve));
+  try {
+    assert.equal(await auditDashboardAction({ action: 'dashboard_friend_accept', actor: 'khach', threadId: '2222222222222222222', threadType: 0 }, async () => 'ok'), 'ok');
+    const ok = store.getAuditTrail(ids.at(-1));
+    assert.deepEqual(ok.map((r) => r.status), ['attempted', 'succeeded']);
+    assert.equal(ok[0].actorUid, 'khach');
+    assert.equal(ok[0].actorRole, 'dashboard');
+    assert.equal(ok[0].category, 'admin');
+    await assert.rejects(auditDashboardAction({ action: 'dashboard_reminder_remove', actor: 'anh', threadId: '5', threadType: 1 }, async () => { throw new Error('zalo lỗi'); }), /zalo lỗi/);
+    assert.deepEqual(store.getAuditTrail(ids.at(-1)).map((r) => [r.status, r.error]), [['attempted', null], ['failed', 'operation_failed']]);
+  } finally {
+    stopHermesBridge();
+  }
+});

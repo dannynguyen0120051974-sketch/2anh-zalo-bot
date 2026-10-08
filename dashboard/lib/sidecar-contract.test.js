@@ -90,3 +90,34 @@ test('hợp đồng: nhắn tay từ Phiên chat tới bot đúng dạng (thread
   assert.equal(res.status, 200);
   assert.deepEqual(calls.at(-1), ['send', { threadId: '200', threadType: 1, text: 'Chào cả nhóm', actor: 'khach' }]);
 });
+
+test('hợp đồng: Liên hệ và Lịch hẹn — client thật ↔ router thật, thiếu actor bị từ chối', async (t) => {
+  const calls = [];
+  const app = express();
+  app.use(express.json());
+  app.use('/control', createControlRouter({
+    token: TOKEN, health: () => ({}), qr: { start: async () => {}, state: () => ({}) }, logout: async () => {},
+    send: async () => ({}), loginCode: async () => {}, groups: async () => [],
+    directory: {
+      friends: async (o) => { calls.push(['friends', o]); return [{ uid: UID, name: 'Lan', zaloName: 'lan' }]; },
+      friendRequests: async () => [],
+      answerFriendRequest: async (m) => { calls.push(['answer', m]); return {}; },
+      reminders: async (m) => { calls.push(['reminders', m]); return [{ id: '7', title: 'Họp' }]; },
+      removeReminder: async (m) => { calls.push(['remove', m]); return {}; },
+    },
+  }));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((r) => server.once('listening', r));
+  t.after(() => server.close());
+  const client = createSidecarClient({ token: TOKEN, baseUrl: `http://127.0.0.1:${server.address().port}` });
+  assert.equal((await client.friends({ fresh: true }))[0].name, 'Lan');
+  assert.deepEqual(await client.friendRequests(), []);
+  await client.answerFriendRequest({ uid: UID, accept: false, actor: 'anh' });
+  assert.deepEqual(await client.reminders({ threadId: '55', threadType: 1 }), [{ id: '7', title: 'Họp' }]);
+  await client.removeReminder({ reminderId: '7', threadId: '55', threadType: 1, actor: 'anh' });
+  assert.deepEqual(calls, [
+    ['friends', { fresh: true }], ['answer', { uid: UID, accept: false, actor: 'anh' }],
+    ['reminders', { threadId: '55', threadType: 1 }], ['remove', { reminderId: '7', threadId: '55', threadType: 1, actor: 'anh' }],
+  ]);
+  await assert.rejects(client.removeReminder({ reminderId: '7', threadId: '55', threadType: 1 }), (e) => e.statusCode === 400);
+});

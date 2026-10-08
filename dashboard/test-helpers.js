@@ -57,6 +57,11 @@ export function fakeSidecar(overrides = {}) {
     logout: async () => { calls.push('logout'); },
     send: async (m) => { calls.push(['send', m]); return { msgId: '999' }; },
     groups: async () => [{ id: '200', name: 'Tổ Hoá', members: 12 }],
+    friends: async () => [{ uid: '1111111111111111111', name: 'Lan', zaloName: 'lan' }],
+    friendRequests: async () => [{ uid: '2222222222222222222', name: 'Minh', message: 'Chào bot', at: 1 }],
+    answerFriendRequest: async (m) => { calls.push(['answer', m]); return {}; },
+    reminders: async (m) => { calls.push(['reminders', m]); return [{ id: '77', title: 'Họp tổ', startAt: 1, repeat: 0, creatorUid: 'bot', mine: true, createdAt: 1 }]; },
+    removeReminder: async (m) => { calls.push(['remove-reminder', m]); return {}; },
     ...overrides,
   };
 }

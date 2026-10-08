@@ -16,7 +16,7 @@ function tokenOk(header, expected) {
   return want.length > 0 && supplied.length === want.length && timingSafeEqual(supplied, want);
 }
 
-export function createControlRouter({ token, health, qr, logout, send, loginCode, groups }) {
+export function createControlRouter({ token, health, qr, logout, send, loginCode, groups, directory = null }) {
   const router = express.Router();
   router.use((req, res, next) => (tokenOk(req.get('authorization'), token)
     ? next() : res.status(401).json({ ok: false, error: 'unauthorized' })));
@@ -62,5 +62,22 @@ export function createControlRouter({ token, health, qr, logout, send, loginCode
     return {};
   }));
   router.get('/groups', wrap(async () => ({ groups: await groups() })));
+
+  // Liên hệ và Lịch hẹn (spec §18.4): đọc bạn bè/lời mời/lời nhắc; ghi luôn đòi actor để audit_log có tên người làm.
+  if (directory) {
+    router.get('/friends', wrap(async (req) => ({ friends: await directory.friends({ fresh: req.query.fresh === '1' }) })));
+    router.get('/friend-requests', wrap(async () => ({ requests: await directory.friendRequests() })));
+    router.post('/friend-requests/answer', wrap(async (req) => {
+      const { uid, accept, actor } = req.body || {};
+      return directory.answerFriendRequest({ uid: String(uid ?? ''), accept, actor: checkActor(actor) });
+    }));
+    router.get('/reminders', wrap(async (req) => ({
+      reminders: await directory.reminders({ threadId: String(req.query.threadId ?? ''), threadType: Number(req.query.threadType) }),
+    })));
+    router.post('/reminders/remove', wrap(async (req) => {
+      const { reminderId, threadId, threadType, actor } = req.body || {};
+      return directory.removeReminder({ reminderId: String(reminderId ?? ''), threadId: String(threadId ?? ''), threadType, actor: checkActor(actor) });
+    }));
+  }
   return router;
 }
