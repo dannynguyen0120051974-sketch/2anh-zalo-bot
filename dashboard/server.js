@@ -27,6 +27,7 @@ import { createBrandStore } from './lib/brand.js';
 import { readEnvKey } from './lib/env-file.js';
 import { createPeopleStore } from './lib/people-store.js';
 import { createHermesMemory } from './lib/hermes-memory.js';
+import { createSchedules, hermesBin } from './lib/schedules.js';
 import { createOwnersStore } from './lib/owners.js';
 import { createServiceChecker } from './lib/services.js';
 import { createHealthMonitor } from './lib/health-monitor.js';
@@ -89,6 +90,7 @@ export function buildDeps({ env = process.env, sidecarRoot = join(here, '..'), i
     // Cùng tệp plugin đọc: ZALO_PEOPLE_FILE trong .env của Hermes (nếu đặt) thắng đường mặc định.
     people: createPeopleStore({ file: readEnvKey(paths.hermesEnvFile, 'ZALO_PEOPLE_FILE') || paths.peopleFile }),
     agentMemory: createHermesMemory({ hermesHome: paths.hermesHome, configFile: paths.hermesConfigFile }),
+    schedules: createSchedules({ hermesHome: paths.hermesHome, bin: hermesBin({ hermesHome: paths.hermesHome, env }) }),
     studioUsageFile: paths.studioUsageFile,
     studioPolicyFile: paths.studioPolicyFile,
     publicDir: join(here, 'public'),

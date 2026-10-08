@@ -796,3 +796,15 @@ test('Trí nhớ: bản nháp hồ sơ luôn có dòng trống, thân gửi bỏ
   const src = readFileSync(join(root, 'views', 'memory.js'), 'utf8');
   assert.match(src, /me\?\.role === 'admin' \? html`<\$\{AgentMemory\}/, 'bộ nhớ trợ lý chỉ hiện cho Quản trị');
 });
+
+test('Lịch hẹn: trạng thái việc hẹn giờ, lọc không dấu, nhãn lặp lại của lời nhắc', async () => {
+  const { jobState, filterJobs, REPEAT_LABELS } = await import('./views/schedules.js');
+  assert.deepEqual(jobState({ enabled: true, paused: false, lastStatus: 'ok' }), { kind: 'ok', text: 'Đang chạy' });
+  assert.deepEqual(jobState({ enabled: true, paused: true, lastStatus: 'ok' }), { kind: 'warn', text: 'Tạm dừng' });
+  assert.deepEqual(jobState({ enabled: true, paused: false, lastStatus: 'error' }), { kind: 'danger', text: 'Lần trước lỗi' });
+  assert.deepEqual(jobState({ enabled: false }), { kind: 'idle', text: 'Đã tắt' });
+  const jobs = [{ name: 'Nhắc nộp bài', prompt: '', targetName: 'Tổ Hoá', creatorName: 'Lan' }, { name: 'Tin sáng', prompt: '', targetName: 'Anh', creatorName: '' }];
+  assert.deepEqual(filterJobs(jobs, 'to hoa').map((j) => j.name), ['Nhắc nộp bài']);
+  assert.equal(filterJobs(jobs, '').length, 2);
+  assert.equal(REPEAT_LABELS[2], 'Hằng tuần');
+});
