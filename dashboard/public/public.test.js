@@ -842,3 +842,13 @@ test('Insight: câu trạng thái tóm tắt AI — đang chờ, quá hạn, l�
   assert.equal(summaryStatusText({ status: 'done', result: { ok: true, summary: {} } }), '');
   assert.equal(POLL_MS, 3000);
 });
+
+test('Second brain: tên ngắn của mục, lên một cấp không vượt khỏi gốc', async () => {
+  const { entryName, parentUri } = await import('./views/second-brain.js');
+  assert.equal(entryName('viking://user/default/memories/knowledge/zalo%20bot.md'), 'zalo bot');
+  assert.equal(entryName('viking://resources/'), 'resources');
+  const root = 'viking://user/default/memories';
+  assert.equal(parentUri(root, root), null);
+  assert.equal(parentUri(`${root}/knowledge/a`, root), `${root}/knowledge`);
+  assert.equal(parentUri(`${root}/knowledge`, root), root);
+});

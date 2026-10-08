@@ -7,6 +7,7 @@ import { zaloRoutes } from './routes/zalo.js';
 import { chatRoutes } from './routes/chats.js';
 import { mediaRoutes } from './routes/media.js';
 import { auditRoutes } from './routes/audit.js';
+import { secondBrainRoutes } from './routes/second-brain.js';
 import { telegramRoutes } from './routes/telegram.js';
 import { adminRoutes } from './routes/admin.js';
 import { permissionRoutes } from './routes/permissions.js';
@@ -44,6 +45,7 @@ export function createDashboardApp(deps) {
   if (deps.schedules) app.use('/api', scheduleRoutes(deps));
   if (deps.kb) app.use('/api', kbRoutes(deps));
   app.use('/api', insightRoutes(deps));
+  if (deps.secondBrain) app.use('/api', secondBrainRoutes(deps));
   app.use('/api', adminRoutes(deps));
   // Gắn ở gốc: router này có cả /api/brand lẫn /brand.css, /brand/logo.png (công khai, trước giao diện tĩnh).
   app.use(brandRoutes(deps));

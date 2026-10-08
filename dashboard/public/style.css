@@ -181,6 +181,10 @@ input:focus-visible, select:focus-visible { outline: none; border-color: var(--b
 .heat td.heat-4 { background: var(--brand); }
 .top-list { list-style: none; margin: 0; padding: 0; }
 .top-list li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+/* Second brain */
+.sb-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 60vh; overflow-y: auto; font-size: 14px; background: #f8fafc; padding: 12px; border-radius: 8px; }
+.link-btn { background: none; border: 0; padding: 0; color: var(--brand-dark); font: inherit; font-weight: 600; text-align: left; cursor: pointer; text-decoration: underline; }
+.link-btn:focus-visible { outline: none; box-shadow: var(--focus); }
 /* Trí nhớ */
 .mem-editor { flex: 1 1 100%; margin-top: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
 .mem-field { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 8px; margin-bottom: 6px; }

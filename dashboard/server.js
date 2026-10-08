@@ -25,6 +25,7 @@ import { makeRestartSidecar } from './lib/restart.js';
 import { makeRestartAssistant } from './lib/restart-assistant.js';
 import { createBrandStore } from './lib/brand.js';
 import { readEnvKey } from './lib/env-file.js';
+import { createSecondBrain } from './lib/second-brain.js';
 import { createPeopleStore } from './lib/people-store.js';
 import { createHermesMemory } from './lib/hermes-memory.js';
 import { createSchedules, hermesBin } from './lib/schedules.js';
@@ -96,6 +97,11 @@ export function buildDeps({ env = process.env, sidecarRoot = join(here, '..'), i
     // Đọc lại .env mỗi lần: người cài đặt đổi ZALO_KB_DIR thì không cần khởi động lại dashboard.
     kb: createKbStore({ kbDir: () => readEnvKey(paths.hermesEnvFile, 'ZALO_KB_DIR'), publicDirs: () => readEnvKey(paths.hermesEnvFile, 'ZALO_KB_PUBLIC_DIRS') }),
     insightAi: createInsightAi({ dir: paths.insightDir }),
+    // Second brain: chỉ bật khi .env Hermes có ZALO_SECOND_BRAIN_URL (loopback), luôn tắt trên Windows; đọc lại .env mỗi lần.
+    secondBrain: createSecondBrain({ settings: () => ({
+      url: readEnvKey(paths.hermesEnvFile, 'ZALO_SECOND_BRAIN_URL'), account: readEnvKey(paths.hermesEnvFile, 'OPENVIKING_ACCOUNT'),
+      user: readEnvKey(paths.hermesEnvFile, 'OPENVIKING_USER'), apiKey: readEnvKey(paths.hermesEnvFile, 'OPENVIKING_API_KEY'),
+    }) }),
     studioUsageFile: paths.studioUsageFile,
     studioPolicyFile: paths.studioPolicyFile,
     publicDir: join(here, 'public'),
