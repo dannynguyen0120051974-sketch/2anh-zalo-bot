@@ -126,6 +126,8 @@ export function buildDeps({ env = process.env, sidecarRoot = join(here, '..'), i
       settings: () => ({ provider: readProvider(paths.hermesConfigFile), endpoint: readEnvKey(paths.hermesEnvFile, 'OPENVIKING_ENDPOINT') }),
       names: (kind, id) => (kind === 'group' ? threadNames.cached().get(id) : people.list().find((p) => p.uid === id)?.name) || '',
       owners: () => owners.list(),
+      ownerOverrides: () => owners.overrideUids(),
+      everOwnersFile: paths.everOwnersFile,
       // Chu kỳ rút trí nhớ: cùng tệp provider zalo_memory đọc nóng.
       settingsFile: join(paths.hermesHome, 'zalo', 'memory.json'),
     }),

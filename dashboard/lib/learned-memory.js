@@ -10,7 +10,7 @@
  */
 import { readFileSync } from 'node:fs';
 import YAML from 'yaml';
-import { writeJsonAtomic } from './json-store.js';
+import { readJson, writeJsonAtomic } from './json-store.js';
 import { loopbackEndpoint, ovRequest } from './second-brain.js';
 
 export const LM_ACCOUNT = 'zalo';
@@ -81,10 +81,11 @@ export function learnedMemoryStatus({ provider, endpoint, platform = process.pla
 
 /**
  * `settings()` đọc lại mỗi lần: `{ provider, endpoint }`. `names(kind, id)` → tên hiển thị (nhóm/người) hoặc ''.
- * `owners()` → UID chủ nhân bot (kho DM của họ chỉ Quản trị thấy). `settingsFile` → `<HERMES_HOME>/zalo/memory.json`.
+ * `owners()` → UID chủ nhân bot (kho DM của họ chỉ Quản trị thấy); `ownerOverrides()` → UID chủ nhân từ nguồn ghi đè;
+ * `everOwnersFile` → tệp lưu mọi UID từng là chủ nhân. `settingsFile` → `<HERMES_HOME>/zalo/memory.json`.
  * Dùng: `lm.as(role).scopes()` … — mọi thao tác theo phạm vi kiểm quyền thấy trước khi gọi mạng.
  */
-export function createLearnedMemory({ settings, names = () => '', owners = () => [], settingsFile, platform = process.platform, fetchImpl = fetch, now = Date.now }) {
+export function createLearnedMemory({ settings, names = () => '', owners = () => [], ownerOverrides = () => [], everOwnersFile, settingsFile, platform = process.platform, fetchImpl = fetch, now = Date.now }) {
   const status = () => { const s = settings(); return learnedMemoryStatus({ provider: s.provider, endpoint: s.endpoint, platform }); };
   const extractLog = new Map();   // phạm vi → [mốc ms] trong ngày VN hiện tại
   function conn(scope = 'zalo-dashboard') {
@@ -93,19 +94,42 @@ export function createLearnedMemory({ settings, names = () => '', owners = () =>
     return { base: st.base, account: LM_ACCOUNT, user: scope, apiKey: '' };
   }
   const call = (scope, path, opts) => ovRequest(conn(scope), path, opts, fetchImpl);
-  const ownerDm = (p) => p?.kind === 'dm' && new Set(owners().map(String)).has(p.id);
-  const visible = (scope, role) => { const p = parseScope(scope); return Boolean(p) && (role === 'admin' || !ownerDm(p)); };
-  function need(scope, role) { if (!visible(scope, role)) throw err(404, 'Không có nhóm/người này — chọn lại từ danh sách.'); }
+  // Kho chưa có dữ liệu: OpenViking trả NOT_FOUND → coi là rỗng, không phải lỗi.
+  const orEmpty = (p) => p.catch((e) => { if (e?.ovCode === 'NOT_FOUND') return []; throw e; });
+  const uids = (fn) => { try { return (fn() || []).map((x) => String(x).trim()).filter(Boolean); } catch { return null; } };
+  /**
+   * UID có kho DM chỉ Quản trị thấy — đóng khi lỗi: danh sách chủ nhân trống/không đọc được → null (ẩn MỌI kho DM
+   * với vai trò khác Quản trị). Ngược lại: chủ nhân hiện tại ∪ nguồn ghi đè (.env bot, biến môi trường) ∪ mọi UID từng
+   * là chủ nhân (lưu tệp, chỉ thêm không bớt — bỏ ai khỏi danh sách thì kho của họ vẫn chỉ Quản trị thấy).
+   */
+  function ownerSet() {
+    const current = uids(owners);
+    if (!current?.length) return null;
+    const all = new Set([...current, ...(uids(ownerOverrides) || [])]);
+    if (everOwnersFile) {
+      const saved = readJson(everOwnersFile, null);
+      const ever = Array.isArray(saved?.uids) ? saved.uids.map(String) : [];
+      for (const u of ever) all.add(u);
+      if (all.size > ever.length) {
+        try { writeJsonAtomic(everOwnersFile, { version: 1, uids: [...all] }); } catch { /* lần sau ghi lại; tập vẫn đủ ở lượt này */ }
+      }
+    }
+    return all;
+  }
+  const ownerDm = (p, set) => p?.kind === 'dm' && (set === null || set.has(p.id));
+  const visible = (scope, role, set) => { const p = parseScope(scope); return Boolean(p) && (role === 'admin' || !ownerDm(p, set)); };
+  function need(scope, role) { if (!visible(scope, role, ownerSet())) throw err(404, 'Không có nhóm/người này — chọn lại từ danh sách.'); }
 
   function as(role) {
     return {
       /** Mọi phạm vi đang có trí nhớ mà vai trò này được thấy: nhóm trước, rồi người; kèm tên và nhãn chủ nhân. */
       async scopes() {
-        const result = await call(undefined, '/api/v1/fs/ls', { query: { uri: 'viking://user' } });
+        const set = ownerSet();
+        const result = await orEmpty(call(undefined, '/api/v1/fs/ls', { query: { uri: 'viking://user' } }));
         return (Array.isArray(result) ? result : [])
           .map((e) => String(e?.uri ?? '').replace(/^viking:\/\/user\//, '').replace(/\/$/, ''))
-          .filter((scope) => visible(scope, role))
-          .map((scope) => { const p = parseScope(scope); return { scope, ...p, name: String(names(p.kind, p.id) || ''), owner: ownerDm(p) }; })
+          .filter((scope) => visible(scope, role, set))
+          .map((scope) => { const p = parseScope(scope); return { scope, ...p, name: String(names(p.kind, p.id) || ''), owner: p.kind === 'dm' && Boolean(set?.has(p.id)) }; })
           // Nhóm trước, rồi DM khách, cuối cùng DM chủ nhân; trong mỗi loại theo tên.
           .sort((a, b) => ((a.kind === 'group' ? 0 : a.owner ? 2 : 1) - (b.kind === 'group' ? 0 : b.owner ? 2 : 1)) || a.name.localeCompare(b.name, 'vi'))
           .slice(0, 1000);
@@ -113,7 +137,7 @@ export function createLearnedMemory({ settings, names = () => '', owners = () =>
       async list(scope, uri = scopeRoot(scope)) {
         need(scope, role);
         if (!memoryUri(uri, scope)) throw err(400, 'Không mở được mục này — chọn lại từ danh sách.');
-        const result = await call(scope, '/api/v1/fs/ls', { query: { uri } });
+        const result = await orEmpty(call(scope, '/api/v1/fs/ls', { query: { uri } }));
         return (Array.isArray(result) ? result : [])
           .filter((e) => memoryUri(e?.uri, scope) && !GENERATED.has(String(e.uri).split('/').pop()))
           .slice(0, 500)
@@ -129,7 +153,7 @@ export function createLearnedMemory({ settings, names = () => '', owners = () =>
         need(scope, role);
         const q = String(query ?? '').trim();
         if (q.length < 2 || q.length > 200) throw err(400, 'Gõ 2–200 ký tự để tìm.');
-        const result = await call(scope, '/api/v1/search/find', { method: 'POST', body: { query: q, limit: 20, context_type: 'memory', target_uri: scopeRoot(scope) } });
+        const result = await orEmpty(call(scope, '/api/v1/search/find', { method: 'POST', body: { query: q, limit: 20, context_type: 'memory', target_uri: scopeRoot(scope) } }));
         return (Array.isArray(result?.memories) ? result.memories : [])
           .filter((h) => memoryUri(h?.uri, scope, { file: true }))
           .map((h) => ({ uri: h.uri, score: Number(h.score) || 0, abstract: String(h.abstract || '').slice(0, 600) }))

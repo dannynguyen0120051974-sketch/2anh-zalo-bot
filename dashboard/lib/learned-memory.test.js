@@ -74,6 +74,53 @@ test('phân vai: Chủ bot thấy nhóm và DM khách nhưng KHÔNG thấy kho D
   assert.equal(ov.calls.at(-1).headers['X-OpenViking-User'], U);
 });
 
+test('đóng khi lỗi: danh sách chủ nhân trống/không đọc được → Chủ bot không thấy MỌI kho DM, Quản trị vẫn thấy', async () => {
+  for (const owners of [() => [], () => { throw new Error('không đọc được .env'); }, () => [' ']]) {
+    const ov = fakeOv(scopesReply);
+    const lm = make(ov, { owners });
+    assert.deepEqual((await lm.as('owner').scopes()).map((s) => s.scope), [G]);
+    const before = ov.calls.length;
+    for (const sc of [O, U]) await assert.rejects(lm.as('owner').read(sc, `viking://user/${sc}/memories/a.md`), (e) => e.statusCode === 404);
+    assert.equal(ov.calls.length, before, 'từ chối trước khi gọi mạng');
+    assert.deepEqual((await lm.as('admin').scopes()).map((s) => s.scope).sort(), [G, O, U]);
+  }
+});
+
+test('UID từng là chủ nhân: lưu tệp; bỏ khỏi danh sách thì kho DM của họ vẫn chỉ Quản trị thấy', async (t) => {
+  const everOwnersFile = join(tmp(t), 'ever-owners.json');
+  let current = ['1234567890123456789'];
+  const ov = fakeOv(scopesReply);
+  const lm = make(ov, { owners: () => current, everOwnersFile });
+  assert.deepEqual((await lm.as('owner').scopes()).map((s) => s.scope), [G, U]);
+  assert.deepEqual(JSON.parse(readFileSync(everOwnersFile, 'utf8')).uids, ['1234567890123456789']);
+  current = ['5554567890123456789'];   // đổi chủ nhân: người cũ bị bỏ, khách cũ thành chủ nhân
+  assert.deepEqual((await lm.as('owner').scopes()).map((s) => s.scope), [G]);
+  await assert.rejects(lm.as('owner').list(O), (e) => e.statusCode === 404);
+  assert.deepEqual(JSON.parse(readFileSync(everOwnersFile, 'utf8')).uids.sort(), ['1234567890123456789', '5554567890123456789']);
+  // Dashboard khởi động lại (tạo mới) vẫn nhớ người cũ từ tệp.
+  const again = make(fakeOv(scopesReply), { owners: () => ['5554567890123456789'], everOwnersFile });
+  assert.deepEqual((await again.as('owner').scopes()).map((s) => s.scope), [G]);
+  assert.deepEqual((await again.as('admin').scopes()).map((s) => [s.scope, s.owner]), [[G, false], [O, true], [U, true]]);
+});
+
+test('nguồn ghi đè (.env bot, biến môi trường) cũng tính là chủ nhân', async () => {
+  const lm = make(fakeOv(scopesReply), { owners: () => ['9994567890123456789'], ownerOverrides: () => ['5554567890123456789', '1234567890123456789'] });
+  assert.deepEqual((await lm.as('owner').scopes()).map((s) => s.scope), [G]);
+  await assert.rejects(lm.as('owner').search(U, 'cà phê'), (e) => e.statusCode === 404);
+  // Nguồn ghi đè hỏng → bỏ qua nguồn đó, vẫn chặn theo danh sách chính.
+  const broken = make(fakeOv(scopesReply), { ownerOverrides: () => { throw new Error('x'); } });
+  assert.deepEqual((await broken.as('owner').scopes()).map((s) => s.scope), [G, U]);
+});
+
+test('kho chưa có dữ liệu: OpenViking NOT_FOUND → danh sách rỗng, không phải lỗi; lỗi khác vẫn là lỗi', async () => {
+  const notFound = (code) => ({ fetchImpl: async () => ({ ok: false, json: async () => ({ status: 'error', error: { code } }) }) });
+  const lm = make(notFound('NOT_FOUND')).as('owner');
+  assert.deepEqual(await lm.scopes(), []);
+  assert.deepEqual(await lm.list(G), []);
+  assert.deepEqual(await lm.search(G, 'lịch họp'), []);
+  await assert.rejects(make(notFound('INTERNAL')).as('owner').list(G), (e) => e.statusCode === 502);
+});
+
 test('tìm chỉ trong một phạm vi (target_uri), đi bằng danh tính phạm vi, bỏ kết quả lọt ra ngoài', async () => {
   const ov = fakeOv({ 'POST /api/v1/search/find': { memories: [
     { uri: `viking://user/${G}/memories/events/mem_a.md`, score: 0.4, abstract: 'Họp tổ thứ Năm' },

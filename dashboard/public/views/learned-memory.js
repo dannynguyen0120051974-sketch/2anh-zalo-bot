@@ -114,7 +114,7 @@ function ScopeView({ s, canAdmin, onForgotten }) {
     <div class="toolbar">${cwd !== root ? html`<button type="button" class="btn btn-secondary btn-sm" onClick=${() => setCwd(cwd.replace(/\/[^/]+\/?$/, '').length < root.length ? root : cwd.replace(/\/[^/]+\/?$/, ''))}><${Icon} name="prev" size=${14} /> Lên</button>` : null}
       <span class="muted small">${cwd === root ? 'Tất cả mục' : entryLabel(cwd)}</span></div>
     ${!entries && !msg.error ? html`<${Spinner} />` : null}
-    ${entries && !entries.length ? html`<p class="muted">Chưa có gì ở đây.</p>` : null}
+    ${entries && !entries.length ? html`<p class="muted">${cwd === root ? 'Chưa tự học được gì.' : 'Chưa có gì ở đây.'}</p>` : null}
     <ul class="row-list">${(entries || []).map((e) => html`<li key=${e.uri} class="row-item">
       <${Icon} name=${e.dir ? 'list' : 'file'} />
       <span class="row-main"><button type="button" class="link-btn" onClick=${() => (e.dir ? setCwd(e.uri) : setOpen(e.uri))}>${entryLabel(e.uri)}</button>

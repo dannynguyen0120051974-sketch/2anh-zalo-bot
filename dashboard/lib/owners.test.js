@@ -88,6 +88,15 @@ test('biến môi trường dịch vụ đặt khoá khác → overrides().os; t
   assert.equal(mk('').overrides().os, false);
 });
 
+test('overrideUids: hợp UID của .env bot và biến môi trường dịch vụ, bỏ trùng; .env bot không đọc được → bỏ qua', (t) => {
+  const { files } = setup(t);
+  writeFileSync(files.sidecarEnvFile, `ZALO_ALLOWED_USERS=${B}\n`);
+  assert.deepEqual(createOwnersStore({ ...files, inheritedValue: `${A},${B}` }).overrideUids(), [B, A]);
+  assert.deepEqual(createOwnersStore({ ...files, sidecarEnvFile: undefined }).overrideUids(), []);
+  rmSync(files.sidecarEnvFile); mkdirSync(files.sidecarEnvFile);
+  assert.deepEqual(createOwnersStore({ ...files, inheritedValue: A }).overrideUids(), [A]);
+});
+
 test('đặt cờ chờ trước khi ghi .env: ghi cờ lỗi thì .env không đổi; ghi .env lỗi thì cờ trả về như cũ', (t) => {
   const a = setup(t);
   writeFileSync(a.files.pendingFile, 'x'); // thư mục cha của cờ là một tệp thường → ghi cờ sẽ lỗi

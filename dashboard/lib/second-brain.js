@@ -80,7 +80,10 @@ export async function ovRequest(conn, path, { method = 'GET', query, body } = {}
     res = await fetchImpl(url, { method, headers, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(TIMEOUT_MS), redirect: 'error' });
     json = await res.json();
   } catch { throw err(503, 'Bộ nhớ dài hạn (OpenViking) không trả lời — kiểm tra dịch vụ trên máy chủ (Sức khoẻ máy chủ).'); }
-  if (!res.ok || json.status !== 'ok') throw err(502, 'Bộ nhớ dài hạn từ chối yêu cầu — thử lại, nếu vẫn lỗi hãy báo người cài đặt.');
+  if (!res.ok || json.status !== 'ok') {
+    // `ovCode` (vd. NOT_FOUND) để nơi gọi phân biệt "chưa có dữ liệu" với lỗi thật.
+    throw Object.assign(err(502, 'Bộ nhớ dài hạn từ chối yêu cầu — thử lại, nếu vẫn lỗi hãy báo người cài đặt.'), { ovCode: String(json?.error?.code || '') });
+  }
   return json.result;
 }
 

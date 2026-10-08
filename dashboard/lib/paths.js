@@ -18,6 +18,8 @@ export function resolveDashboardPaths({ env = process.env, sidecarRoot }) {
     brandFile: join(dataDir, 'brand.json'),
     brandLogoFile: join(dataDir, 'brand', 'logo.png'),
     pendingRestartFile: join(dataDir, 'pending-restart.json'),
+    // Mọi UID từng là chủ nhân bot: kho trí nhớ DM của họ vẫn chỉ Quản trị thấy sau khi bị bỏ khỏi danh sách.
+    everOwnersFile: join(dataDir, 'ever-owners.json'),
     restartFlagsFile: join(dataDir, 'restart-flags.json'),
     soulHistoryDir: join(dataDir, 'soul-history'),
     // Plugin ghi lúc nạp (zalo_tools/tools.py write_tools_manifest) — dashboard chỉ đọc.
