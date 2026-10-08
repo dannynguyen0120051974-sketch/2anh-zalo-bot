@@ -714,9 +714,14 @@ async def zalo_studio(args: Dict[str, Any], **_kw) -> str:
     brief = str(args.get("brief") or "").strip()
     if len(brief) < 10:
         return _err("cần `brief`: chép đủ yêu cầu của người dùng (chủ đề, môn, lớp, số lượng, yêu cầu riêng)")
+    raw_options = args.get("options")
+    if raw_options is None:
+        raw_options = {}
+    if not isinstance(raw_options, dict):
+        return _err("`options` phải là một object, ví dụ {\"loai\": \"bai-giang\"}")
     options: Dict[str, str] = {}
     for key, allowed in recipe.options.items():
-        value = str((args.get("options") or {}).get(key) or allowed[0])
+        value = str(raw_options.get(key) or allowed[0])
         if value not in allowed:
             return _err(f"`options.{key}` phải là một trong: {', '.join(allowed)}")
         options[key] = value

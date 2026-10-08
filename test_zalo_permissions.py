@@ -751,10 +751,6 @@ class StudioPermissionsTest(PermissionsFile, unittest.TestCase):
         self.assertFalse(any(gp.studio_settings(MEMBER, MEMBER, False)["features"].values()))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class AdapterStudioNoteTest(PermissionsFile, AdapterHarness, unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         super().setUp()
@@ -773,3 +769,7 @@ class AdapterStudioNoteTest(PermissionsFile, AdapterHarness, unittest.IsolatedAs
         self.assertIn("còn 3 lượt", context)
         await self.say(adapter, "m3", OWNER, "@Lăng Tiêu làm slide giúp")
         self.assertNotIn("Xưởng tạo sản phẩm", self.handled[-1].channel_context or "")
+
+
+if __name__ == "__main__":
+    unittest.main()

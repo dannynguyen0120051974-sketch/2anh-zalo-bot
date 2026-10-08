@@ -111,9 +111,14 @@ def read_guides(paths: Sequence[Path]) -> List[Tuple[str, str]]:
     return out
 
 
+# Mọi dấu "<" (kể cả bản toàn độ rộng / nhỏ) trong lời nhờ → "‹": không viết thường/hoa, khoảng trắng hay biến thể
+# nào dựng lại được thẻ đóng/mở khối dữ liệu.
+_ANGLE = str.maketrans({"<": "‹", "＜": "‹", "﹤": "‹", "〈": "‹", "〈": "‹", "⟨": "‹"})
+
+
 def _brief_block(brief: str, options: Dict[str, str]) -> str:
     # Người dùng không được tự đóng khối dữ liệu để chèn "luật" mới ra ngoài nó.
-    safe = str(brief or "")[:MAX_BRIEF_CHARS].replace("</yeu_cau", "<\\/yeu_cau").replace("<yeu_cau", "<\\yeu_cau")
+    safe = str(brief or "")[:MAX_BRIEF_CHARS].translate(_ANGLE)
     opts = "".join(f"\n{k}: {v}" for k, v in sorted(options.items()))
     return f"<yeu_cau>\n{safe}\n</yeu_cau>{opts}"
 
