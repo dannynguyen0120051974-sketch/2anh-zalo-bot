@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FEATURE_KEYS } from '../lib/permissions.js';
 import { fakeSidecar, loginAs, makeDeps, startApp } from '../test-helpers.js';
@@ -140,4 +141,46 @@ test('nhắn riêng: Chủ bot lưu được, tệp có mục dm, Nhật ký ghi
   const group = await call(`/api/permissions/groups/${G}`, { method: 'PUT', cookie: owner, body: body({}, { web: false }) });
   assert.equal(group.json.dm.who, 'list', 'lưu nhóm trả kèm mục dm để giao diện không mất');
   assert.ok(Array.isArray(group.json.dmFeatures));
+});
+
+test('xưởng: lưu nút xưởng + hạn mức nhóm, hạn mức theo người; Nhật ký ghi rõ; 400 kèm bước tiếp theo', async (t) => {
+  const { call, owner, disk, deps } = await ready(t);
+  const off = { studioSlides: false, studioDocs: false, studioExams: false, studioVideo: false };
+  const first = await call('/api/permissions', { cookie: owner });
+  assert.deepEqual(first.json.studioFeatures.map((f) => f.key), Object.keys(off));
+  assert.deepEqual(first.json.studio, { quota: 3, people: [] });
+  const g = await call(`/api/permissions/groups/${G}`, { method: 'PUT', cookie: owner,
+    body: { ...body(), studio: { ...off, studioSlides: true }, studioQuota: 5 } });
+  assert.equal(g.status, 200);
+  assert.deepEqual(disk().groups[G], { features: { studioSlides: true }, studioQuota: 5 });
+  assert.match(deps.activity.list()[0].detail, /xưởng: Slide PowerPoint · 5 lượt\/người\/ngày$/);
+  const q = await call('/api/permissions/studio', { method: 'PUT', cookie: owner, body: { quota: 2, people: [{ uid: '1234567890123456', name: 'Cô Lan', quota: 10 }] } });
+  assert.equal(q.status, 200);
+  assert.deepEqual(q.json.studio, { quota: 2, people: [{ uid: '1234567890123456', name: 'Cô Lan', quota: 10 }] });
+  assert.deepEqual(disk().studio, { quota: 2, people: { '1234567890123456': { name: 'Cô Lan', quota: 10 } } });
+  assert.equal(deps.activity.list()[0].detail, 'Mặc định 2 lượt/người/ngày · 1 người có hạn mức riêng');
+  assert.equal(disk().groups[G].studioQuota, 5, 'lưu hạn mức không đụng nhóm');
+  for (const bad of [{ quota: 99, people: [] }, { quota: 2, people: [{ uid: '0912345678', quota: 1 }] }]) {
+    const res = await call('/api/permissions/studio', { method: 'PUT', cookie: owner, body: bad });
+    assert.equal(res.status, 400);
+    assert.match(res.json.error, /—/);
+  }
+  assert.equal((await call('/api/permissions/studio', { method: 'PUT', body: { quota: 1, people: [] } })).status, 401);
+});
+
+test('xưởng: phản hồi phân quyền mang chính sách máy chủ (Windows: video tắt)', async (t) => {
+  const win = await ready(t, { platform: 'win32' });
+  const res = await win.call('/api/permissions', { cookie: win.owner });
+  assert.deepEqual(res.json.studioPolicy, { videoBlocked: true, note: 'Máy chủ Windows không có hộp cát — video tắt' });
+  // Linux: theo studio-policy.json của plugin (group_permissions.publish_video_policy); chưa có tệp → đóng.
+  const dir = mkdtempSync(join(tmpdir(), 'studio-policy-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, 'studio-policy.json');
+  const lin = await ready(t, { platform: 'linux', studioPolicyFile: file });
+  const policy = async () => (await lin.call('/api/permissions', { cookie: lin.owner })).json.studioPolicy;
+  assert.equal((await policy()).videoBlocked, true, 'plugin chưa ghi chính sách: video tắt');
+  writeFileSync(file, JSON.stringify({ version: 1, videoBlocked: false, note: '', sandbox: 'systemd' }));
+  assert.deepEqual(await policy(), { videoBlocked: false, note: '' });
+  writeFileSync(file, JSON.stringify({ version: 1, videoBlocked: true, note: 'Máy chủ chưa dùng được hộp cát systemd — video tắt', sandbox: 'plain' }));
+  assert.deepEqual(await policy(), { videoBlocked: true, note: 'Máy chủ chưa dùng được hộp cát systemd — video tắt' });
 });

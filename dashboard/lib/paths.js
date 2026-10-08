@@ -20,6 +20,9 @@ export function resolveDashboardPaths({ env = process.env, sidecarRoot }) {
     pendingRestartFile: join(dataDir, 'pending-restart.json'),
     healthHistoryFile: join(dataDir, 'health-history.json'),
     aiUsageFile: join(dataDir, 'ai-usage.json'),
+    // Sổ lượt Xưởng tạo sản phẩm: plugin ghi, dashboard chỉ đọc (spec §17). studio-policy.json: plugin ghi chính sách video.
+    studioUsageFile: join(hermesHome, 'zalo', 'studio-usage.json'),
+    studioPolicyFile: join(hermesHome, 'zalo', 'studio-policy.json'),
     hermesStateDb: join(hermesHome, 'state.db'),
     sidecarEnvFile: join(resolve(sidecarRoot), '.env'),
     permissionsFile: join(hermesHome, 'zalo', 'permissions.json'),

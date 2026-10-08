@@ -37,6 +37,7 @@ export const ACTION_LABELS = {
   permissions_defaults: 'Đổi phân quyền mặc định',
   permissions_group: 'Đổi phân quyền nhóm',
   permissions_dm: 'Đổi quyền nhắn riêng',
+  permissions_studio: 'Đổi hạn mức xưởng tạo sản phẩm',
   brand_update: 'Đổi thương hiệu',
   brand_logo: 'Đổi logo',
   brand_logo_remove: 'Gỡ logo',

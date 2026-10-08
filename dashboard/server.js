@@ -83,6 +83,8 @@ export function buildDeps({ env = process.env, sidecarRoot = join(here, '..'), i
     restartSidecar,
     owners: createOwnersStore({ envFile: paths.hermesEnvFile, sidecarEnvFile: paths.sidecarEnvFile, pendingFile: paths.pendingRestartFile, inheritedValue: inheritedOwners }),
     brand: createBrandStore({ file: paths.brandFile, logoFile: paths.brandLogoFile }),
+    studioUsageFile: paths.studioUsageFile,
+    studioPolicyFile: paths.studioPolicyFile,
     publicDir: join(here, 'public'),
   };
 }
