@@ -12,7 +12,7 @@ Adapter nền tảng vẫn nằm bên ``platforms/zalo`` và import lại từ �
 """
 
 from .tools import (define_cron_member_toolset, define_platform_composite,
-                    guard_member_tool_call, register_tools)
+                    guard_member_tool_call, register_tools, set_studio_context)
 
 __all__ = ["register"]
 
@@ -20,6 +20,8 @@ __all__ = ["register"]
 def register(ctx) -> None:
     """Điểm vào plugin — Hermes gọi lúc khám phá."""
     register_tools(ctx)
+    # Xưởng tạo sản phẩm gọi AI qua ctx.llm (không công cụ) — giữ ctx để lấy lúc cần.
+    set_studio_context(ctx)
     # Rào chắn tại điểm thực thi: Hermes cấp lại công cụ đã ghim của phiên nhóm
     # cho mọi lượt, kể cả lượt của người ngoài. Xem guard_member_tool_call().
     ctx.register_hook("pre_tool_call", guard_member_tool_call)

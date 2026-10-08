@@ -1022,6 +1022,15 @@ class ZaloAdapter(BasePlatformAdapter):
                 note = (f"[Tin nhắn riêng này đang tắt: {labels}. Đừng hứa hay thử làm những việc đó; "
                         "nếu được nhờ, nói rõ chủ bot chưa bật tính năng này khi nhắn riêng.]")
                 channel_context = f"{channel_context}\n{note}" if channel_context else note
+        if not is_owner:
+            # Xưởng tạo sản phẩm (spec §17): nói cho mô hình biết người này nhờ được gì, còn mấy lượt.
+            try:
+                note = _zalo_tools().studio_turn_note(sender_uid, thread_id, is_group)
+            except Exception as exc:  # bản cài dở, sổ lượt hỏng… không được làm hỏng lượt chat
+                logger.debug("[zalo] không dựng được dòng xưởng: %s", exc)
+                note = None
+            if note:
+                channel_context = f"{channel_context}\n{note}" if channel_context else note
         reply_to_text = None
         if quote:
             reply_to_text = str(quote.get("text") or "").strip() or None

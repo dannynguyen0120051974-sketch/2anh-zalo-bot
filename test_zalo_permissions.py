@@ -97,7 +97,8 @@ class GroupPermissionsTest(PermissionsFile, unittest.TestCase):
         mapped = [tool for feature in gp.FEATURES for tool in gp.FEATURE_TOOLS[feature]]
         self.assertEqual(len(mapped), len(set(mapped)), "một công cụ nằm ở hai nút")
         self.assertFalse(set(mapped) & gp.ALWAYS_ON)
-        self.assertEqual(set(mapped) | gp.ALWAYS_ON, public,
+        self.assertFalse(set(mapped) & gp.STUDIO_TOOLS)
+        self.assertEqual(set(mapped) | gp.ALWAYS_ON | gp.STUDIO_TOOLS, public,
                          "công cụ công khai mới phải được xếp vào một nút (spec §8.2)")
         self.assertEqual(set(gp.FEATURE_TOOLS), set(gp.FEATURES))
         self.assertEqual(set(gp.FEATURE_LABELS), set(gp.FEATURES))
@@ -752,3 +753,23 @@ class StudioPermissionsTest(PermissionsFile, unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AdapterStudioNoteTest(PermissionsFile, AdapterHarness, unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        super().setUp()
+        self.enterContext(patch.dict(os.environ, {"ZALO_ALLOWED_USERS": OWNER,
+                                                  "ZALO_STUDIO_USAGE_FILE": os.path.join(self.dir, "studio-usage.json")}))
+
+    async def test_member_turn_mentions_the_studio_only_when_a_switch_is_on(self):
+        adapter = self.make_adapter()
+        await self.say(adapter, "m1", MEMBER, "@Lăng Tiêu làm slide giúp")
+        self.assertNotIn("Xưởng tạo sản phẩm", self.handled[-1].channel_context or "")
+        self.write({"version": 1, "defaults": {"features": {"studioSlides": True}}, "groups": {}})
+        await self.say(adapter, "m2", MEMBER, "@Lăng Tiêu làm slide giúp")
+        context = self.handled[-1].channel_context
+        self.assertIn("[Xưởng tạo sản phẩm", context)
+        self.assertIn("slide (slide PowerPoint)", context)
+        self.assertIn("còn 3 lượt", context)
+        await self.say(adapter, "m3", OWNER, "@Lăng Tiêu làm slide giúp")
+        self.assertNotIn("Xưởng tạo sản phẩm", self.handled[-1].channel_context or "")

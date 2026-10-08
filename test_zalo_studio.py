@@ -1339,3 +1339,111 @@ class StudioQueueTest(unittest.IsolatedAsyncioTestCase):
                 self.studio.submit(make_job("skkn", turn={"sender_uid": f"1{i}", "thread_id": GROUP, "is_group": True}))
             with self.assertRaises(jobs.Busy):
                 self.studio.submit(make_job("skkn", turn={"sender_uid": "99", "thread_id": GROUP, "is_group": True}))
+
+
+class StudioToolTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="zalo-tool-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.perm = self.tmp / "permissions.json"
+        self.enterContext(patch.dict(os.environ, {"ZALO_PERMISSIONS_FILE": str(self.perm),
+                                                  "ZALO_STUDIO_USAGE_FILE": str(self.tmp / "usage.json"),
+                                                  "ZALO_ALLOWED_USERS": OWNER}))
+        self.stamp = 1_700_000_000_000_000_000
+        self.submitted = []
+        self.enterContext(patch.object(zalo_tools, "_STUDIO", None))
+        self.enterContext(patch.object(jobs.Studio, "submit", lambda studio, job: self.submitted.append(job) or 1))
+        self.addCleanup(zalo_tools.bind_turn, None)
+
+    def write(self, data):
+        self.perm.write_text(json.dumps(data), encoding="utf-8")
+        self.stamp += 1_000_000_000
+        os.utime(self.perm, ns=(self.stamp, self.stamp))
+
+    def turn(self, uid=MEMBER, group=True, owner=False):
+        zalo_tools.bind_turn({"sender_uid": uid, "sender_name": "Lan", "thread_id": GROUP if group else uid,
+                              "is_group": group, "is_owner": owner, "text": "làm giúp"})
+
+    async def call(self, **args):
+        return json.loads(await zalo_tools.zalo_studio({"kind": "giao_an", "brief": "Giáo án Toán 10 bài 1", **args}))
+
+    async def test_switch_off_by_default_and_when_the_file_is_broken(self):
+        self.turn()
+        self.assertIn("chưa bật", (await self.call())["error"])
+        self.write({"version": 1, "defaults": {"features": {"studioDocs": True}}})
+        self.perm.write_text("{hỏng", encoding="utf-8")
+        os.utime(self.perm, ns=(self.stamp + 5, self.stamp + 5))
+        self.assertIn("chưa bật", (await self.call())["error"])
+        self.assertEqual(self.submitted, [])
+
+    async def test_allowed_member_gets_queued_with_the_turn_identity_not_model_args(self):
+        self.write({"version": 1, "defaults": {"features": {"studioDocs": True}}, "studio": {"quota": 1}})
+        self.turn()
+        result = await self.call(thread_id="1111111111111111111")
+        self.assertTrue(result["success"], result)
+        self.assertEqual(result["result"]["quota_left"], 0)
+        job = self.submitted[0]
+        self.assertEqual((job.turn["thread_id"], job.turn["sender_uid"], job.turn["is_owner"]), (GROUP, MEMBER, False))
+        zalo_tools._STUDIO._pending.clear()
+        self.assertIn("hết 1 lượt", (await self.call())["error"])
+
+    async def test_owner_is_never_limited_and_bad_kind_or_option_is_refused(self):
+        self.turn(uid=OWNER, owner=True)
+        for _ in range(4):
+            self.assertTrue((await self.call())["success"])
+        self.assertIn("`kind` phải là", json.loads(await zalo_tools.zalo_studio({"kind": "shell", "brief": "rm -rf /"}))["error"])
+        self.assertIn("options.loai", json.loads(await zalo_tools.zalo_studio(
+            {"kind": "slide", "brief": "Bài giảng hô hấp", "options": {"loai": "../../x"}}))["error"])
+
+    async def test_guard_blocks_studio_by_kind_and_fails_closed(self):
+        self.write({"version": 1, "defaults": {"features": {"studioDocs": True}}})
+        self.turn()
+        self.assertIsNone(zalo_tools.guard_member_tool_call("zalo_studio", {"kind": "giao_an", "brief": "x"}))
+        verdict = zalo_tools.guard_member_tool_call("zalo_studio", {"kind": "video", "brief": "x"})
+        self.assertEqual(verdict["action"], "block")
+        self.assertIn("làm video", verdict["message"])
+        with patch.object(gp, "studio_settings", side_effect=RuntimeError("đọc lỗi")):
+            self.assertEqual(zalo_tools.guard_member_tool_call("zalo_studio", {"kind": "giao_an"})["action"], "block")
+
+    async def test_options_must_be_from_the_list_and_windows_blocks_video(self):
+        self.write({"version": 1, "defaults": {"features": {"studioExams": True, "studioVideo": True}}})
+        self.turn()
+        ok = json.loads(await zalo_tools.zalo_studio({"kind": "tro_choi", "brief": "Ô chữ Sinh học 10", "options": {"loai": "crossword"}}))
+        self.assertTrue(ok["success"], ok)
+        self.assertEqual(self.submitted[-1].options, {"loai": "crossword"})
+        zalo_tools._STUDIO._pending.clear()
+        bad = json.loads(await zalo_tools.zalo_studio({"kind": "tro_choi", "brief": "Trò chơi tự viết JS", "options": {"loai": "tu-mo-ta"}}))
+        self.assertIn("options.loai", bad["error"])
+        with patch.object(gp, "VIDEO_BLOCKED", True):
+            verdict = zalo_tools.guard_member_tool_call("zalo_studio", {"kind": "video_bai_giang", "brief": "x"})
+            self.assertEqual(verdict["action"], "block")
+            self.assertIn("chưa bật", json.loads(await zalo_tools.zalo_studio({"kind": "video", "brief": "Video về quang hợp"}))["error"])
+        # Video mở chỉ khi KHÔNG phải Windows VÀ có hộp cát systemd (group_permissions.video_policy).
+        with patch.object(gp, "VIDEO_BLOCKED", False), patch.object(gp, "sandbox_mode", lambda: "systemd"):
+            self.assertIsNone(zalo_tools.guard_member_tool_call("zalo_studio", {"kind": "video", "brief": "x"}))
+
+    async def test_turn_note_lists_what_this_person_may_order_and_lượt_left(self):
+        self.assertIsNone(zalo_tools.studio_turn_note(MEMBER, GROUP, True))
+        self.write({"version": 1, "defaults": {"features": {"studioExams": True}}, "studio": {"quota": 4}})
+        note = zalo_tools.studio_turn_note(MEMBER, GROUP, True)
+        self.assertIn("tro_choi", note)
+        self.assertNotIn("giao_an", note)
+        self.assertIn("còn 4 lượt", note)
+
+    async def test_delivery_runs_under_the_captured_member_identity(self):
+        captured = {}
+
+        class FakeAdapter:
+            async def invoke(self, method, args, confirmed=False):
+                captured["auth"] = zalo_tools.current_authorization()
+                captured["args"] = args
+                return {"ok": True, "result": {"msgId": "1"}}
+
+        job = make_job("tro_choi")
+        zalo_tools.bind_turn({"sender_uid": OWNER, "thread_id": "khac", "is_group": False, "is_owner": True})
+        with patch.object(zalo_tools, "_ACTIVE_ADAPTER", FakeAdapter()):
+            self.assertTrue(await zalo_tools._studio_deliver(job, [Path("x.html")], "Xong"))
+        self.assertEqual(captured["auth"]["actorRole"], "public")
+        self.assertEqual(captured["auth"]["sourceThreadId"], GROUP)
+        self.assertEqual(captured["args"][1:], [GROUP, zalo_tools.THREAD_GROUP])
+        self.assertEqual(zalo_tools._turn()["sender_uid"], OWNER, "trả lại danh tính cũ sau khi gửi")
