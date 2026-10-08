@@ -5,7 +5,7 @@ import { api } from '../api.js';
 import { html, Icon, Live, Notice, PageHead, SaveBar, Spinner, Toggle, onText } from '../ui.js';
 import { fold } from '../fold.js';
 import { DmEditor, dmBadge } from './dm-permissions.js';
-import { StudioBox, parseQuota, studioComplete } from './studio-box.js';
+import { StudioBox, applyPolicy, parseQuota, studioComplete } from './studio-box.js';
 import { QuotaEditor, quotaBadge } from './studio-quota.js';
 
 export const DEFAULTS_KEY = 'defaults';
@@ -51,9 +51,9 @@ export function changeCount(a, b) {
 }
 
 /** Thân PUT của nhóm/mặc định: nút xưởng chỉ gửi khi đủ khoá; số lượt chỉ có ở nhóm. */
-export function settingsPayload(d, { isGroup, studioFeatures = [] }) {
+export function settingsPayload(d, { isGroup, studioFeatures = [], policy }) {
   const body = { active: d.active, replyOnlyTagged: d.replyOnlyTagged, features: { ...d.features } };
-  if (studioComplete(d.studio, studioFeatures)) body.studio = { ...d.studio };
+  if (studioComplete(d.studio, studioFeatures)) body.studio = applyPolicy(d.studio, policy);
   if (isGroup) body.studioQuota = d.studioQuota ?? null;
   return body;
 }
@@ -99,7 +99,7 @@ function Editor({ target, value, defaults, features, studioFeatures, studioPolic
     setBusy(true); setMsg({});
     try {
       const path = isGroup ? `/api/permissions/groups/${encodeURIComponent(target.id)}` : '/api/permissions/defaults';
-      const r = await api(path, { method: 'PUT', body: settingsPayload(draft, { isGroup, studioFeatures }) });
+      const r = await api(path, { method: 'PUT', body: settingsPayload(draft, { isGroup, studioFeatures, policy: studioPolicy }) });
       if (onSaved(r, target.id)) setMsg({ ok: 'Đã lưu — bot áp dụng ngay, không cần khởi động lại.' });
     } catch (err) { setMsg({ error: err.message }); } finally { setBusy(false); }
   }
@@ -139,7 +139,7 @@ function Editor({ target, value, defaults, features, studioFeatures, studioPolic
     </details>
     <${StudioBox} id=${`${p}-studio`} studio=${draft.studio} features=${studioFeatures} disabled=${!draft.active}
       onChange=${(studio) => set({ studio })} policy=${studioPolicy} quota=${qText} defaultQuota=${defaultQuota} quotaError=${quota.error}
-      quotaHint=${isGroup ? `Để trống để theo mặc định (${defaultQuota}); 0 là tắt cho cả nhóm. Hạn mức riêng từng người đặt ở mục Hạn mức xưởng.` : ''}
+      quotaHint=${isGroup ? `Để trống để theo mặc định (${defaultQuota}); 0 = không ai trong nhóm được nhờ, trừ người có hạn mức riêng (đặt ở mục Hạn mức xưởng, thắng số của nhóm).` : ''}
       onQuota=${isGroup ? (text) => { setQText(text); setMsg({}); const q = parseQuota(text); if (!q.error) set({ studioQuota: q.value }); } : null}
       note=${isGroup ? '' : `Số lượt mỗi người mỗi ngày chỉnh ở mục Hạn mức xưởng (đang là ${defaultQuota}).`} />
     <${SaveBar} count=${changeCount(draft, value) || (dirty ? 1 : 0)} busy=${busy} canSave=${dirty && !quota.error} msg=${msg}

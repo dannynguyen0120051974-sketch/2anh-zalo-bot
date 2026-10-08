@@ -135,7 +135,7 @@ export function QuotaEditor({ studio, admin, onSaved, onBack, onDirty }) {
           aria-invalid=${defaultError ? 'true' : undefined} onInput=${(e) => update({ quota: e.currentTarget.value })} />
         <small id="sq-default-hint" class=${defaultError ? 'studio-quota-error' : 'muted'}>${defaultError
           ? `${defaultError} Sửa ô này rồi lưu.`
-          : `Từ 0 đến ${MAX_QUOTA}; 0 là không ai được nhờ. Nhóm có thể đặt số khác trong hộp Xưởng tạo sản phẩm của nhóm đó.`}</small>
+          : `Từ 0 đến ${MAX_QUOTA}; 0 = không ai được nhờ, trừ người có hạn mức riêng. Nhóm đặt số khác trong hộp Xưởng tạo sản phẩm của nhóm đó; hạn mức riêng từng người thắng cả số của nhóm lẫn số mặc định.`}</small>
       </div>
       ${todayRow ? html`<p class="small studio-today">Hôm nay: ${todayRow.people.length} người đã nhờ xưởng ${todayRow.jobs} việc (${todayRow.refunded} việc được trả lượt).</p>`
         : usage && !usage.error ? html`<p class="muted small studio-today">Hôm nay chưa ai nhờ xưởng.</p>` : null}

@@ -6,11 +6,11 @@ import { useEffect, useState } from '../vendor/hooks.mjs';
 import { api } from '../api.js';
 import { html, Notice, SaveBar, Toggle, onText } from '../ui.js';
 import { fold } from '../fold.js';
-import { StudioBox, effectiveStudio, lockedByPolicy } from './studio-box.js';
+import { StudioBox, applyPolicy, effectiveStudio, lockedByPolicy } from './studio-box.js';
 
 const STUDIO_KEYS = ['studioSlides', 'studioDocs', 'studioExams', 'studioVideo'];
 /** Đủ 4 nút xưởng (dữ liệu từ máy chủ mới) thì gửi kèm; thiếu thì bỏ — máy chủ giữ nút xưởng như cũ. */
-const fullStudio = (st) => (st && STUDIO_KEYS.every((k) => typeof st[k] === 'boolean') ? { studio: { ...st } } : {});
+const fullStudio = (st, policy) => (st && STUDIO_KEYS.every((k) => typeof st[k] === 'boolean') ? { studio: applyPolicy(st, policy) } : {});
 
 const UID = /^[1-9]\d{14,21}$/;
 export const MAX_PEOPLE = 200;
@@ -37,13 +37,13 @@ export function dmDraft(dm) {
 }
 
 /** Thân PUT /api/permissions/dm: người không bật "tính năng riêng" gửi `features: null` (theo nút chung). */
-export function dmPayload(d) {
+export function dmPayload(d, policy) {
   return {
     who: d.who,
     features: { ...d.features },
-    ...fullStudio(d.studio),
+    ...fullStudio(d.studio, policy),
     people: d.people.map((p) => ({ uid: p.uid, name: p.name, features: p.custom ? { ...p.features } : null,
-      ...(p.custom ? fullStudio(p.studio) : {}) })),
+      ...(p.custom ? fullStudio(p.studio, policy) : {}) })),
   };
 }
 
@@ -246,7 +246,7 @@ export function DmEditor({ dm, features, studioFeatures = [], studioPolicy, admi
     if (busy || !canSave) return;
     setBusy(true); setMsg({});
     try {
-      const r = await api('/api/permissions/dm', { method: 'PUT', body: dmPayload(draft) });
+      const r = await api('/api/permissions/dm', { method: 'PUT', body: dmPayload(draft, studioPolicy) });
       onSaved(r);
       setDraft(dmDraft(r.dm)); setRemoved(null);
       setMsg({ ok: 'Đã lưu — bot áp dụng ngay, không cần khởi động lại.' });

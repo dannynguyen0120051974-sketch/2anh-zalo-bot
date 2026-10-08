@@ -26,6 +26,10 @@ export function parseQuota(text, { allowEmpty = true } = {}) {
 /** Nút bị chính sách máy chủ khoá (Windows / Linux không hộp cát: video) — hiện tắt, không bấm được, kèm ghi chú. */
 export const lockedByPolicy = (key, policy) => key === 'studioVideo' && Boolean(policy?.videoBlocked);
 
+/** Bản sao của `studio` với nút bị khoá ép về tắt — thứ gửi lên máy chủ, để giao diện (tắt) và giá trị lưu khớp nhau. */
+export const applyPolicy = (studio, policy) =>
+  Object.fromEntries(Object.entries(studio || {}).map(([key, on]) => [key, lockedByPolicy(key, policy) ? false : on]));
+
 /** Giá trị đang có hiệu lực: nút bị khoá luôn tính là tắt (câu "a/b đang bật", tóm tắt từng người). */
 export const effectiveStudio = (studio, features, policy) =>
   Object.fromEntries(features.map((f) => [f.key, lockedByPolicy(f.key, policy) ? false : Boolean(studio?.[f.key])]));

@@ -480,6 +480,27 @@ test('xưởng: máy Windows khoá nút video (chính sách cài đặt), máy k
   assert.equal(lockedByPolicy('studioVideo', undefined), false);
 });
 
+test('xưởng: nút video bị khoá thì bản nháp gửi studioVideo: false (giao diện và giá trị lưu khớp)', async () => {
+  const { applyPolicy } = await import('./views/studio-box.js');
+  const { settingsPayload } = await import('./views/permissions.js');
+  const { dmDraft, dmPayload } = await import('./views/dm-permissions.js');
+  const win = { videoBlocked: true, note: 'x' };
+  const on = { studioSlides: true, studioDocs: false, studioExams: false, studioVideo: true };
+  assert.deepEqual(applyPolicy(on, win), { ...on, studioVideo: false });
+  assert.deepEqual(applyPolicy(on, { videoBlocked: false }), on, 'không khoá thì giữ nguyên');
+  assert.deepEqual(applyPolicy(on, undefined), on);
+  assert.equal(on.studioVideo, true, 'không sửa bản nháp tại chỗ');
+  const d = { active: true, replyOnlyTagged: true, features: { web: true }, studio: on, studioQuota: null };
+  assert.equal(settingsPayload(d, { isGroup: true, studioFeatures: SF, policy: win }).studio.studioVideo, false);
+  assert.equal(settingsPayload(d, { isGroup: true, studioFeatures: SF }).studio.studioVideo, true);
+  const dm = { who: 'everyone', explicit: true, gatewayOpen: true, features: ALL_ON, studio: on,
+    people: [{ uid: '1234567890123456', name: 'Cô Lan', custom: true, features: ALL_ON, studio: on }] };
+  const body = dmPayload(dmDraft(dm), win);
+  assert.equal(body.studio.studioVideo, false);
+  assert.equal(body.people[0].studio.studioVideo, false);
+  assert.equal(body.studio.studioSlides, true);
+});
+
 test('xưởng: hạn mức theo người — bản nháp, kiểm số, thêm người (UID, trùng), đếm thay đổi', async () => {
   const { quotaDraft, quotaPayload, quotaChangeCount, addQuotaPerson, quotaBadge } = await import('./views/studio-quota.js');
   const saved = quotaDraft({ quota: 3, people: [{ uid: '1234567890123456', name: 'Cô Lan', quota: 10 }] });
