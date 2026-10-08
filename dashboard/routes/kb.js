@@ -17,8 +17,8 @@ export function kbRoutes({ kb, activity }) {
     try { activity.append({ actor: req.user.username, action, detail }); } catch (e) { console.error('[dashboard] không ghi được Nhật ký:', e); }
   };
 
-  r.get('/kb', requireAuth, (req, res) => {
-    try { res.json({ ok: true, ...kb.info(), ...kb.list({ fresh: req.query.fresh === '1' }), uploadTypes: UPLOAD_TYPES, maxBytes: MAX_UPLOAD_BYTES }); } catch (err) { fail(res, err, 'Chưa đọc được kho tri thức — thử lại sau ít phút.'); }
+  r.get('/kb', requireAuth, async (req, res) => {
+    try { res.json({ ok: true, ...kb.info(), ...(await kb.list({ fresh: req.query.fresh === '1' })), uploadTypes: UPLOAD_TYPES, maxBytes: MAX_UPLOAD_BYTES }); } catch (err) { fail(res, err, 'Chưa đọc được kho tri thức — thử lại sau ít phút.'); }
   });
 
   r.post('/kb/upload', requireAuth, express.raw({ type: 'application/octet-stream', limit: MAX_UPLOAD_BYTES }), (req, res) => {

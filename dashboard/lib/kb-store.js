@@ -5,7 +5,8 @@
  * được tệp trong thư mục đó — phần còn lại của kho là tài liệu của chủ bot, dashboard không đụng.
  */
 import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, statSync, unlinkSync } from 'node:fs';
-import { basename, extname, join, relative, resolve, sep } from 'node:path';
+import { readdir, stat } from 'node:fs/promises';
+import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { writeFileAtomic } from './json-store.js';
 
 export const UPLOAD_DIR = 'tai-len-dashboard';
@@ -17,6 +18,9 @@ const READABLE = new Set(['.md', '.txt', '.html', '.htm', '.json', '.yaml', '.ym
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'out', 'coverage', '__pycache__', 'venv', '.venv', 'vendor', 'tmp', 'temp', 'cache']);
 const SKIP_PATTERNS = ['backup', 'order', 'customer', 'khach', 'don-hang', 'donhang', 'secret', 'credential', 'password', 'token', 'private'];
 const MAX_FILES = 3000;
+const MAX_STEM = 120;
+// Tên thiết bị của Windows: CON, NUL, COM1… (kể cả khi có đuôi, không phân biệt hoa thường) không tạo được thành tệp.
+const RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 const LIST_TTL_MS = 60_000;
 
 const err = (statusCode, message) => Object.assign(new Error(message), { statusCode });
@@ -38,12 +42,16 @@ export function kbAllowed(rel, publicDirs) {
 /** Tên tệp an toàn trên cả Windows lẫn Linux; giữ chữ có dấu. Rỗng → lỗi 400. */
 export function safeFileName(raw) {
   // eslint-disable-next-line no-control-regex
-  const name = basename(String(raw ?? '').replace(/\\/g, '/')).replace(/[\u0000-\u001f<>:"/\\|?*]/g, ' ').replace(/\s+/g, ' ').trim()
-    .replace(/^\.+/, '').slice(0, 120);
-  const ext = extname(name).toLowerCase();
-  if (!name || name === ext) throw err(400, 'Tên tệp không hợp lệ — đổi tên tệp rồi tải lại.');
-  if (!UPLOAD_TYPES.includes(ext)) throw err(400, `Chỉ nhận ${UPLOAD_TYPES.join(', ')} — đổi định dạng rồi tải lại.`);
-  return name;
+  const full = basename(String(raw ?? '').replace(/\\/g, '/')).replace(/[\u0000-\u001f<>:"/\\|?*]/g, ' ').replace(/\s+/g, ' ').trim()
+    .replace(/^\.+/, '');
+  const ext = extname(full);
+  if (!full || full === ext) throw err(400, 'Tên tệp không hợp lệ — đổi tên tệp rồi tải lại.');
+  if (!UPLOAD_TYPES.includes(ext.toLowerCase())) throw err(400, `Chỉ nhận ${UPLOAD_TYPES.join(', ')} — đổi định dạng rồi tải lại.`);
+  // Chỉ cắt phần tên (stem) để giữ nguyên đuôi.
+  let stem = full.slice(0, -ext.length);
+  if (stem.length > MAX_STEM) stem = stem.slice(0, MAX_STEM).trimEnd();
+  if (!stem || RESERVED_NAME.test(stem.split('.')[0].trim())) throw err(400, 'Tên tệp trùng tên thiết bị của Windows (CON, NUL, COM1…) — đổi tên tệp rồi tải lại.');
+  return `${stem}${ext}`;
 }
 
 /** Kiểm nội dung khớp đuôi: PDF "%PDF-", DOCX là ZIP có word/document.xml, MD/TXT là UTF-8 không có byte 0. */
@@ -82,19 +90,28 @@ export function createKbStore({ kbDir, publicDirs, now = Date.now }) {
     if (!rel || rel.startsWith('..') || resolve(r, rel) !== real || real !== resolve(dir)) throw err(403, 'Thư mục tải lên không nằm trong kho — báo người cài đặt kiểm tra.');
     return true;
   }
-  function walk(r, scope) {
+  /** Thư mục cha của thư mục tải lên (chính kho hoặc thư mục phạm vi) nếu đã có thì phải là thư mục thật trong kho. */
+  function assertParentInside(r, dir) {
+    const lexical = relative(r, dir);
+    if (!lexical || lexical.startsWith('..') || resolve(r, lexical) !== resolve(dir)) throw err(403, 'Thư mục tải lên không nằm trong kho — báo người cài đặt kiểm tra.');
+    const parent = dirname(dir);
+    let real;
+    try { real = realpathSync(parent); } catch { return; } // chưa có: sẽ được tạo ngay dưới kho (đã là đường thật)
+    if (real !== r && (relative(r, real).startsWith('..') || real !== resolve(parent))) throw err(403, 'Thư mục tải lên không nằm trong kho — báo người cài đặt kiểm tra.');
+  }
+  async function walk(r, scope) {
     const out = [];
     const stack = [''];
     while (stack.length && out.length < MAX_FILES) {
       const relDir = stack.pop();
       let entries;
-      try { entries = readdirSync(join(r, relDir), { withFileTypes: true }); } catch { continue; }
+      try { entries = await readdir(join(r, relDir), { withFileTypes: true }); } catch { continue; }
       for (const d of entries) {
         const rel = relDir ? `${relDir}/${d.name}` : d.name;
         if (d.isSymbolicLink()) continue;
         if (d.isDirectory()) { if (!d.name.startsWith('.') && !SKIP_DIRS.has(d.name.toLowerCase()) && rel.split('/').length < 8) stack.push(rel); continue; }
         if (!d.isFile() || !READABLE.has(extname(d.name).toLowerCase()) || !kbAllowed(rel, scope)) continue;
-        let st; try { st = statSync(join(r, rel)); } catch { continue; }
+        let st; try { st = await stat(join(r, rel)); } catch { continue; }
         out.push({ path: rel, size: st.size, mtime: st.mtimeMs, uploaded: rel.split('/').includes(UPLOAD_DIR) });
         if (out.length >= MAX_FILES) break;
       }
@@ -107,12 +124,12 @@ export function createKbStore({ kbDir, publicDirs, now = Date.now }) {
       const scope = parsePublicDirs(publicDirs());
       return { configured: Boolean(r), publicDirs: scope, uploadDir: r ? relative(r, uploadDir(r, scope)).split(sep).join('/') : null };
     },
-    list({ fresh = false } = {}) {
+    async list({ fresh = false } = {}) {
       const r = root();
       if (!r) return { files: [], truncated: false };
       const scope = parsePublicDirs(publicDirs());
       const key = `${r}|${scope.join(',')}`;
-      if (fresh || !cache || cache.key !== key || now() - cache.at > LIST_TTL_MS) cache = { key, at: now(), files: walk(r, scope) };
+      if (fresh || !cache || cache.key !== key || now() - cache.at > LIST_TTL_MS) cache = { key, at: now(), files: await walk(r, scope) };
       return { files: cache.files, truncated: cache.files.length >= MAX_FILES };
     },
     upload(rawName, buf) {
@@ -121,6 +138,8 @@ export function createKbStore({ kbDir, publicDirs, now = Date.now }) {
       const name = safeFileName(rawName);
       checkContent(name, buf);
       const dir = uploadDir(r, parsePublicDirs(publicDirs()));
+      // Kiểm TRƯỚC khi tạo thư mục: thư mục cha là liên kết trỏ ra ngoài kho thì mkdir sẽ tạo ngoài kho.
+      assertParentInside(r, dir);
       if (existsSync(dir)) assertRealInside(r, dir);
       mkdirSync(dir, { recursive: true });
       assertRealInside(r, dir);
