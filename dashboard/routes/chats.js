@@ -11,6 +11,8 @@ const DUP_MAX = 1000;
 const READ_FAIL = 'Chưa đọc được lịch sử trò chuyện — tải lại trang, nếu vẫn lỗi hãy báo người cài đặt.';
 const BAD_THREAD = 'Hội thoại không hợp lệ — chọn lại từ danh sách.';
 const BAD_CURSOR = 'Vị trí trang không hợp lệ — tải lại trang rồi thử lại.';
+const BAD_QUERY = 'Từ khoá cần 2–100 ký tự — sửa lại rồi tìm.';
+const MEDIA_KINDS = ['photo', 'file', 'link'];
 
 export const parseType = (v) => (v === 0 || v === '0' ? 0 : v === 1 || v === '1' ? 1 : null);
 const cursorOk = (v) => v === undefined || v === '' || (typeof v === 'string' && parseCursor(v) !== null);
@@ -31,7 +33,7 @@ export function chatRoutes({ store, sidecar, threadNames, sendLimit = { max: 10,
 
   r.get('/chats/search', requireAuth, async (req, res) => {
     const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
-    if (q.length < 2 || q.length > 100) return bad(res, 'Từ khoá cần 2–100 ký tự — sửa lại rồi tìm.');
+    if (q.length < 2 || q.length > 100) return bad(res, BAD_QUERY);
     if (!cursorOk(req.query.before)) return bad(res, BAD_CURSOR);
     try {
       const { results, nextBefore } = store.searchMessages(q, { before: req.query.before || null });
@@ -47,9 +49,35 @@ export function chatRoutes({ store, sidecar, threadNames, sendLimit = { max: 10,
   r.get('/chats/:threadId/messages', requireAuth, (req, res) => {
     const type = parseType(req.query.type);
     if (!THREAD_ID.test(req.params.threadId) || type === null) return bad(res, BAD_THREAD);
+    const { before, around, after } = req.query;
+    if (![before, around, after].every(cursorOk)) return bad(res, BAD_CURSOR);
+    if ([before, around, after].filter(Boolean).length > 1) return bad(res, BAD_CURSOR);
+    const id = req.params.threadId;
+    try {
+      if (around) return res.json({ ok: true, ...store.getMessagesAround(id, type, around) });
+      if (after) return res.json({ ok: true, ...store.getMessagesAfter(id, type, after) });
+      res.json({ ok: true, ...store.getMessages(id, type, { before: before || null }) });
+    } catch (err) { failStore(res, err, READ_FAIL); }
+  });
+
+  r.get('/chats/:threadId/search', requireAuth, (req, res) => {
+    const type = parseType(req.query.type);
+    if (!THREAD_ID.test(req.params.threadId) || type === null) return bad(res, BAD_THREAD);
+    const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    if (q.length < 2 || q.length > 100) return bad(res, BAD_QUERY);
     if (!cursorOk(req.query.before)) return bad(res, BAD_CURSOR);
     try {
-      res.json({ ok: true, ...store.getMessages(req.params.threadId, type, { before: req.query.before || null }) });
+      res.json({ ok: true, ...store.searchThread(req.params.threadId, type, q, { before: req.query.before || null }) });
+    } catch (err) { failStore(res, err, READ_FAIL); }
+  });
+
+  r.get('/chats/:threadId/media', requireAuth, (req, res) => {
+    const type = parseType(req.query.type);
+    if (!THREAD_ID.test(req.params.threadId) || type === null) return bad(res, BAD_THREAD);
+    if (!MEDIA_KINDS.includes(req.query.kind)) return bad(res, 'Loại mục không hợp lệ — chọn lại thẻ Ảnh/Video, Tệp hoặc Link.');
+    if (!cursorOk(req.query.before)) return bad(res, BAD_CURSOR);
+    try {
+      res.json({ ok: true, ...store.listMedia(req.params.threadId, type, req.query.kind, { before: req.query.before || null }) });
     } catch (err) { failStore(res, err, READ_FAIL); }
   });
 

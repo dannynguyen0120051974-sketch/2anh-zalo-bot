@@ -36,9 +36,12 @@ test('dải trạng thái và thẻ Zalo: listener đứt → vàng "Đang nối
 
 test('tin nhắn: ảnh/tệp hiện nhãn + link https; chữ giữ nguyên, không bao giờ thành HTML hay link lạ', async () => {
   const { messageView, mergeMessages, preview } = await import('./views/chats.js');
-  assert.deepEqual(messageView({ msgType: 'chat.photo', text: 'https://photo-stal-1.zdn.vn/a.jpg' }), { label: 'Ảnh', text: '', link: 'https://photo-stal-1.zdn.vn/a.jpg' });
-  assert.deepEqual(messageView({ msgType: 'chat.sticker', text: '[Nhãn dán]' }), { label: 'Nhãn dán', text: '', link: null });
-  assert.deepEqual(messageView({ msgType: 'webchat', text: '<img src=x onerror=alert(1)>' }), { label: null, text: '<img src=x onerror=alert(1)>', link: null });
+  assert.deepEqual(messageView({ msgType: 'chat.photo', text: 'https://photo-stal-1.zdn.vn/a.jpg' }),
+    { label: 'Ảnh', text: '', link: null, media: { kind: 'photo', url: 'https://photo-stal-1.zdn.vn/a.jpg', caption: '' } });
+  // Ảnh không nằm trên máy chủ ảnh Zalo: không tải hộ, giữ cách cũ (nhãn + link ngoài).
+  assert.deepEqual(messageView({ msgType: 'chat.photo', text: 'https://example.com/a.jpg' }), { label: 'Ảnh', text: '', link: 'https://example.com/a.jpg', media: null });
+  assert.deepEqual(messageView({ msgType: 'chat.sticker', text: '[Nhãn dán]' }), { label: 'Nhãn dán', text: '', link: null, media: null });
+  assert.deepEqual(messageView({ msgType: 'webchat', text: '<img src=x onerror=alert(1)>' }), { label: null, text: '<img src=x onerror=alert(1)>', link: null, media: null });
   for (const text of ['javascript:alert(1)', 'http://evil.vn', 'data:text/html,x', 'https://a.vn có chữ']) {
     assert.equal(messageView({ msgType: 'webchat', text }).link, null, text);
   }
@@ -577,4 +580,146 @@ test('xưởng: việc hỏng mà không được trả lượt (đã trả đ�
   assert.deepEqual(jobBadge({ status: 'failed', refundDenied: true }), { kind: 'danger', text: 'Không làm được', note: 'lượt bị tính dù lỗi' });
   assert.deepEqual(jobBadge({ status: 'failed' }), { kind: 'danger', text: 'Không làm được', note: '' });
   assert.deepEqual(jobBadge({ status: 'ok', refundDenied: true }), { kind: 'ok', text: 'Đã gửi', note: '' });
+});
+
+test('media: rút link https, bỏ dấu câu dính cuối, giữ ngoặc cân, không trùng, không nhận http/javascript', async () => {
+  const { extractUrls } = await import('./media.js');
+  assert.deepEqual(extractUrls('Xem https://docs.google.com/d/1/edit?usp=sharing, rồi https://forms.gle/abc.'), [
+    'https://docs.google.com/d/1/edit?usp=sharing', 'https://forms.gle/abc',
+  ]);
+  assert.deepEqual(extractUrls('(https://vi.wikipedia.org/wiki/A_(B))'), ['https://vi.wikipedia.org/wiki/A_(B)']);
+  assert.deepEqual(extractUrls('“https://facebook.com/x” và https://facebook.com/x'), ['https://facebook.com/x']);
+  assert.deepEqual(extractUrls('http://a.vn javascript:alert(1) https://user:pw@a.vn/ https://a.vn:8443/x data:x'), []);
+  // Danh thiếp: link trong JSON có "\/" không phải link thật.
+  assert.deepEqual(extractUrls('Mai\n{"qrCodeUrl":"https:\\/\\/qr-talk.zdn.vn\\/0\\/a.jpg"}\nhttps://zalo.me'), ['https://zalo.me']);
+});
+
+test('media: máy chủ Zalo — chỉ tên miền con thật, không giả đuôi, không IP', async () => {
+  const { isImageUrl, isFileUrl, isZaloCdn } = await import('./media.js');
+  for (const ok of ['https://photo-stal-27.zdn.vn/gr/jpg/a/b.jpg', 'https://b-f64-zpg-r.zdn.vn/1/2.jpg', 'https://f64-zpg-r.zdn.vn/x.jpg', 'https://res-zalo.zadn.vn/a.png']) {
+    assert.equal(isImageUrl(ok), true, ok);
+  }
+  for (const bad of ['https://zdn.vn/a.jpg', 'https://evilzdn.vn/a.jpg', 'https://zdn.vn.evil.com/a.jpg', 'http://photo-stal-1.zdn.vn/a.jpg',
+    'https://photo-stal-1.zdn.vn:444/a.jpg', 'https://u:p@photo-stal-1.zdn.vn/a.jpg', 'https://127.0.0.1/a.jpg', 'https://file-stal-1.dlfl.vn/a', 'javascript:alert(1)']) {
+    assert.equal(isImageUrl(bad), false, bad);
+  }
+  assert.equal(isFileUrl('https://file-stal-18.dlfl.vn/gr/x/y'), true);
+  assert.equal(isFileUrl('https://video-stal-46.dlmd.me/gr/x'), true);
+  assert.equal(isFileUrl('https://dlfl.vn.evil.com/x'), false);
+  assert.equal(isZaloCdn('https://docs.google.com/x'), false);
+});
+
+test('media: phân loại tin ảnh (có/không chú thích), video, tệp đúng dạng bot lưu', async () => {
+  const { classifyMedia, fileExt } = await import('./media.js');
+  const photo = 'https://photo-stal-27.zdn.vn/gr/jpg/4465fc927e4faf11f65e/2aOboR44.jpg';
+  assert.deepEqual(classifyMedia('chat.photo', photo), { kind: 'photo', url: photo, caption: '' });
+  assert.deepEqual(classifyMedia('chat.photo', `Cô ơi file gộp thế nào ạ\n${photo}`), { kind: 'photo', url: photo, caption: 'Cô ơi file gộp thế nào ạ' });
+  assert.equal(classifyMedia('chat.photo', 'https://evil.vn/a.jpg'), null);
+  const video = 'https://video-stal-46.dlmd.me/gr/1f78a5bfe81c36426f0d/2aOboR36';
+  assert.deepEqual(classifyMedia('chat.video.msg', video), { kind: 'video', url: video, caption: '' });
+  const file = 'https://file-stal-18.dlfl.vn/gr/4e7412403493e5cdbc82/2aOboR448c';
+  assert.deepEqual(classifyMedia('share.file', `30.TrT HS Mua 5.pdf\n${file}`), { kind: 'file', name: '30.TrT HS Mua 5.pdf', url: file, ext: 'pdf' });
+  assert.equal(classifyMedia('share.file', 'KH.docx\nhttps://evil.vn/x'), null);
+  assert.equal(classifyMedia('webchat', photo), null);
+  assert.equal(fileExt('Danh sách.XLSX'), 'xlsx');
+  assert.equal(fileExt('khong-duoi'), '');
+});
+
+test('media: link — thẻ link có tiêu đề, link trong chữ, bỏ link ảnh/tệp Zalo, không trùng trong một tin', async () => {
+  const { linksOf } = await import('./media.js');
+  assert.deepEqual(linksOf('chat.recommended', 'https://docs.google.com/document/d/1/edit\n- BÁO CÁO THÀNH TÍCH'), [
+    { url: 'https://docs.google.com/document/d/1/edit', host: 'docs.google.com', title: '- BÁO CÁO THÀNH TÍCH' },
+  ]);
+  assert.deepEqual(linksOf('chat.recommended', 'https://www.facebook.com/share/v/1cWZ4Dj7by/'), [{ url: 'https://www.facebook.com/share/v/1cWZ4Dj7by/', host: 'www.facebook.com' }]);
+  assert.deepEqual(linksOf('webchat', 'Nộp ở https://forms.gle/x và https://forms.gle/x, ảnh https://photo-stal-1.zdn.vn/a.jpg'), [{ url: 'https://forms.gle/x', host: 'forms.gle' }]);
+  assert.deepEqual(linksOf('legacy-hermes', 'cnay đi đc k\nhttps://photo-stal-15.zdn.vn/gr/jpg/b/c.jpg'), []);
+  assert.deepEqual(linksOf('chat.photo', 'https://drive.google.com/x'), []);
+  assert.deepEqual(linksOf('share.file', 'a.pdf\nhttps://file-stal-1.dlfl.vn/x'), []);
+});
+
+test('Phiên chat: ảnh lỗi — 404 là Zalo đã xoá; bận/lỗi tạm thì tự thử lại một lần rồi mới báo "bấm để thử lại"', async () => {
+  const { imageFailure, IMAGE_TEXT } = await import('./views/chat-media.js');
+  assert.equal(imageFailure(404, false), 'gone');
+  assert.equal(imageFailure(404, true), 'gone');
+  for (const s of [429, 503, 502, 504, 0, 200]) {
+    assert.equal(imageFailure(s, false), 'retry', String(s));
+    assert.equal(imageFailure(s, true), 'busy', String(s));
+  }
+  for (const s of [400, 401, 403, 500]) assert.equal(imageFailure(s, false), 'failed', String(s));
+  assert.equal(IMAGE_TEXT.busy, 'Đang tải nhiều ảnh — bấm để thử lại');
+  // "Zalo đã xoá" chỉ dùng cho 404.
+  for (const [k, v] of Object.entries(IMAGE_TEXT)) {
+    if (k.startsWith('gone')) assert.match(v, /Zalo đã xoá/, k); else assert.doesNotMatch(v, /xoá/, k);
+  }
+});
+
+test('Phiên chat: hàng chờ ảnh — tối đa 3 ảnh cùng lúc (dưới mức 4 ảnh/người của máy chủ), nhả chỗ thì người chờ tiếp theo vào', async () => {
+  const { acquireSlot, releaseSlot, IMAGE_SLOTS } = await import('./views/chat-media.js');
+  assert.equal(IMAGE_SLOTS, 3);
+  const got = [];
+  const all = Array.from({ length: 5 }, (_, i) => acquireSlot().then(() => got.push(i)));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(got, [0, 1, 2]);
+  releaseSlot(); await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(got, [0, 1, 2, 3]);
+  releaseSlot(); await Promise.all(all);
+  assert.deepEqual(got, [0, 1, 2, 3, 4]);
+  for (let i = 0; i < 3; i += 1) releaseSlot();
+  // Trả hết chỗ: lại vào ngay được 3.
+  const again = []; for (let i = 0; i < 3; i += 1) acquireSlot().then(() => again.push(i));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(again.length, 3);
+  for (let i = 0; i < 3; i += 1) releaseSlot();
+});
+
+test('Phiên chat: khung xem ảnh giữ Tab bên trong, khoá cuộn trang; bảng bên trả tiêu điểm về nút mở', async () => {
+  const { trapTab } = await import('./views/chat-media.js');
+  const a = { focus() { globalThis.document.activeElement = a; } };
+  const b = { focus() { globalThis.document.activeElement = b; } };
+  const box = { querySelectorAll: () => [a, b] };
+  const prevDoc = globalThis.document;
+  globalThis.document = { activeElement: b };
+  try {
+    let prevented = false;
+    trapTab({ key: 'Tab', shiftKey: false, preventDefault: () => { prevented = true; } }, box);
+    assert.equal(globalThis.document.activeElement, a); assert.equal(prevented, true);
+    trapTab({ key: 'Tab', shiftKey: true, preventDefault: () => {} }, box);
+    assert.equal(globalThis.document.activeElement, b);
+    prevented = false;
+    trapTab({ key: 'Tab', shiftKey: true, preventDefault: () => { prevented = true; } }, box); // b → a: để trình duyệt tự đi
+    assert.equal(prevented, false);
+  } finally { globalThis.document = prevDoc; }
+  const media = readFileSync(join(root, 'views/chat-media.js'), 'utf8');
+  assert.match(media, /classList\.add\('no-scroll'\)/);
+  assert.match(media, /classList\.remove\('no-scroll'\)/);
+  assert.match(readFileSync(join(root, 'style.css'), 'utf8'), /body\.no-scroll \{ overflow: hidden; \}/);
+  const chats = readFileSync(join(root, 'views/chats.js'), 'utf8');
+  assert.match(chats, /onClose=\$\{\(\) => closeSide\('search'\)\}/);
+  assert.match(chats, /onClose=\$\{\(\) => closeSide\('media'\)\}/);
+});
+
+test('Phiên chat: biểu tượng tệp theo đuôi, đoạn chữ quanh chỗ trùng, đường ảnh đi qua dashboard', async () => {
+  const { fileBadge } = await import('./views/chat-media.js');
+  const { snippet } = await import('./views/chats.js');
+  const { proxied } = await import('./media.js');
+  assert.deepEqual(fileBadge('pdf'), { label: 'PDF', tone: 'pdf' });
+  assert.deepEqual(fileBadge('DOCX'), { label: 'DOC', tone: 'doc' });
+  assert.deepEqual(fileBadge('xlsx'), { label: 'XLS', tone: 'xls' });
+  assert.deepEqual(fileBadge('heic'), { label: 'HEIC', tone: 'other' });
+  assert.deepEqual(fileBadge(''), { label: 'TỆP', tone: 'other' });
+  assert.equal(snippet('ngắn học sinh', 'hoc sinh'), 'ngắn học sinh');
+  assert.equal(snippet(`${'x'.repeat(100)} học sinh`, 'hoc sinh'), `…${'x'.repeat(29)} học sinh`);
+  assert.equal(proxied('https://photo-stal-1.zdn.vn/a b.jpg?x=1&y=2'), '/api/media/img?u=https%3A%2F%2Fphoto-stal-1.zdn.vn%2Fa%20b.jpg%3Fx%3D1%26y%3D2');
+});
+
+test('Phiên chat: link ngoài (tệp, video, ảnh gốc, link) luôn mở thẻ mới với rel="noopener noreferrer"', () => {
+  for (const f of ['views/chat-media.js', 'views/chats.js']) {
+    const src = readFileSync(join(root, f), 'utf8');
+    const anchors = [...src.matchAll(/<a\b[^>]*>/g)].map((m) => m[0]);
+    assert.ok(anchors.length > 0, f);
+    for (const a of anchors) {
+      assert.match(a, /target="_blank"/, `${f}: ${a}`);
+      assert.match(a, /rel="noopener noreferrer"/, `${f}: ${a}`);
+    }
+  }
 });

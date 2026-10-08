@@ -2,6 +2,20 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [1.25.0] — 2026-10-08
+
+### Thêm
+
+- **Phiên chat — tìm trong hội thoại:** nút kính lúp trên đầu khung tin mở bảng tìm chỉ trong hội thoại đang mở (không phân biệt hoa thường và dấu, tô sáng chỗ trùng, 30 kết quả mỗi trang). Bấm một kết quả thì khung tin tải đoạn quanh tin đó, cuộn tới và viền vàng tin; kéo xuống tải tiếp tin mới hơn, hoặc bấm **Về tin mới nhất**.
+- **Phiên chat — bảng Ảnh/Video · Tệp · Link** giống Zalo: lưới ảnh (bấm để xem lớn, video mở ở thẻ mới), danh sách tệp có nút **Tải về**, danh sách link (thẻ link và link trong chữ, bỏ link ảnh/tệp của Zalo). Máy tính: bảng nằm bên phải; điện thoại: phủ cả màn hình.
+- **Phiên chat — ảnh, tệp, video ngay trong khung tin:** ảnh thu nhỏ bấm để xem lớn (← → chuyển ảnh, Esc đóng), thẻ tệp có nút **Tải về**, thẻ video có nút phát.
+- API mới: `GET /api/chats/:threadId/search`, `GET /api/chats/:threadId/media?kind=photo|file|link`, `GET /api/chats/:threadId/messages?around=` / `?after=`, `GET /api/media/img?u=`.
+
+### An toàn
+
+- Ảnh đi qua dashboard (`/api/media/img`) vì CSP chỉ cho ảnh cùng nguồn. Chỉ nhận https và tên miền con của `zdn.vn`/`zadn.vn`; tự phân giải tên máy, từ chối nếu có địa chỉ nội bộ/máy mình/link-local rồi nối thẳng vào đúng IP đã kiểm (giữ SNI và kiểm chứng chỉ); chuyển hướng tối đa 2 lần, mỗi lần kiểm lại; quá hạn 10 giây; tối đa 5 MB đọc dần; chỉ jpeg/png/webp/gif và byte đầu tệp phải đúng loại; trả kèm `Cache-Control: private, max-age=3600`, `nosniff`, `Content-Security-Policy: default-src 'none'`; mỗi người tối đa 4 ảnh cùng lúc và 120 ảnh/phút, cả dashboard tối đa 6 ảnh cùng lúc (giữ RAM của VPS). Chặn thêm IPv4-compatible (`::/96`), NAT64 cục bộ (`64:ff9b:1::/48`), Teredo (`2001::/32`). Không đệm ảnh trên máy chủ; đăng xuất gửi `Clear-Site-Data: "cache"` để trình duyệt xoá ảnh đã đệm.
+- Tệp và video không bao giờ đi qua dashboard: chỉ là link ngoài mở thẻ mới (`rel="noopener noreferrer"`), và chỉ khi là https trên máy chủ tệp/video của Zalo.
+
 ## [1.24.0] — 2026-10-08
 
 ### Thêm

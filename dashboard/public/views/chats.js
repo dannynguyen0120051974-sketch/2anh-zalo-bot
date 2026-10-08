@@ -4,6 +4,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from '../vendor/hooks.mj
 import { api } from '../api.js';
 import { html, Icon, Live, Notice, PageHead, Spinner, fmtTime } from '../ui.js';
 import { fold, indexOfFolded, markMatches } from '../fold.js';
+import { classifyMedia } from '../media.js';
+import { FileCard, Lightbox, MediaPanel, Thumb, VideoCard } from './chat-media.js';
 
 export { markMatches };
 
@@ -23,11 +25,23 @@ const keyOf = (c) => `${c.threadType}:${c.threadId}`;
 export function messageView(m) {
   const label = TYPE_LABELS[m.msgType] || null;
   const raw = String(m.text ?? '');
+  // Ảnh/tệp/video trên máy chủ Zalo: vẽ thành ảnh thu nhỏ hoặc thẻ (xem chat-media.js).
+  const media = classifyMedia(m.msgType, raw);
+  if (media) return { label, text: media.kind === 'file' ? '' : media.caption, link: null, media };
   const trimmed = raw.trim();
-  if (/^https:\/\/\S+$/.test(trimmed)) return { label: label || 'Liên kết', text: '', link: trimmed };
+  if (/^https:\/\/\S+$/.test(trimmed)) return { label: label || 'Liên kết', text: '', link: trimmed, media: null };
   // Bot lưu sẵn "[Nhãn dán]"… cho tin không có chữ — nhãn đã nói đủ, không lặp lại.
-  return { label, text: label && /^\[[^\]]*\]$/.test(trimmed) ? '' : raw, link: null };
+  return { label, text: label && /^\[[^\]]*\]$/.test(trimmed) ? '' : raw, link: null, media: null };
 }
+
+/** Đoạn chữ quanh chỗ trùng: chỗ trùng nằm sâu thì cắt bớt phần đầu. */
+export function snippet(text, q) {
+  const s = String(text ?? '');
+  const at = indexOfFolded(s, q);
+  return at > LEAD * 2 ? `…${s.slice(at - LEAD)}` : s;
+}
+
+const hits = (text, q) => markMatches(text, q).map((s) => (s.hit ? html`<mark>${s.text}</mark>` : s.text));
 
 export function mergeMessages(a, b) {
   const byId = new Map();
@@ -50,28 +64,87 @@ function ConvItem({ c, active, onSelect }) {
 function ResultItem({ r, q, onSelect }) {
   const v = messageView(r);
   const who = r.isSelf ? 'Bot: ' : r.senderName ? `${r.senderName}: ` : '';
-  let text = v.text;
-  const at = indexOfFolded(text, q);
-  if (at > LEAD * 2) text = `…${text.slice(at - LEAD)}`;
+  const text = snippet(v.text, q);
   return html`<li><button type="button" class="conv" onClick=${() => onSelect({ threadId: r.threadId, threadType: r.threadType, name: r.threadName })}>
     <span class="conv-top"><span class="conv-name">${r.threadName}</span><time class="conv-time">${fmtTime(r.ts)}</time></span>
-    <span class="conv-preview conv-wrap">${who}${text
-      ? markMatches(text, q).map((s) => (s.hit ? html`<mark>${s.text}</mark>` : s.text))
-      : (v.label ? `[${v.label}]` : '')}</span>
+    <span class="conv-preview conv-wrap">${who}${text ? hits(text, q) : (v.label ? `[${v.label}]` : '')}</span>
   </button></li>`;
 }
 
-function Bubble({ m, group }) {
+function Bubble({ m, group, focus, onOpenPhoto }) {
   const v = messageView(m);
-  return html`<li class=${`msg${m.isSelf ? ' msg-self' : ''}`}>
+  const md = v.media;
+  return html`<li id=${`msg-${m.id}`} class=${`msg${m.isSelf ? ' msg-self' : ''}${focus ? ' msg-focus' : ''}`}>
     ${group && !m.isSelf ? html`<span class="msg-from">${m.senderName || 'Thành viên'}</span>` : null}
-    <div class="msg-bubble">
-      ${v.label ? html`<span class="msg-kind">[${v.label}]</span> ` : null}
+    <div class=${`msg-bubble${md ? ' msg-media' : ''}`}>
+      ${md?.kind === 'photo' ? html`<${Thumb} url=${md.url} alt=${md.caption || `Ảnh của ${m.isSelf ? 'bot' : (m.senderName || 'thành viên')}`} onOpen=${() => onOpenPhoto(m.id)} />` : null}
+      ${md?.kind === 'file' ? html`<${FileCard} name=${md.name} url=${md.url} ext=${md.ext} />` : null}
+      ${md?.kind === 'video' ? html`<${VideoCard} url=${md.url} />` : null}
+      ${!md && v.label ? html`<span class="msg-kind">[${v.label}]</span> ` : null}
       ${v.link ? html`<a href=${v.link} target="_blank" rel="noopener noreferrer">Mở ${v.label ? v.label.toLowerCase() : 'liên kết'}</a>` : null}
       ${v.text ? html`<span class="msg-text">${v.text}</span>` : null}
     </div>
     <time class="msg-time" datetime=${new Date(m.ts).toISOString()}>${m.isSelf ? 'Bot · ' : ''}${fmtTime(m.ts)}</time>
   </li>`;
+}
+
+/** Bảng tìm trong một hội thoại; bấm kết quả thì khung tin nhảy tới đúng tin đó. */
+function ThreadSearch({ conv, onJump, onClose }) {
+  const [q, setQ] = useState('');
+  const [found, setFound] = useState(null); // { q, items, next }
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const seq = useRef(0);
+  const input = useRef(null);
+  useEffect(() => { input.current?.focus(); }, []);
+
+  async function search(e, more = null) {
+    e?.preventDefault();
+    const term = more ? more.q : q.trim();
+    if (term.length < 2 || term.length > 100) { setError('Nhập từ 2 đến 100 ký tự để tìm trong hội thoại này.'); return; }
+    const my = ++seq.current;
+    setBusy(true); setError('');
+    try {
+      const params = new URLSearchParams({ type: String(conv.threadType), q: term, ...(more ? { before: more.next } : {}) });
+      const r = await api(`/api/chats/${encodeURIComponent(conv.threadId)}/search?${params}`);
+      if (my !== seq.current) return;
+      setFound((cur) => ({ q: term, items: more && cur ? [...cur.items, ...r.results] : r.results, next: r.nextBefore }));
+    } catch (err) {
+      if (my === seq.current) setError(err.message);
+    } finally {
+      if (my === seq.current) setBusy(false);
+    }
+  }
+
+  return html`<aside class="side-panel" aria-label="Tìm trong hội thoại" onKeyDown=${(e) => { if (e.key === 'Escape') onClose(); }}>
+    <header class="side-head">
+      <h3>Tìm trong hội thoại</h3>
+      <button type="button" class="btn btn-ghost btn-sm" onClick=${onClose} aria-label="Đóng bảng tìm"><${Icon} name="close" /></button>
+    </header>
+    <form class="chat-search" role="search" onSubmit=${search} novalidate>
+      <label for="thread-q" class="sr-only">Từ khoá tìm trong hội thoại này</label>
+      <input id="thread-q" ref=${input} type="search" maxlength="100" placeholder="Nhập từ khoá rồi Enter" value=${q}
+        onInput=${(e) => setQ(e.currentTarget.value)} />
+      <button class="btn btn-secondary btn-sm" disabled=${busy} aria-label="Tìm trong hội thoại"><${Icon} name="search" size=${16} /></button>
+    </form>
+    <${Live} error=${error} />
+    <div class="side-body">
+      ${!found
+        ? html`<p class="muted small">${busy ? 'Đang tìm…' : 'Tìm không phân biệt hoa thường và dấu: “hoc sinh” cũng thấy “học sinh”.'}</p>`
+        : !found.items.length
+          ? html`<p class="muted small">Không thấy tin nào có “${found.q}” trong hội thoại này — thử từ khoá ngắn hơn.</p>`
+          : html`<p class="muted small" aria-live="polite">Kết quả cho “${found.q}” — bấm để xem tin trong khung chat.</p>
+            <ul class="conv-list">${found.items.map((r) => {
+              const v = messageView(r);
+              const text = snippet(v.text, found.q);
+              return html`<li key=${r.id}><button type="button" class="conv" onClick=${() => onJump(r)}>
+                <span class="conv-top"><span class="conv-name">${r.isSelf ? 'Bot' : (r.senderName || 'Thành viên')}</span><time class="conv-time">${fmtTime(r.ts)}</time></span>
+                <span class="conv-preview conv-wrap">${text ? hits(text, found.q) : (v.label ? `[${v.label}]` : '')}</span>
+              </button></li>`;
+            })}</ul>`}
+      ${found?.next ? html`<button type="button" class="btn btn-ghost btn-sm panel-more" disabled=${busy} onClick=${() => search(null, found)}>${busy ? 'Đang tìm…' : 'Xem thêm kết quả'}</button>` : null}
+    </div>
+  </aside>`;
 }
 
 function Compose({ conv, onSent }) {
@@ -107,29 +180,44 @@ function Compose({ conv, onSent }) {
   </form>`;
 }
 
+const FLASH_MS = 2500;
+const narrow = () => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 760px)').matches;
+
 function Thread({ conv, onBack }) {
   const [msgs, setMsgs] = useState(null);
   const [older, setOlder] = useState(null);
+  const [newer, setNewer] = useState(null); // khác null: đang xem một đoạn cũ (sau khi nhảy tới kết quả tìm)
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const [loadingNewer, setLoadingNewer] = useState(false);
   const [error, setError] = useState('');
+  const [side, setSide] = useState(null); // 'search' | 'media'
+  const [flash, setFlash] = useState(null);
+  const [lightbox, setLightbox] = useState(null); // { items, index }
   const box = useRef(null);
   const atBottom = useRef(true);   // đang ở đáy → có tin mới thì cuộn theo
   const anchor = useRef(null);     // khoảng cách tới đáy trước khi chèn tin cũ — giữ nguyên chỗ đang đọc
+  const scrollTo = useRef(null);   // id tin cần đưa vào giữa khung sau lần vẽ kế tiếp
   const olderBusy = useRef(false);
+  const newerBusy = useRef(false);
+  const detached = useRef(false);  // đang xem đoạn cũ: không gộp trang mới nhất vào (sẽ hở một khoảng)
+  const first = useRef(true);
+  const view = useRef(0);          // tăng mỗi lần thay cả khung tin (nhảy tới tin, về tin mới nhất)
   const kick = useRef(() => {});
   const base = `/api/chats/${encodeURIComponent(conv.threadId)}/messages?type=${conv.threadType}`;
 
   // Poll trang mới nhất 5 s/lần, không chồng yêu cầu; gộp theo id nên tin cũ đã tải không mất.
   useEffect(() => {
-    let alive = true; let timer = null; let inflight = false; let again = false; let first = true;
+    let alive = true; let timer = null; let inflight = false; let again = false;
     const tick = async () => {
       if (inflight) { again = true; return; }
       clearTimeout(timer); inflight = true;
       try {
         const r = await api(base);
         if (!alive) return;
-        setMsgs((cur) => mergeMessages(cur || [], r.messages));
-        if (first) { setOlder(r.nextBefore); first = false; }
+        if (!detached.current) {
+          setMsgs((cur) => mergeMessages(cur || [], r.messages));
+          if (first.current) { setOlder(r.nextBefore); first.current = false; }
+        }
         setError('');
       } catch (err) {
         if (alive) setError(err.message);
@@ -139,7 +227,14 @@ function Thread({ conv, onBack }) {
         if (alive) timer = setTimeout(tick, next);
       }
     };
-    kick.current = () => { atBottom.current = true; tick(); };
+    kick.current = () => {
+      if (detached.current) {
+        // Về tin mới nhất: bỏ đoạn đang xem, tải lại từ đầu như lúc mới mở hội thoại.
+        view.current += 1; detached.current = false; first.current = true;
+        setMsgs(null); setOlder(null); setNewer(null);
+      }
+      atBottom.current = true; tick();
+    };
     tick();
     return () => { alive = false; clearTimeout(timer); };
   }, [base]);
@@ -147,15 +242,28 @@ function Thread({ conv, onBack }) {
   useLayoutEffect(() => {
     const el = box.current;
     if (!el) return;
-    if (anchor.current != null) { el.scrollTop = el.scrollHeight - anchor.current; anchor.current = null; }
+    if (scrollTo.current != null) {
+      const target = el.querySelector(`#msg-${scrollTo.current}`);
+      // Đưa tin vào giữa khung; tin cao hơn khung thì canh đầu tin.
+      if (target) el.scrollTop = target.offsetTop - Math.max(8, (el.clientHeight - target.offsetHeight) / 2);
+      scrollTo.current = null;
+    } else if (anchor.current != null) { el.scrollTop = el.scrollHeight - anchor.current; anchor.current = null; }
     else if (atBottom.current) el.scrollTop = el.scrollHeight;
   }, [msgs]);
+
+  useEffect(() => {
+    if (flash == null) return undefined;
+    const t = setTimeout(() => setFlash(null), FLASH_MS);
+    return () => clearTimeout(t);
+  }, [flash]);
 
   async function loadOlder() {
     if (!older || olderBusy.current) return;
     olderBusy.current = true; setLoadingOlder(true);
+    const v = view.current;
     try {
       const r = await api(`${base}&before=${encodeURIComponent(older)}`);
+      if (v !== view.current) return;
       const el = box.current;
       anchor.current = el ? el.scrollHeight - el.scrollTop : null;
       setMsgs((cur) => mergeMessages(r.messages, cur || []));
@@ -163,20 +271,72 @@ function Thread({ conv, onBack }) {
     } catch (err) { setError(err.message); } finally { olderBusy.current = false; setLoadingOlder(false); }
   }
 
-  function onScroll(e) {
-    const el = e.currentTarget;
-    atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-    if (el.scrollTop < 40) loadOlder();
+  async function loadNewer() {
+    if (!newer || newerBusy.current) return;
+    newerBusy.current = true; setLoadingNewer(true);
+    const v = view.current;
+    try {
+      const r = await api(`${base}&after=${encodeURIComponent(newer)}`);
+      if (v !== view.current) return;
+      setMsgs((cur) => mergeMessages(cur || [], r.messages));
+      setNewer(r.nextAfter);
+      if (!r.nextAfter) detached.current = false; // đã nối tới tin mới nhất — poll gộp tiếp như thường
+    } catch (err) { setError(err.message); } finally { newerBusy.current = false; setLoadingNewer(false); }
   }
 
+  async function jumpTo(hit) {
+    const v = ++view.current;
+    const was = detached.current;
+    detached.current = true;
+    try {
+      const r = await api(`${base}&around=${encodeURIComponent(`${hit.ts}:${hit.id}`)}`);
+      if (v !== view.current) return;
+      atBottom.current = false; anchor.current = null; scrollTo.current = hit.id; first.current = false;
+      setMsgs(r.messages); setOlder(r.nextBefore); setNewer(r.nextAfter);
+      if (!r.nextAfter) detached.current = false;
+      setFlash(hit.id); setError('');
+      // Điện thoại: bảng tìm phủ cả màn hình — đóng để thấy tin, tiêu điểm về khung tin.
+      if (narrow()) { setSide(null); setTimeout(() => box.current?.focus({ preventScroll: true }), 0); }
+    } catch (err) {
+      if (v === view.current) { detached.current = was; setError(err.message); }
+    }
+  }
+
+  function onScroll(e) {
+    const el = e.currentTarget;
+    const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    atBottom.current = !newer && fromBottom < 40;
+    if (el.scrollTop < 40) loadOlder();
+    if (newer && fromBottom < 80) loadNewer();
+  }
+
+  function openPhoto(id) {
+    const items = (msgs || []).flatMap((m) => {
+      const md = m.id && classifyMedia(m.msgType, m.text);
+      return md?.kind === 'photo' ? [{ id: m.id, url: md.url, caption: md.caption, senderName: m.isSelf ? 'Bot' : m.senderName, ts: m.ts }] : [];
+    });
+    const index = items.findIndex((x) => x.id === id);
+    if (index >= 0) setLightbox({ items, index });
+  }
+
+  const toggle = (name) => setSide((cur) => (cur === name ? null : name));
+  const toggles = { search: useRef(null), media: useRef(null) };
+  // Đóng bảng thì trả tiêu điểm về đúng nút đã mở nó trên đầu khung tin.
+  const closeSide = (name) => { setSide(null); setTimeout(() => toggles[name].current?.focus(), 0); };
   const group = conv.threadType === 1;
   return html`
     <header class="thread-head">
       <button type="button" class="btn btn-ghost btn-sm only-mobile" onClick=${onBack}>← Danh sách</button>
       <h2>${conv.name}</h2>
       ${group ? html`<span class="tag">Nhóm</span>` : null}
+      <button type="button" ref=${toggles.search} class=${`btn btn-ghost btn-sm head-tool${side === 'search' ? ' active' : ''}`} aria-pressed=${side === 'search' ? 'true' : 'false'}
+        onClick=${() => toggle('search')} aria-label="Tìm trong hội thoại" title="Tìm trong hội thoại"><${Icon} name="search" /></button>
+      <button type="button" ref=${toggles.media} class=${`btn btn-ghost btn-sm head-tool${side === 'media' ? ' active' : ''}`} aria-pressed=${side === 'media' ? 'true' : 'false'}
+        onClick=${() => toggle('media')} aria-label="Ảnh/Video · Tệp · Link" title="Ảnh/Video · Tệp · Link"><${Icon} name="image" /><span class="head-tool-label">Ảnh/Video · Tệp · Link</span></button>
     </header>
     <${Live} error=${error} />
+    ${newer ? html`<div class="jump-bar"><span class="muted small">Đang xem tin cũ.</span>
+      <button type="button" class="btn btn-secondary btn-sm" onClick=${() => kick.current()}>Về tin mới nhất ↓</button></div>` : null}
     ${msgs === null ? (error ? null : html`<${Spinner} />`) : html`
       <ol class="msgs" ref=${box} tabindex="0" onScroll=${onScroll} aria-label=${`Tin nhắn với ${conv.name}`}>
         <li class="msgs-top">
@@ -184,9 +344,14 @@ function Thread({ conv, onBack }) {
             ? html`<button type="button" class="btn btn-ghost btn-sm" disabled=${loadingOlder} onClick=${loadOlder}>${loadingOlder ? 'Đang tải…' : 'Tải tin cũ hơn'}</button>`
             : html`<span class="muted small">${msgs.length ? 'Đầu cuộc trò chuyện' : 'Chưa có tin nhắn nào.'}</span>`}
         </li>
-        ${msgs.map((m) => html`<${Bubble} key=${m.id} m=${m} group=${group} />`)}
+        ${msgs.map((m) => html`<${Bubble} key=${m.id} m=${m} group=${group} focus=${flash === m.id} onOpenPhoto=${openPhoto} />`)}
+        ${newer ? html`<li class="msgs-top"><button type="button" class="btn btn-ghost btn-sm" disabled=${loadingNewer} onClick=${loadNewer}>${loadingNewer ? 'Đang tải…' : 'Tải tin mới hơn'}</button></li>` : null}
       </ol>`}
-    <${Compose} conv=${conv} onSent=${() => kick.current()} />`;
+    <${Compose} conv=${conv} onSent=${() => kick.current()} />
+    ${side === 'search' ? html`<${ThreadSearch} conv=${conv} onJump=${jumpTo} onClose=${() => closeSide('search')} />` : null}
+    ${side === 'media' ? html`<${MediaPanel} conv=${conv} onClose=${() => closeSide('media')} onOpenPhoto=${(items, index) => setLightbox({ items, index })} />` : null}
+    ${lightbox ? html`<${Lightbox} items=${lightbox.items} index=${lightbox.index}
+      onIndex=${(index) => setLightbox((cur) => ({ ...cur, index }))} onClose=${() => setLightbox(null)} />` : null}`;
 }
 
 export function Chats() {

@@ -5,6 +5,7 @@ import { authRoutes } from './routes/auth.js';
 import { statusRoutes } from './routes/status.js';
 import { zaloRoutes } from './routes/zalo.js';
 import { chatRoutes } from './routes/chats.js';
+import { mediaRoutes } from './routes/media.js';
 import { auditRoutes } from './routes/audit.js';
 import { telegramRoutes } from './routes/telegram.js';
 import { adminRoutes } from './routes/admin.js';
@@ -25,6 +26,7 @@ export function createDashboardApp(deps) {
   app.use('/api', statusRoutes(deps));
   app.use('/api', zaloRoutes(deps));
   app.use('/api', chatRoutes(deps));
+  app.use('/api', mediaRoutes(deps));
   app.use('/api', auditRoutes(deps));
   app.use('/api', permissionRoutes(deps));
   if (deps.linker) app.use('/api', telegramRoutes(deps));

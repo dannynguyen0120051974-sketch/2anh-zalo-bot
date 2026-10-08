@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { openZaloStore } from '../../zalo-store.js';
 import { fold as clientFold } from '../public/fold.js';
-import { createStoreReader, parseCursor, SEARCH_MATCH, SQL, startOfDayVN, StoreUnavailable } from './store-reader.js';
+import { createStoreReader, parseCursor, SEARCH_MATCH, SQL, startOfDayVN, StoreUnavailable, THREAD_SQL } from './store-reader.js';
 
 const m = (n, over = {}) => ({
   threadId: '100', threadType: 0, msgId: `m${n}`, senderUid: '100', senderName: 'Lan',
@@ -382,4 +382,175 @@ test('listAudit: chỉ dòng kết quả, bỏ "đang gõ"/"đã xem", lọc l�
   assert.deepEqual(r.listAudit({ failedOnly: true }).map((x) => [x.action, x.error]), [['dashboard_send', 'operation_failed']]);
   assert.deepEqual(r.listAudit({ beforeMs: 1300 }).map((x) => x.action), ['send']);
   assert.equal(r.listAudit()[0].threadType, 1);
+});
+
+// Dạng chữ thật trong zalo.sqlite của bot (xem dashboard/public/media.js).
+const PHOTO = 'https://photo-stal-27.zdn.vn/gr/jpg/4465fc927e4faf11f65e/2aOboR44d1PKLnuojjTWw89o8pKvNcouPXM6dnTE.jpg';
+const PHOTO2 = 'https://b-f64-zpg-r.zdn.vn/8039979692659304205/7c3683f8fdfc7da224ed.jpg';
+const FILE = 'https://file-stal-18.dlfl.vn/gr/4e7412403493e5cdbc82/2aOboR448crP59vGXdg7cy4myByEAcqBLYc8diiW';
+const VIDEO = 'https://video-stal-46.dlmd.me/gr/1f78a5bfe81c36426f0d/2aOboR3605P4uCnJwRiSwTYeOw2uLdFtv234Ay24';
+const g = (n, over = {}) => m(n, { threadId: '200', threadType: 1, senderUid: '300', senderName: 'Minh', ts: 10_000 + n, ...over });
+function seedMedia(s) {
+  s.write([
+    g(1, { text: PHOTO, msgType: 'chat.photo' }),
+    g(2, { text: `Cô ơi file gộp thế nào ạ\n${PHOTO2}`, msgType: 'chat.photo', senderName: 'Lan' }),
+    g(3, { text: `30.TrT HS tham gia Chung khao STEPUP Mua 5.pdf\n${FILE}`, msgType: 'share.file' }),
+    g(4, { text: VIDEO, msgType: 'chat.video.msg' }),
+    g(5, { text: 'https://fg41.dlfl.vn/180887a4645fc4019d4e/1013647230895172190.m4a', msgType: 'chat.voice' }),
+    g(6, { text: 'https://docs.google.com/document/d/1CWh/edit?usp=sharing\n- ĐOÀN TRƯỜNG BÁO CÁO THÀNH TÍCH', msgType: 'chat.recommended' }),
+    g(7, { text: 'Nộp ở https://forms.gle/abc nhé, trùng https://forms.gle/abc và https://drive.google.com/file/d/1/view.', msgType: 'webchat' }),
+    g(8, { text: `ảnh cũ\n${PHOTO}`, msgType: 'legacy-hermes' }),
+    g(9, { text: 'Mã đăng nhập dashboard: 123456 https://evil.vn', msgType: 'webchat', isSelf: true }),
+    g(10, { text: '[Nhãn dán]', msgType: 'chat.sticker' }),
+    g(11, { text: 'Họp tổ chiều nay', msgType: 'webchat' }),
+    m(12, { threadId: '201', threadType: 1, text: `nhóm khác ${PHOTO}`, msgType: 'chat.photo', ts: 20_000 }),
+    m(13, { threadId: '201', threadType: 1, text: 'Họp tổ nhóm khác', ts: 20_001 }),
+  ]);
+}
+
+test('bảng Ảnh/Video: ảnh (kể cả có chú thích) và video, mới nhất trước, không senderUid', (t) => {
+  const s = setup(t);
+  seedMedia(s);
+  const { items, nextBefore } = s.reader().listMedia('200', 1, 'photo');
+  assert.equal(nextBefore, null);
+  assert.deepEqual(items.map((x) => [x.url, x.video, x.caption, x.senderName]), [
+    [VIDEO, true, '', 'Minh'], [PHOTO2, false, 'Cô ơi file gộp thế nào ạ', 'Lan'], [PHOTO, false, '', 'Minh'],
+  ]);
+  assert.deepEqual(Object.keys(items[0]).sort(), ['caption', 'id', 'isSelf', 'msgId', 'senderName', 'ts', 'url', 'video']);
+});
+
+test('bảng Tệp: tên, link, đuôi; bảng Link: thẻ link có tiêu đề, link trong chữ không trùng, bỏ link ảnh/tệp Zalo và tin mã đăng nhập', (t) => {
+  const s = setup(t);
+  seedMedia(s);
+  const r = s.reader();
+  assert.deepEqual(r.listMedia('200', 1, 'file').items.map((x) => [x.name, x.url, x.ext]), [['30.TrT HS tham gia Chung khao STEPUP Mua 5.pdf', FILE, 'pdf']]);
+  const links = r.listMedia('200', 1, 'link').items;
+  assert.deepEqual(links.map((x) => [x.url, x.host, x.title ?? null]), [
+    ['https://forms.gle/abc', 'forms.gle', null],
+    ['https://drive.google.com/file/d/1/view', 'drive.google.com', null],
+    ['https://docs.google.com/document/d/1CWh/edit?usp=sharing', 'docs.google.com', '- ĐOÀN TRƯỜNG BÁO CÁO THÀNH TÍCH'],
+  ]);
+  assert.equal(new Set(links.map((x) => x.id)).size, links.length);
+  for (const x of links) assert.equal('senderUid' in x, false);
+});
+
+test('bảng media phân trang theo con trỏ, không mất không lặp; link đọc nhiều lô khi nhiều tin không có link', (t) => {
+  const s = setup(t);
+  const msgs = [];
+  for (let i = 0; i < 70; i += 1) msgs.push(g(100 + i, { text: PHOTO.replace('.jpg', `${i}.jpg`), msgType: 'chat.photo' }));
+  for (let i = 0; i < 70; i += 1) msgs.push(g(300 + i, { text: `chỉ có ảnh https://photo-stal-1.zdn.vn/${i}.jpg`, msgType: 'webchat' }));
+  msgs.push(g(50, { text: 'link rất cũ https://forms.gle/old', msgType: 'webchat' }));
+  s.write(msgs);
+  const r = s.reader();
+  const seen = []; let before = null; let pages = 0;
+  do {
+    const p = r.listMedia('200', 1, 'photo', { before, limit: 30 });
+    seen.push(...p.items.map((x) => x.url));
+    before = p.nextBefore; pages += 1;
+  } while (before && pages < 10);
+  assert.equal(seen.length, 70);
+  assert.equal(new Set(seen).size, 70);
+  assert.equal(pages, 3);
+  // 70 tin chỉ có link ảnh Zalo đứng trước một link thật: vẫn tìm thấy trong một lần gọi.
+  assert.deepEqual(r.listMedia('200', 1, 'link').items.map((x) => x.url), ['https://forms.gle/old']);
+});
+
+test('tìm trong một hội thoại: không dấu, chỉ hội thoại đó, có con trỏ, bỏ tin mã đăng nhập', (t) => {
+  const s = setup(t);
+  seedMedia(s);
+  s.write([g(20, { text: 'họp TỔ lần 2' }), g(21, { text: 'hop to lan 3' })]);
+  const r = s.reader();
+  assert.deepEqual(r.searchThread('200', 1, 'Họp tổ').results.map((x) => x.text), ['hop to lan 3', 'họp TỔ lần 2', 'Họp tổ chiều nay']);
+  const p1 = r.searchThread('200', 1, 'hop to', { limit: 2 });
+  assert.equal(p1.results.length, 2);
+  const p2 = r.searchThread('200', 1, 'hop to', { limit: 2, before: p1.nextBefore });
+  assert.deepEqual(p2.results.map((x) => x.text), ['Họp tổ chiều nay']);
+  assert.equal(p2.nextBefore, null);
+  assert.equal(r.searchThread('200', 1, '123456').results.length, 0);
+  assert.equal(r.searchThread('200', 0, 'hop to').results.length, 0);
+  assert.equal('senderUid' in r.searchThread('200', 1, 'hop').results[0], false);
+  for (const caseFold of [true, false]) assert.equal(s.reader({ caseFold }).searchThread('200', 1, '50%').results.length, 0);
+});
+
+test('tìm trong hội thoại: tin dài mà chỗ trùng nằm sâu thì trả đoạn quanh chỗ trùng', (t) => {
+  const s = setup(t);
+  s.write([g(1, { text: `${'Kính gửi các thầy cô. '.repeat(30)}Lịch họp tổ chiều thứ Sáu.` })]);
+  for (const caseFold of [true, false]) {
+    const text = s.reader({ caseFold }).searchThread('200', 1, caseFold ? 'hop to' : 'họp tổ').results[0].text;
+    assert.ok(text.startsWith('…'), text);
+    assert.ok(text.length <= 301);
+    assert.match(text, /Lịch họp tổ chiều thứ Sáu\.$/);
+  }
+  assert.equal(s.reader().searchThread('200', 1, 'kinh gui').results[0].text.startsWith('Kính gửi'), true);
+});
+
+test('trang quanh một tin: chừng 25 tin mỗi phía, con trỏ hai chiều nối đúng với trang cũ hơn/mới hơn', (t) => {
+  const s = setup(t);
+  // 100 tin, có cặp trùng mili-giây để kiểm điểm cắt.
+  s.write(Array.from({ length: 100 }, (_, i) => m(i + 1, { ts: 1000 + Math.floor(i / 2) })));
+  const r = s.reader();
+  const all = r.getMessages('100', 0, { limit: 100 }).messages;
+  const target = all[50];
+  const page = r.getMessagesAround('100', 0, `${target.ts}:${target.id}`);
+  const ids = page.messages.map((x) => x.id);
+  assert.equal(ids.length, 51);
+  assert.deepEqual(ids, all.slice(25, 76).map((x) => x.id));
+  const older = r.getMessages('100', 0, { before: page.nextBefore, limit: 100 }).messages;
+  assert.deepEqual(older.map((x) => x.id), all.slice(0, 25).map((x) => x.id));
+  const newer = r.getMessagesAfter('100', 0, page.nextAfter, { limit: 10 });
+  assert.deepEqual(newer.messages.map((x) => x.id), all.slice(76, 86).map((x) => x.id));
+  let after = newer.nextAfter; const rest = [];
+  while (after) { const p = r.getMessagesAfter('100', 0, after, { limit: 10 }); rest.push(...p.messages); after = p.nextAfter; }
+  assert.deepEqual(rest.map((x) => x.id), all.slice(86).map((x) => x.id));
+  // Tin mới nhất: không còn gì phía sau.
+  const last = all[99];
+  assert.equal(r.getMessagesAround('100', 0, `${last.ts}:${last.id}`).nextAfter, null);
+  const firstMsg = all[0];
+  assert.equal(r.getMessagesAround('100', 0, `${firstMsg.ts}:${firstMsg.id}`).nextBefore, null);
+});
+
+test('trang quanh tin và tải tin mới hơn không bao giờ trả tin mã đăng nhập dashboard', (t) => {
+  const s = setup(t);
+  const code = 'Mã đăng nhập dashboard: 123456\nMã có hiệu lực 5 phút. Đừng đưa mã này cho ai.';
+  s.write(Array.from({ length: 20 }, (_, i) => m(i + 1, { ts: 1000 + i, ...(i % 3 === 0 ? { text: code, isSelf: true } : {}) })));
+  const r = s.reader();
+  const all = r.getMessages('100', 0, { limit: 100 }).messages;
+  assert.equal(all.some((x) => x.text.includes('123456')), false);
+  const mid = all[5];
+  const around = r.getMessagesAround('100', 0, `${mid.ts}:${mid.id}`, { limit: 3 });
+  assert.equal(around.messages.some((x) => x.text.includes('123456')), false);
+  assert.equal(around.messages.length, 7);
+  let after = around.nextAfter; const rest = [];
+  while (after) { const p = r.getMessagesAfter('100', 0, after, { limit: 2 }); rest.push(...p.messages); after = p.nextAfter; }
+  assert.equal(rest.some((x) => x.text.includes('123456')), false);
+  assert.deepEqual([...around.messages, ...rest].map((x) => x.id).slice(3), all.slice(5).map((x) => x.id));
+  // Con trỏ trỏ đúng vào tin mã (đoán mò từ ts:rowid): vẫn không lộ.
+  const raw = new DatabaseSync(s.path, { readOnly: true });
+  const secret = raw.prepare("SELECT rowid AS id, timestamp_ms AS ts FROM messages WHERE text LIKE 'Mã đăng nhập%' LIMIT 1").get();
+  raw.close();
+  const guess = r.getMessagesAround('100', 0, `${secret.ts}:${secret.id}`);
+  assert.equal(guess.messages.some((x) => x.text.includes('123456')), false);
+  assert.equal(r.getMessagesAfter('100', 0, `${secret.ts - 1}:0`).messages.some((x) => x.text.includes('123456')), false);
+});
+
+test('kế hoạch truy vấn: tìm trong hội thoại, bảng media và trang quanh tin đi theo idx_messages_thread_time, không quét cả bảng', (t) => {
+  const s = setup(t);
+  seedBig(s.path, { rows: 2000, today: 10_000_000 });
+  const d = new DatabaseSync(s.path, { readOnly: true });
+  try {
+    d.function('zd_fold', (x) => x);
+    const plan = (sql) => d.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...Array(sql.split('?').length - 1).fill(1)).map((r) => r.detail);
+    const cases = [
+      ['thread search', THREAD_SQL.search(SEARCH_MATCH.fold)], ['thread search LIKE', THREAD_SQL.search(SEARCH_MATCH.like)],
+      ['media photo', THREAD_SQL.media('photo')], ['media file', THREAD_SQL.media('file')], ['media link', THREAD_SQL.media('link')],
+      ['around older', THREAD_SQL.upTo], ['after', THREAD_SQL.after],
+    ];
+    for (const [name, sql] of cases) {
+      const p = plan(sql);
+      assert.ok(p.some((x) => /USING INDEX idx_messages_thread_time \(account_id=\? AND thread_type=\? AND thread_id=\?/.test(x)), `${name}: ${p.join(' | ')}`);
+      assert.ok(!p.some((x) => /^SCAN messages/.test(x)), `${name} quét cả bảng: ${p.join(' | ')}`);
+      // Chỉ được sắp phần đuôi (rowid trong cùng mili-giây) như getMessages — không sắp lại cả hội thoại.
+      assert.ok(!p.some((x) => /TEMP B-TREE FOR ORDER BY/.test(x)), `${name} sắp xếp tạm: ${p.join(' | ')}`);
+    }
+  } finally { d.close(); }
 });
