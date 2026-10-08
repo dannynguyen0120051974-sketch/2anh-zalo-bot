@@ -45,11 +45,15 @@ export function secondBrainStatus({ url, platform = process.platform }) {
   return { enabled: true, reason: 'ok', note: '', base };
 }
 
-/** URI được phép đọc: đúng gốc cho phép, không "..", không ký tự điều khiển. */
+const FORBIDDEN_SEGMENTS = new Set(['privacy', 'sessions']);
+
+/** URI được phép đọc: đúng gốc cho phép, không "..", không "%" hay "\", không ký tự điều khiển, không thư mục privacy/sessions. */
 export function allowedUri(uri, user) {
   const s = String(uri ?? '');
   // eslint-disable-next-line no-control-regex
-  if (!s.startsWith('viking://') || s.includes('..') || /[\u0000-\u001f]/.test(s) || s.length > 500) return false;
+  if (!s.startsWith('viking://') || s.includes('..') || /[\u0000-\u001f%\\]/.test(s) || s.length > 500) return false;
+  // Phần riêng tư của OpenViking: cấm ở mọi độ sâu, kể cả bên trong thư mục được phép.
+  if (s.slice('viking://'.length).split('/').some((seg) => FORBIDDEN_SEGMENTS.has(seg.toLowerCase()))) return false;
   const roots = ['viking://resources', `viking://user/${user}/memories`, `viking://user/${user}/peers`];
   return roots.some((r) => s === r || s.startsWith(`${r}/`));
 }

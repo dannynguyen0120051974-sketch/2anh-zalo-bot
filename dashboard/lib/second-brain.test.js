@@ -21,7 +21,10 @@ test('chỉ địa chỉ loopback; gốc đọc được giới hạn; tên ghi 
   for (const bad of ['http://10.0.0.5:1933', 'https://api.vikingdb.com', 'file:///etc/passwd', 'http://u:p@127.0.0.1:1933', 'không phải url']) assert.equal(loopbackEndpoint(bad), null, bad);
   assert.equal(allowedUri('viking://user/default/memories/a.md', 'default'), true);
   assert.equal(allowedUri('viking://resources', 'default'), true);
-  for (const bad of ['viking://user/default/privacy/x', 'viking://user/khac/memories', 'viking://resources/../user/default/privacy', 'http://x', 'viking://resourcesX']) {
+  assert.equal(allowedUri('viking://resources/privacy-policy.md', 'default'), true, 'chỉ cấm đúng tên thư mục, không cấm tiền tố');
+  for (const bad of ['viking://user/default/privacy/x', 'viking://user/khac/memories', 'viking://resources/../user/default/privacy', 'http://x', 'viking://resourcesX',
+    'viking://user/default/memories/%2e%2e/privacy', 'viking://resources/a%2fb', 'viking://resources\\x', 'viking://user/default/memories/sessions/x',
+    'viking://resources/a/privacy/b.md', 'viking://user/default/peers/zalo/Sessions', 'viking://resources/privacy']) {
     assert.equal(allowedUri(bad, 'default'), false, bad);
   }
   assert.equal(noteUri('Họp Đoàn trường tháng 10!', Date.UTC(2026, 9, 7, 18, 0), 'abc123'), 'viking://resources/so-tay-dashboard/2026-10-08-hop-doan-truong-thang-10-abc123.md');
