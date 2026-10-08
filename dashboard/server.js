@@ -29,6 +29,7 @@ import { createPeopleStore } from './lib/people-store.js';
 import { createHermesMemory } from './lib/hermes-memory.js';
 import { createSchedules, hermesBin } from './lib/schedules.js';
 import { createKbStore } from './lib/kb-store.js';
+import { createInsightAi } from './lib/insight-ai.js';
 import { createOwnersStore } from './lib/owners.js';
 import { createServiceChecker } from './lib/services.js';
 import { createHealthMonitor } from './lib/health-monitor.js';
@@ -94,6 +95,7 @@ export function buildDeps({ env = process.env, sidecarRoot = join(here, '..'), i
     schedules: createSchedules({ hermesHome: paths.hermesHome, bin: hermesBin({ hermesHome: paths.hermesHome, env }) }),
     // Đọc lại .env mỗi lần: người cài đặt đổi ZALO_KB_DIR thì không cần khởi động lại dashboard.
     kb: createKbStore({ kbDir: () => readEnvKey(paths.hermesEnvFile, 'ZALO_KB_DIR'), publicDirs: () => readEnvKey(paths.hermesEnvFile, 'ZALO_KB_PUBLIC_DIRS') }),
+    insightAi: createInsightAi({ dir: paths.insightDir }),
     studioUsageFile: paths.studioUsageFile,
     studioPolicyFile: paths.studioPolicyFile,
     publicDir: join(here, 'public'),

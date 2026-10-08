@@ -26,6 +26,8 @@ export function resolveDashboardPaths({ env = process.env, sidecarRoot }) {
     hermesStateDb: join(hermesHome, 'state.db'),
     // Giai đoạn 7 (spec §18): sổ người quen của plugin (ZALO_PEOPLE_FILE trong .env Hermes thắng, xem server.js).
     peopleFile: join(hermesHome, 'zalo', 'people.json'),
+    // Hàng đợi tóm tắt nhóm bằng AI giữa dashboard và plugin (zalo_tools/insight_ai.py).
+    insightDir: join(hermesHome, 'zalo', 'insight'),
     sidecarEnvFile: join(resolve(sidecarRoot), '.env'),
     permissionsFile: join(hermesHome, 'zalo', 'permissions.json'),
     hermesEnvFile: join(hermesHome, '.env'),

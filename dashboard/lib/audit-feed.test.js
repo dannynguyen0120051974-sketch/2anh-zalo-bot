@@ -94,6 +94,6 @@ test('đọc lịch sử bot lỗi vẫn còn hoạt động dashboard', async (
 
 test('giai đoạn 7A: mọi thao tác mới đều có nhãn tiếng Việt', () => {
   const actions = ['people_update', 'people_delete', 'agent_memory_edit', 'agent_memory_delete', 'dashboard_friend_accept', 'dashboard_friend_reject',
-    'dashboard_reminder_remove', 'cron_pause', 'cron_resume', 'cron_remove', 'kb_upload', 'kb_delete'];
+    'dashboard_reminder_remove', 'cron_pause', 'cron_resume', 'cron_remove', 'kb_upload', 'kb_delete', 'insight_summary'];
   for (const a of actions) assert.match(ACTION_LABELS[a] || '', /[À-ỹ]/, a);
 });

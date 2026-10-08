@@ -2,6 +2,7 @@
 import { useEffect, useState } from '../vendor/hooks.mjs';
 import { api } from '../api.js';
 import { html, Live, Notice, PageHead, Spinner } from '../ui.js';
+import { InsightAi } from './insight-ai.js';
 
 export const WEEKDAYS = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
 export const KIND_LABELS = { text: 'Chữ', photo: 'Ảnh/Video', file: 'Tệp', link: 'Có link', sticker: 'Nhãn dán', voice: 'Thoại', other: 'Khác' };
@@ -93,6 +94,7 @@ export function Insight() {
             ${data.top.length ? html`<ol class="top-list">${data.top.map((p) => html`<li key=${p.name}><span>${p.name}</span><strong>${fmtNum(p.count)}</strong></li>`)}</ol>` : html`<p class="muted">Chưa có ai nhắn.</p>`}</div>
           <div><h3>Loại tin</h3>
             <ul class="top-list">${Object.entries(KIND_LABELS).map(([k, label]) => html`<li key=${k}><span>${label}</span><strong>${fmtNum(data.kinds[k])}</strong></li>`)}</ul></div>
-        </div>` : null}
+        </div>
+        <${InsightAi} groupId=${sel} days=${Math.min(days, 30)} />` : null}
     </section>`;
 }

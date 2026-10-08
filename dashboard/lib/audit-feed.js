@@ -55,6 +55,7 @@ export const ACTION_LABELS = {
   cron_remove: 'Xoá việc hẹn giờ của trợ lý',
   kb_upload: 'Tải tài liệu lên kho tri thức',
   kb_delete: 'Xoá tài liệu khỏi kho tri thức',
+  insight_summary: 'Nhờ AI tóm tắt chủ đề nhóm',
 };
 
 const REASONS = {

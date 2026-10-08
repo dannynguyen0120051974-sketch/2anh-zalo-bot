@@ -17,6 +17,7 @@ import { createBrandStore } from './lib/brand.js';
 import { createPeopleStore } from './lib/people-store.js';
 import { createHermesMemory } from './lib/hermes-memory.js';
 import { createOwnersStore } from './lib/owners.js';
+import { createInsightAi } from './lib/insight-ai.js';
 
 const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
   let c = n;
@@ -125,6 +126,7 @@ export function makeDeps(t, overrides = {}) {
     studioUsageFile: join(dir, 'zalo', 'studio-usage.json'),
     people: createPeopleStore({ file: join(dir, 'zalo', 'people.json') }),
     agentMemory: createHermesMemory({ hermesHome: dir, configFile: join(dir, 'config.yaml') }),
+    insightAi: createInsightAi({ dir: join(dir, 'zalo', 'insight') }),
     publicDir: join(dir, 'public'),
     dir,
     ...overrides,

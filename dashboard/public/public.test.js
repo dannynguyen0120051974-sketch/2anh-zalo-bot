@@ -833,3 +833,12 @@ test('Insight nhóm: mức màu bản đồ giờ 0–4, nhãn ngày, thứ bắ
   assert.equal(WEEKDAYS[6], 'CN');
   assert.deepEqual(Object.keys(KIND_LABELS), ['text', 'photo', 'file', 'link', 'sticker', 'voice', 'other']);
 });
+
+test('Insight: câu trạng thái tóm tắt AI — đang chờ, quá hạn, lỗi của plugin, thành công thì không có câu', async () => {
+  const { summaryStatusText, POLL_MS } = await import('./views/insight-ai.js');
+  assert.match(summaryStatusText({ status: 'pending' }), /Đang nhờ trợ lý/);
+  assert.match(summaryStatusText({ status: 'timeout' }), /3 phút/);
+  assert.equal(summaryStatusText({ status: 'done', result: { ok: false, error: 'Đã hết lượt tóm tắt hôm nay' } }), 'Đã hết lượt tóm tắt hôm nay');
+  assert.equal(summaryStatusText({ status: 'done', result: { ok: true, summary: {} } }), '');
+  assert.equal(POLL_MS, 3000);
+});

@@ -56,3 +56,26 @@ export function groupInsightQuery(db, account, threadId, { days = 30, nowMs = Da
     perDay, top, heat, kinds,
   };
 }
+
+const MSG_LABELS = { 'chat.photo': '[Ảnh]', 'chat.video.msg': '[Video]', 'share.file': '[Tệp]', 'chat.sticker': '[Nhãn dán]', 'chat.voice': '[Tin thoại]' };
+
+/**
+ * Đoạn hội thoại gửi AI tóm tắt: tin mới nhất trước cho tới khi đủ `maxChars`, rồi đảo lại theo thời gian.
+ * Mỗi dòng "dd/mm HH:MM Tên: chữ" (≤ 300 ký tự); ảnh/tệp chỉ ghi nhãn, không gửi đường dẫn; tin của bot ghi "Bot".
+ */
+export function groupTranscriptQuery(db, account, threadId, { days = 7, nowMs = Date.now(), maxChars = 30_000, secretLike }) {
+  const rows = db.prepare(`SELECT sender_name, text, msg_type, timestamp_ms, is_self FROM messages
+    WHERE account_id = ? AND thread_type = 1 AND thread_id = ? AND timestamp_ms >= ? AND text NOT LIKE ?
+    ORDER BY timestamp_ms DESC LIMIT 5000`).all(account, String(threadId), nowMs - days * DAY_MS, secretLike);
+  const lines = [];
+  let used = 0;
+  for (const r of rows) {
+    const t = new Date(Number(r.timestamp_ms) + VN_S * 1000).toISOString();
+    const body = MSG_LABELS[r.msg_type] || String(r.text || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+    if (!body) continue;
+    const line = `${t.slice(8, 10)}/${t.slice(5, 7)} ${t.slice(11, 16)} ${r.is_self ? 'Bot' : (r.sender_name || 'Thành viên')}: ${body}`;
+    if (used + line.length + 1 > maxChars) break;
+    lines.push(line); used += line.length + 1;
+  }
+  return lines.reverse().join('\n');
+}
