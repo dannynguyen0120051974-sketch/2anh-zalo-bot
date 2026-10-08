@@ -170,6 +170,11 @@ input:focus-visible, select:focus-visible { outline: none; border-color: var(--b
 .row-main { display: flex; flex-direction: column; flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
 .row-tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .row-tags .badge { padding: 2px 8px; font-size: 12.5px; }
+/* Trí nhớ */
+.mem-editor { flex: 1 1 100%; margin-top: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
+.mem-field { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 8px; margin-bottom: 6px; }
+.mem-text { white-space: pre-wrap; }
+.mem-block + .mem-block { margin-top: 16px; }
 .nav { display: flex; flex-direction: column; flex: 1; gap: 14px; }
 .nav-group { display: flex; flex-direction: column; gap: 2px; }
 .nav-label { padding: 0 10px 4px; font-size: 12.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #667080; }

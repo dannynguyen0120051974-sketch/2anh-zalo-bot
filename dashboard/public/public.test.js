@@ -785,3 +785,14 @@ test('Liên hệ: nhãn nguồn theo thứ tự chủ nhân → bạn bè → nh
   assert.deepEqual(KINDS.map((k) => k.value), ['all', 'friend', 'dm', 'profile']);
   assert.match(readFileSync(join(root, 'views', 'contacts.js'), 'utf8'), /class="btn btn-secondary btn-sm chip"/);
 });
+
+test('Trí nhớ: bản nháp hồ sơ luôn có dòng trống, thân gửi bỏ dòng trống; chữ dung lượng bộ nhớ', async () => {
+  const { personDraft, personPayload, usageText } = await import('./views/memory.js');
+  const d = personDraft({ name: 'Lan', note: '', fields: [{ key: 'môn', value: 'Hoá' }] });
+  assert.deepEqual(d.fields, [{ key: 'môn', value: 'Hoá' }, { key: '', value: '' }]);
+  assert.deepEqual(personPayload(d), { name: 'Lan', note: '', fields: [{ key: 'môn', value: 'Hoá' }] });
+  assert.equal(usageText(1100, 2200), '1.100/2.200 ký tự (50 %)');
+  assert.equal(usageText(3000, 2200), '3.000/2.200 ký tự (100 %)');
+  const src = readFileSync(join(root, 'views', 'memory.js'), 'utf8');
+  assert.match(src, /me\?\.role === 'admin' \? html`<\$\{AgentMemory\}/, 'bộ nhớ trợ lý chỉ hiện cho Quản trị');
+});
