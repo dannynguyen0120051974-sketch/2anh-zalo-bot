@@ -47,6 +47,8 @@ DEFAULT_EXTRACT_MINUTES = 120
 MIN_EXTRACT_MINUTES = 30
 MAX_EXTRACT_MINUTES = 1440
 TICK_SECONDS = 60
+# Rút hỏng thì lùi dần (phút), không quá chu kỳ rút; mỗi bậc chỉ ghi log một lần.
+EXTRACT_BACKOFF_MINUTES = (5, 15, 60)
 
 # Đọc (spec §19.7): trần cho recall mỗi lượt và khối hồ sơ đầu phiên — chặn trên giá trị trong config.yaml.
 RECALL_CAPS = {"limit": 4, "max_injected_chars": 1500, "timeout_seconds": 2.0, "request_timeout_seconds": 1.5,
@@ -173,6 +175,15 @@ def scope_root(user: str) -> str:
     return f"viking://user/{user}/memories"
 
 
+_UNSAFE_URI = re.compile(r"[%\\?#\s]")
+
+
+def in_scope_uri(uri: Any, root: str) -> bool:
+    """URI nằm hẳn dưới ``root`` — cùng luật với ``memory_store._deletable``: không "..", "%", "\\", "?", "#", khoảng trắng."""
+    s = str(uri or "")
+    return s.startswith(root + "/") and ".." not in s and not _UNSAFE_URI.search(s)
+
+
 def clip_capture(text: Any) -> str:
     value = str(text or "").strip()
     return value if len(value) <= MAX_CAPTURE_CHARS else value[:MAX_CAPTURE_CHARS] + " …"
@@ -250,6 +261,8 @@ class ZaloMemoryProvider(OpenVikingMemoryProvider):
         self._pending_since: Optional[float] = None
         self._last_extract: Optional[float] = None
         self._extracting = threading.Lock()
+        self._extract_failures = 0
+        self._retry_at: Optional[float] = None
 
     @property
     def name(self) -> str:
@@ -284,6 +297,24 @@ class ZaloMemoryProvider(OpenVikingMemoryProvider):
         _LIVE.add(self)
         _ensure_ticker()
 
+    # Lớp gốc gán self._client ở nhiều chỗ (initialize, _ensure_client_locked khi đang giữ khoá, _publish_client…)
+    # rồi _commit_session, _session_has_pending_tokens, _session_start_memory_context… dùng thẳng self._client.
+    # Chặn ngay tại phép gán: client nào gán vào cũng thành client mang danh tính phạm vi (hoặc None khi chưa có phạm
+    # vi / client mang khoá API) TRƯỚC khi ai đọc được — không còn khe nào client mặc định nằm trong self._client.
+    @property
+    def _client(self):
+        return self.__dict__.get("_zalo_client")
+
+    @_client.setter
+    def _client(self, client):
+        scoped = None
+        if client is not None and self.__dict__.get("_scope"):
+            try:
+                scoped = self._rescope(client)
+            except _ApiKeyRefused:
+                self.__dict__["_zalo_key_refused"] = True
+        self.__dict__["_zalo_client"] = scoped
+
     def _rescope(self, client: Optional[_VikingClient]) -> Optional[_VikingClient]:
         if client is None:
             return None
@@ -302,15 +333,19 @@ class ZaloMemoryProvider(OpenVikingMemoryProvider):
             _warn_api_key()
             self._client = None
             return None
+        self.__dict__.pop("_zalo_key_refused", None)
         client = super()._ensure_client()
-        if client is None:
-            return None
+        refused = self.__dict__.pop("_zalo_key_refused", False)
         try:
             scoped = self._rescope(client)
         except _ApiKeyRefused:
+            refused = True
+        if refused:
             # Đóng và ghi "lần thử hỏng" dạng của lớp gốc để không dò lại mỗi lượt trong thời gian chờ.
             self._client = None
             self._failed_refresh = ((self._endpoint, self._api_key, self._account, self._user, self._agent), time.monotonic())
+            return None
+        if scoped is None:
             return None
         if scoped is not client:
             self._client = scoped
@@ -366,8 +401,7 @@ class ZaloMemoryProvider(OpenVikingMemoryProvider):
             for key in ("memories", "resources", "skills"):
                 items = result.get(key)
                 if isinstance(items, list):
-                    result[key] = [i for i in items if isinstance(i, dict)
-                                   and str(i.get("uri") or "").startswith(root + "/")]
+                    result[key] = [i for i in items if isinstance(i, dict) and in_scope_uri(i.get("uri"), root)]
         return resp
 
     # -- ghi ------------------------------------------------------------------
@@ -399,18 +433,35 @@ class ZaloMemoryProvider(OpenVikingMemoryProvider):
         since = self._last_extract if self._last_extract is not None else self._pending_since
         if _now() - since < extract_minutes() * 60:
             return False
+        if self._retry_at is not None and _now() < self._retry_at:
+            return False  # lần rút trước hỏng: đợi hết thời gian lùi
         if not self._extracting.acquire(blocking=False):
             return False
         threading.Thread(target=self._extract_now, daemon=True, name=f"zalo-memory-extract-{self._scope}").start()
         return True
 
+    def _extract_failed(self, reason: Any) -> None:
+        """Rút hỏng (OpenViking tắt, 401…): lùi 5 → 15 → 60 phút (không quá chu kỳ), chỉ ghi log khi lên một bậc mới."""
+        step = min(self._extract_failures, len(EXTRACT_BACKOFF_MINUTES) - 1)
+        delay = min(EXTRACT_BACKOFF_MINUTES[step], extract_minutes())
+        self._retry_at = _now() + delay * 60
+        if self._extract_failures < len(EXTRACT_BACKOFF_MINUTES):
+            logger.warning("[zalo_memory] rút trí nhớ %s lỗi: %s — thử lại sau %d phút", self._scope, reason, delay)
+        else:
+            logger.debug("[zalo_memory] rút trí nhớ %s vẫn lỗi: %s", self._scope, reason)
+        self._extract_failures += 1
+
     def _extract_now(self) -> None:
         """Đợi lượt đang ghi xong, hỏi máy chủ còn tin chưa rút không, rồi commit phiên (máy chủ chạy LLM rút trí nhớ)."""
         try:
             sid = str(self._session_id or "").strip()
-            client = self._ensure_client()
-            if not sid or client is None or not self._drain_writers(sid, timeout=30.0):
+            if not sid:
                 return
+            client = self._ensure_client()
+            if client is None:
+                return self._extract_failed("OpenViking chưa kết nối được")
+            if not self._drain_writers(sid, timeout=30.0):
+                return self._extract_failed("lượt ghi trước chưa xong")
             try:
                 session = client.get(f"/api/v1/sessions/{sid}").get("result") or {}
                 pending = int(session.get("pending_tokens") or 0)
@@ -420,10 +471,11 @@ class ZaloMemoryProvider(OpenVikingMemoryProvider):
                 client.post(f"/api/v1/sessions/{sid}/commit", {"keep_recent_count": 0})
                 logger.info("[zalo_memory] đã rút trí nhớ %s (phiên %s)", self._scope, sid)
             self._last_extract, self._pending_since = _now(), None
+            self._extract_failures, self._retry_at = 0, None
             with self._session_state_lock:
                 self._turn_count = 0  # lớp gốc lúc kết thúc phiên sẽ hỏi máy chủ thay vì commit lại
         except Exception as exc:
-            logger.warning("[zalo_memory] rút trí nhớ %s lỗi: %s", self._scope, exc)
+            self._extract_failed(exc)
         finally:
             self._extracting.release()
 

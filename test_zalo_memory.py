@@ -52,6 +52,7 @@ class FakeOpenViking:
         self.requests = []
         self.profiles = {}
         self.pending = 0
+        self.commit_status = 200
         fake = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -96,6 +97,8 @@ class FakeOpenViking:
                     return self._reply({"status": "error", "error": {"code": "NOT_FOUND"}}, 404)
                 if url.path == "/api/v1/fs/ls":
                     return self._reply({"status": "ok", "result": []})
+                if url.path.endswith("/commit") and fake.commit_status != 200:
+                    return self._reply({"status": "error", "error": {"code": "UNAUTHENTICATED"}}, fake.commit_status)
                 if url.path.startswith("/api/v1/sessions/") and method == "GET":
                     return self._reply({"status": "ok", "result": {"pending_tokens": fake.pending}})
                 return self._reply({"status": "ok", "result": {}})
@@ -241,6 +244,52 @@ class IsolationTest(ZaloMemoryTestBase):
         by_path = {r["path"]: r["user"] for r in self.ov.requests if r["path"].endswith("/messages/batch")}
         self.assertEqual(by_path, {"/api/v1/sessions/a/messages/batch": f"zalo-g-{GROUP_A}",
                                    "/api/v1/sessions/b/messages/batch": f"zalo-g-{GROUP_B}"})
+
+    def test_recall_drops_hits_with_unsafe_uris_even_under_this_scope(self):
+        root = f"viking://user/zalo-g-{GROUP_A}/memories"
+        good = f"{root}/preferences/mem_1.md"
+        self.assertTrue(zm.in_scope_uri(good, root))
+        for bad in [f"{root}/../../zalo-u-{OWNER}/memories/a.md", f"{root}/%2e%2e/%2e%2e/zalo-u-{OWNER}/a.md",
+                    f"{root}/a%2fb.md", f"{root}\\..\\x.md", f"{root}/a.md?uri=x", f"{root}/a.md#x", f"{root}/a b.md",
+                    f"{root}/a\n.md", root, f"{root}X/a.md", "", None]:
+            with self.subTest(uri=bad):
+                self.assertFalse(zm.in_scope_uri(bad, root))
+        p = self.provider()
+
+        class Client:
+            def post(self, path, body, timeout=None):
+                return {"result": {"memories": [{"uri": good}, {"uri": f"{root}/%2e%2e/%2e%2e/zalo-u-{OWNER}/a.md"},
+                                                {"uri": f"{root}/../x.md"}, "rác"]}}
+
+        resp = p._post_prefetch_search(Client(), "q", "s-1", limit=4, context_type="memory",
+                                       deadline=time.monotonic() + 1, request_timeout=1)
+        self.assertEqual([h["uri"] for h in resp["result"]["memories"]], [good])
+
+    def test_client_slot_never_holds_an_unscoped_identity(self):
+        p = self.provider()
+        scope = f"zalo-g-{GROUP_A}"
+        ident = lambda c: (c._account, c._user, c._agent)  # noqa: E731
+        self.assertEqual(ident(p._client), ("zalo", scope, ""), "ngay sau initialize")
+        # Lớp gốc dựng lại client mặc định khi đang giữ khoá (đổi cấu hình) — vẫn ra client theo phạm vi.
+        with patch.dict(os.environ, {"OPENVIKING_USER": "someone-else"}), p._client_refresh_lock:
+            p._ensure_client_locked()
+            self.assertEqual(ident(p._client), ("zalo", scope, ""))
+        p._client = zm._VikingClient(self.ov.url, "", account="default", user="default", agent="hermes")
+        self.assertEqual(ident(p._client), ("zalo", scope, ""))
+        p._client = zm._VikingClient(self.ov.url, "k-sneaky", account="default", user="default")
+        self.assertIsNone(p._client, "client mang khoá → bỏ")
+        p._ensure_client()
+        self.ov.requests.clear()
+        if hasattr(p, "_session_has_pending_tokens"):  # bản lớp gốc trên VPS không có hàm này
+            p._session_has_pending_tokens("s-1")
+        p._commit_session("s-1", 1, context="test")
+        p._session_start_memory_context("s-9")
+        sent = [r for r in self.ov.requests if r["path"] != "/health"]
+        self.assertTrue(sent)
+        self.assertEqual({(r["account"], r["user"], r["key"]) for r in sent}, {("zalo", scope, "")})
+        inert = zm.ZaloMemoryProvider()
+        inert._client = zm._VikingClient(self.ov.url, "", account="default", user="default")
+        self.assertIsNone(inert._client, "chưa có phạm vi thì không giữ client nào")
 
     def test_non_zalo_sessions_are_inert(self):
         for platform, chat_type, chat_id in [("cli", None, None), ("cron", None, None), ("api_server", "dm", OWNER)]:
@@ -406,6 +455,47 @@ class ExtractIntervalTest(ZaloMemoryTestBase):
         self.assertEqual(len(self.ov.where("/api/v1/sessions/s-1/commit")), 1, "máy chủ báo không còn tin chờ → không commit")
 
 
+    def test_failed_extraction_backs_off_and_logs_once_per_step(self):
+        self.write({"version": 1, "extractMinutes": 30})
+        self.ov.pending, self.ov.commit_status = 50, 401
+        p = self.provider()
+        p.sync_turn("nhóm chốt lịch trực tuần sau", "Đã ghi nhận.", session_id="s-1")
+        self.assertTrue(wait_for(lambda: self.ov.where("/api/v1/sessions/s-1/messages/batch")))
+        commits = lambda: len(self.ov.where("/api/v1/sessions/s-1/commit"))  # noqa: E731
+        idle = lambda: not p._extracting.locked()  # noqa: E731
+
+        def tick_after(minutes):
+            self.clock[0] += minutes * 60
+            zm.tick()
+            time.sleep(0.15)
+            self.assertTrue(wait_for(idle))
+
+        with self.assertLogs(zm.logger, level="DEBUG") as logs:
+            tick_after(31)
+            self.assertEqual(commits(), 1)
+            for _ in range(4):
+                tick_after(1)              # mỗi phút một vòng: không thử lại trong 5 phút đầu
+            self.assertEqual(commits(), 1)
+            tick_after(1)
+            self.assertEqual(commits(), 2, "hết 5 phút thì thử lại")
+            tick_after(14)
+            self.assertEqual(commits(), 2)
+            tick_after(1)
+            self.assertEqual(commits(), 3, "bậc 15 phút")
+            tick_after(29)
+            self.assertEqual(commits(), 3)
+            tick_after(1)
+            self.assertEqual(commits(), 4, "bậc 60 phút kẹp về chu kỳ 30 phút")
+            tick_after(30)
+            self.assertEqual(commits(), 5)
+        warnings = [r for r in logs.records if r.levelname == "WARNING" and "rút trí nhớ" in r.getMessage()]
+        self.assertEqual(len(warnings), 3, "mỗi bậc lùi ghi log một lần, không ghi mỗi phút")
+        self.ov.commit_status = 200
+        tick_after(30)
+        self.assertEqual(commits(), 6)
+        self.assertEqual((p._extract_failures, p._retry_at), (0, None), "thành công thì bỏ lùi")
+
+
 class OwnerMemoryToolTest(unittest.IsolatedAsyncioTestCase):
     """zalo_memory_remember / zalo_memory_forget (spec §19.5.2): chỉ chủ nhân, phạm vi lấy từ turn, không từ tham số."""
 
@@ -482,6 +572,28 @@ class OwnerMemoryToolTest(unittest.IsolatedAsyncioTestCase):
         with patch.object(memory_store, "_host_platform", return_value="win32"):
             self.assertIn("Linux", json.loads(await zalo_tools.zalo_memory_remember({"text": "x"}))["error"])
         self.assertEqual([r for r in self.ov.requests if r["path"] == "/api/v1/content/write"], [])
+
+    async def test_tools_follow_the_provider_key_and_endpoint_resolution(self):
+        self.turn()
+        cases = [
+            ("chưa chạy", patch.object(memory_store, "_provider_module", return_value=None)),
+            ("khoá API", patch.object(zm, "api_key_would_be_sent", return_value=True)),
+            ("cùng máy", patch.dict(os.environ, {"OPENVIKING_ENDPOINT": "http://10.0.0.2:1933"})),
+            # Cấu hình hỏng: bộ dò khoá đã đóng trước (coi như có khoá).
+            ("khoá API", patch.object(BASE, "_load_hermes_openviking_config", side_effect=ValueError("hỏng"))),
+        ]
+        for needle, ctx in cases:
+            with self.subTest(needle=needle), ctx:
+                out = json.loads(await zalo_tools.zalo_memory_remember({"text": "x"}))
+                self.assertFalse(out["success"])
+                self.assertIn(needle, out["error"])
+        # Windows: từ chối trước mọi phân giải — không bao giờ rơi về 127.0.0.1:1933.
+        with patch.object(memory_store, "_host_platform", return_value="win32"), \
+                patch.object(BASE, "_resolve_connection_settings") as resolve:
+            self.assertRaises(memory_store.MemoryUnavailable, memory_store.endpoint)
+            resolve.assert_not_called()
+        self.assertEqual(memory_store.endpoint(), self.ov.url, "endpoint lấy từ bộ phân giải của lớp gốc")
+        self.assertEqual(self.ov.requests, [])
 
 
 class FailureTest(unittest.TestCase):

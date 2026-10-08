@@ -2,12 +2,11 @@
 
 Phạm vi lấy từ turn (ContextVar của tools.py), không bao giờ từ tham số mô hình: nhóm → ``zalo-g-<id>``,
 nhắn riêng → ``zalo-u-<uid>`` — trùng cách provider ``zalo_memory`` đặt tên. Chỉ chạy khi trí nhớ dài hạn đang
-bật (``memory.provider: zalo_memory``), không trên Windows, không khi có ``OPENVIKING_API_KEY``, và chỉ tới
-OpenViking trên cùng máy. Ghi = một tệp ``memories/preferences/mem_owner_<hex>.md`` (không gọi LLM); quên = tìm
+bật (``memory.provider: zalo_memory`` và provider đang chạy), không trên Windows, không khi lớp gốc sẽ gửi khoá
+API, và chỉ tới OpenViking trên cùng máy (endpoint theo bộ phân giải của lớp gốc). Ghi = một tệp ``memories/preferences/mem_owner_<hex>.md`` (không gọi LLM); quên = tìm
 trong đúng kho rồi xoá từng tệp mà URI nằm dưới gốc của kho đó.
 """
 
-import os
 import re
 import sys
 import uuid
@@ -16,7 +15,6 @@ from urllib.parse import urlparse
 
 OV_ACCOUNT = "zalo"
 PROVIDER = "zalo_memory"
-DEFAULT_ENDPOINT = "http://127.0.0.1:1933"
 MAX_REMEMBER_CHARS = 1000
 MAX_FORGET = 5
 _ID = re.compile(r"^\d{1,32}$")
@@ -51,15 +49,36 @@ def _provider() -> str:
         return ""
 
 
+def _provider_module():
+    """Module provider zalo_memory đang nạp trong tiến trình (Hermes nạp plugin người dùng dưới
+    ``_hermes_user_memory``); chưa nạp = provider không chạy → None."""
+    for name in ("_hermes_user_memory.zalo_memory", "plugins.memory.zalo_memory"):
+        mod = sys.modules.get(name)
+        if mod is not None and getattr(mod, "PROVIDER_NAME", None) == PROVIDER:
+            return mod
+    return None
+
+
 def endpoint() -> str:
-    """OpenViking dùng được cho công cụ, hoặc ném MemoryUnavailable kèm lý do dễ hiểu."""
+    """OpenViking dùng được cho công cụ, hoặc ném MemoryUnavailable kèm lý do dễ hiểu.
+
+    Cùng luật với provider: không Windows, provider zalo_memory đang chạy, lớp gốc không gửi khoá API (từ bất kỳ
+    nguồn nào), endpoint lấy từ CHÍNH bộ phân giải kết nối của lớp gốc và phải là loopback.
+    """
     if _host_platform() == "win32":
         raise MemoryUnavailable("trí nhớ dài hạn chỉ chạy trên máy chủ Linux")
     if _provider() != PROVIDER:
         raise MemoryUnavailable("trí nhớ dài hạn đang tắt (memory.provider chưa là zalo_memory)")
-    if str(os.environ.get("OPENVIKING_API_KEY") or "").strip():
+    zm = _provider_module()
+    if zm is None:
+        raise MemoryUnavailable("trí nhớ dài hạn đang tắt (provider zalo_memory chưa chạy)")
+    if zm.api_key_would_be_sent():
         raise MemoryUnavailable("OpenViking đang dùng khoá API — trí nhớ theo nhóm/người không bật được")
-    url = str(os.environ.get("OPENVIKING_ENDPOINT") or "").strip() or DEFAULT_ENDPOINT
+    try:
+        base = sys.modules[zm.OpenVikingMemoryProvider.__module__]
+        url = str(base._resolve_connection_settings(base._load_hermes_openviking_config()).get("endpoint") or "").strip()
+    except Exception as exc:
+        raise MemoryUnavailable("không đọc được cấu hình OpenViking") from exc
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or parsed.hostname not in _LOOPBACK or parsed.username:
         raise MemoryUnavailable("OPENVIKING_ENDPOINT phải là địa chỉ trên cùng máy")
