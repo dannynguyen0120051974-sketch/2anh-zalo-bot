@@ -11,6 +11,9 @@ import { join } from 'node:path';
 import YAML from 'yaml';
 import { writeFileAtomic } from './json-store.js';
 
+/** Đếm theo ký tự Unicode (code point) như `len()` của Python bên Hermes, không theo UTF-16. */
+const chars = (s) => [...s].length;
+
 export const DELIMITER = '\n§\n';
 export const TARGETS = {
   memory: { file: 'MEMORY.md', key: 'memory_char_limit', fallback: 2200, label: 'Ghi chú của trợ lý' },
@@ -45,10 +48,11 @@ export function createHermesMemory({ hermesHome, configFile }) {
     const entries = existsSync(file) ? parseEntries(readFileSync(file, 'utf8')) : [];
     return { file, stamp, entries };
   }
-  function save(target, file, stamp, entries) {
+  function save(target, file, stamp, entries, { allowOver = false } = {}) {
     if (stampOf(file) !== stamp) throw err(409, 'Trợ lý vừa cập nhật bộ nhớ — tải lại trang rồi sửa lại.');
     const content = entries.join(DELIMITER);
-    if (content.length > limit(target)) throw err(400, `Bộ nhớ sẽ vượt ${limit(target)} ký tự — rút gọn hoặc xoá bớt mục khác.`);
+    // Xoá luôn được, kể cả khi tệp đã vượt trần (do bot/Hermes ghi) — nếu không người dùng không dọn được.
+    if (!allowOver && chars(content) > limit(target)) throw err(400, `Bộ nhớ sẽ vượt ${limit(target)} ký tự — rút gọn hoặc xoá bớt mục khác.`);
     if (existsSync(file)) {
       copyFileSync(file, `${file}.bak`);
       try { chmodSync(`${file}.bak`, 0o600); } catch { /* Windows */ }
@@ -64,7 +68,7 @@ export function createHermesMemory({ hermesHome, configFile }) {
     view() {
       return Object.fromEntries(Object.entries(TARGETS).map(([target, t]) => {
         const { entries } = load(target);
-        return [target, { label: t.label, entries, used: entries.join(DELIMITER).length, limit: limit(target) }];
+        return [target, { label: t.label, entries, used: chars(entries.join(DELIMITER)), limit: limit(target) }];
       }));
     },
     replace(target, index, old, text) {
@@ -80,7 +84,7 @@ export function createHermesMemory({ hermesHome, configFile }) {
       const { file, stamp, entries } = load(target);
       checkEntry(entries, index, old);
       entries.splice(index, 1);
-      save(target, file, stamp, entries);
+      save(target, file, stamp, entries, { allowOver: true });
     },
   };
 }

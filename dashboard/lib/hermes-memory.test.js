@@ -56,3 +56,19 @@ test('vượt trần ký tự → 400, tệp giữ nguyên; trợ lý vừa thê
   assert.throws(() => mem.remove('memory', 0, 'a'), (e) => e.statusCode === 409);
   assert.equal(readFileSync(file, 'utf8'), 'mới của trợ lý\n§\na');
 });
+
+test('xoá luôn được dù tệp đã vượt trần; sửa vẫn bị chặn; ký tự đếm theo code point như Hermes', (t) => {
+  const { h, mem } = home(t, { user: 'x'.repeat(30) + '\n§\nhai', config: 'memory:\n  user_char_limit: 10\n' });
+  assert.throws(() => mem.replace('user', 1, 'hai', 'ba'), (e) => e.statusCode === 400, 'vẫn vượt trần thì không cho sửa');
+  mem.remove('user', 1, 'hai');
+  assert.equal(readFileSync(join(h, 'memories', 'USER.md'), 'utf8'), 'x'.repeat(30), 'xoá được dù còn vượt trần');
+  // 😀 là 1 code point (2 đơn vị UTF-16): 10 emoji đúng bằng trần 10, 11 thì vượt.
+  const e = createHermesMemory({ hermesHome: h, configFile: join(h, 'config.yaml') });
+  mem.remove('user', 0, 'x'.repeat(30));
+  writeFileSync(join(h, 'memories', 'USER.md'), 'a');
+  const v = e.view();
+  assert.equal(v.user.used, 1);
+  e.replace('user', 0, 'a', '😀'.repeat(10));
+  assert.equal(e.view().user.used, 10);
+  assert.throws(() => e.replace('user', 0, '😀'.repeat(10), '😀'.repeat(11)), (err) => err.statusCode === 400);
+});
