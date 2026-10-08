@@ -57,6 +57,16 @@ export const ACTION_LABELS = {
   kb_delete: 'Xoá tài liệu khỏi kho tri thức',
   insight_summary: 'Nhờ AI tóm tắt chủ đề nhóm',
   second_brain_note: 'Thêm ghi chú vào Second brain',
+  // Giai đoạn 7B (spec §18.6)
+  agent_model: 'Đổi model của trợ lý',
+  agent_reasoning: 'Đổi mức suy nghĩ của trợ lý',
+  agent_soul: 'Sửa tính cách của trợ lý',
+  agent_soul_restore: 'Khôi phục tính cách của trợ lý',
+  tools_off: 'Bật/tắt công cụ với người ngoài',
+  mcp_enable: 'Bật kết nối MCP',
+  mcp_disable: 'Tắt kết nối MCP',
+  settings_update: 'Đổi cấu hình bot',
+  welcome_update: 'Đổi lời chào thành viên mới',
 };
 
 const REASONS = {

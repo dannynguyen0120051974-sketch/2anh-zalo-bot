@@ -104,3 +104,9 @@ test('giai đoạn 7A: mọi hành động mới đều có nhãn tiếng Việt
     assert.ok(ACTION_LABELS[action], action);
   }
 });
+
+test('giai đoạn 7B: mọi hành động mới đều có nhãn tiếng Việt trong Nhật ký', () => {
+  for (const action of ['agent_model', 'agent_reasoning', 'agent_soul', 'agent_soul_restore', 'tools_off', 'mcp_enable', 'mcp_disable', 'settings_update', 'welcome_update']) {
+    assert.ok(ACTION_LABELS[action], action);
+  }
+});
