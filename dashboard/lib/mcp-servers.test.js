@@ -70,3 +70,9 @@ test('bật/tắt: sửa đúng mcp_servers.<tên>.enabled, giữ khối khác; 
   assert.throws(() => mcp.setEnabled('__proto__', true), (e) => e.statusCode === 404);
   assert.throws(() => mcp.setEnabled('rag', 'có'), (e) => e.statusCode === 400);
 });
+
+test('stdio: lệnh có khoảng trắng chỉ hiện tên lệnh, không lộ đối số', () => {
+  const d = describeServer('x', { command: '/usr/bin/npx   -y pkg --token=X' });
+  assert.equal(d.target, 'npx');
+  assert.doesNotMatch(JSON.stringify(d), /token|pkg/);
+});

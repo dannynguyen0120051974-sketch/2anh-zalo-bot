@@ -30,7 +30,7 @@ export function describeServer(name, cfg, publicPatterns = []) {
   if (c.url) {
     transport = 'http';
     try { const u = new URL(String(c.url)); host = u.hostname; port = Number(u.port) || (u.protocol === 'https:' ? 443 : 80); target = `${u.protocol}//${u.host}`; } catch { target = '(địa chỉ hỏng)'; }
-  } else if (c.command) target = basename(String(c.command)).slice(0, 60);
+  } else if (c.command) target = basename(String(c.command).trim().split(/\s+/)[0]).slice(0, 60);
   return {
     name, transport, target, enabled: truthy(c.enabled ?? true), loopback: LOOPBACK.has(host),
     publicToMembers: publicPatterns.some((p) => globMatch(p, name) || globMatch(p, `mcp-${name}`)), host, port,
