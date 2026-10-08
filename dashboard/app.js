@@ -18,6 +18,7 @@ import { contactRoutes } from './routes/contacts.js';
 import { agentMemoryRoutes } from './routes/agent-memory.js';
 import { scheduleRoutes } from './routes/schedules.js';
 import { kbRoutes } from './routes/kb.js';
+import { insightRoutes } from './routes/insight.js';
 
 export function createDashboardApp(deps) {
   const app = express();
@@ -42,6 +43,7 @@ export function createDashboardApp(deps) {
   if (deps.agentMemory) app.use('/api', agentMemoryRoutes(deps));
   if (deps.schedules) app.use('/api', scheduleRoutes(deps));
   if (deps.kb) app.use('/api', kbRoutes(deps));
+  app.use('/api', insightRoutes(deps));
   app.use('/api', adminRoutes(deps));
   // Gắn ở gốc: router này có cả /api/brand lẫn /brand.css, /brand/logo.png (công khai, trước giao diện tĩnh).
   app.use(brandRoutes(deps));

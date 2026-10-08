@@ -820,3 +820,16 @@ test('Kho tri thức: cỡ tệp dễ đọc; kiểm đuôi/cỡ trước khi g�
   assert.match(uploadProblem({ name: 'a.pdf', size: 101 }, types, 100), /quá/);
   assert.match(uploadProblem({ name: 'a.pdf', size: 0 }, types, 100), /rỗng/);
 });
+
+test('Insight nhóm: mức màu bản đồ giờ 0–4, nhãn ngày, thứ bắt đầu từ T2', async () => {
+  const { heatLevel, dayLabel, WEEKDAYS, KIND_LABELS } = await import('./views/insight.js');
+  assert.equal(heatLevel(0, 10), 0);
+  assert.equal(heatLevel(1, 10), 1);
+  assert.equal(heatLevel(5, 10), 2);
+  assert.equal(heatLevel(10, 10), 4);
+  assert.equal(heatLevel(3, 0), 0);
+  assert.equal(dayLabel('2026-10-07'), '07/10');
+  assert.equal(WEEKDAYS[0], 'T2');
+  assert.equal(WEEKDAYS[6], 'CN');
+  assert.deepEqual(Object.keys(KIND_LABELS), ['text', 'photo', 'file', 'link', 'sticker', 'voice', 'other']);
+});

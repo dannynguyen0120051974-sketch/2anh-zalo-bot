@@ -7,6 +7,7 @@ import { existsSync, statSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { fold, indexOfFolded } from '../public/fold.js';
 import { classifyMedia, linksOf, NOT_LINK_TYPES } from '../public/media.js';
+import { groupInsightQuery } from './insight.js';
 
 export const LOGIN_CODE_PREFIX = 'Mã đăng nhập dashboard:';
 const SECRET = `${LOGIN_CODE_PREFIX}%`;
@@ -397,6 +398,11 @@ export function createStoreReader({
     todayStats,
     senderNames,
     listAudit,
+    /** Insight nhóm (spec §18.5): số liệu N ngày của một nhóm; chưa có tin nào của bot → null. */
+    groupInsight(threadId, opts = {}) {
+      const acc = account();
+      return acc ? groupInsightQuery(open(), acc, threadId, { ...opts, secretLike: SECRET }) : null;
+    },
     /** Gửi tay thành công → danh sách hội thoại phải hiện tin vừa gửi ngay, không chờ hết hạn đệm. */
     invalidateConversations() { convCache = null; },
     close: drop,
