@@ -83,6 +83,7 @@ class Usage:
     input_tokens: int = 0
     output_tokens: int = 0
     limit: Optional[int] = None     # trần tổng token của cả việc; None = không trần
+    listener: Optional[Any] = field(default=None, repr=False, compare=False)  # gọi sau mỗi lời gọi AI (ghi sổ dần)
 
     @property
     def total(self) -> int:
@@ -97,6 +98,8 @@ class Usage:
         self.calls += 1
         self.input_tokens += int(getattr(usage, "input_tokens", 0) or 0)
         self.output_tokens += int(getattr(usage, "output_tokens", 0) or 0)
+        if self.listener:
+            self.listener()
 
 
 def read_guides(paths: Sequence[Path]) -> List[Tuple[str, str]]:

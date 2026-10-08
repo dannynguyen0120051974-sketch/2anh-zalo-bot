@@ -6,8 +6,8 @@ Một tệp ``<HERMES_HOME>/zalo/studio-usage.json`` (quyền 600), plugin ghi, 
 dùng). Không GHI được sổ → từ chối việc (không trừ được lượt thì không nhận việc).
 
 Lượt trừ NGAY khi nhận việc (``take``), trong cùng một khoá với việc đếm — hai tin gửi cùng lúc
-không lách được hạn mức. Việc hỏng vì máy TRƯỚC khi tốn gì (thiếu bộ dựng, AI không gọi được, gateway khởi
-động lại) được trả lượt; việc hỏng vì nội dung, hoặc hỏng SAU khi đã tốn token/ảnh, vẫn tính lượt (``jobs.run_job``).
+không lách được hạn mức. Việc hỏng vì máy TRƯỚC khi tốn gì (thiếu bộ dựng, AI không gọi được) được trả lượt; việc hỏng vì nội dung, hoặc hỏng SAU khi đã tốn token/ảnh, vẫn tính lượt (``jobs.run_job``). Gateway khởi
+động lại giữa việc: chỉ trả lượt nếu sổ (ghi dần) cho thấy chưa tốn gì (``sweep_lost``).
 Mỗi người mỗi ngày được trả lượt tối đa bằng hạn mức của mình (``quota`` ghi lúc nhận việc) — quá trần thì việc hỏng
 tính như ``failed``: không ai lấy được việc miễn phí vô hạn bằng cách cố tình làm hỏng.
 
@@ -33,6 +33,8 @@ VN = timezone(timedelta(hours=7))
 KEEP_DAYS = 30
 KEEP_JOBS = 200
 OPEN_STATES = ("queued", "running")
+# Ngưỡng "chưa tốn gì": không ảnh nào và token ≤ ngưỡng này (một lời gọi AI thật luôn vượt xa). Dùng cho trả lượt.
+SPEND_TOKENS = 1_000
 REPLACE_RETRIES = 8
 REPLACE_SLEEP = 0.05
 _LOCKS: Dict[str, threading.Lock] = {}
@@ -168,7 +170,9 @@ class Ledger:
         """``status``: ok | failed | refunded | running. Trả trạng thái đã ghi (None nếu không ghi được).
 
         ``refunded`` mà hôm nay người này đã được trả đủ ``quota`` lượt (quota ghi lúc ``take``) → ghi ``failed``
-        (``refund_denied``). ``capped=False`` chỉ cho việc CHƯA chạy (hàng đầy ngay lúc nhận)."""
+        (``refund_denied``). ``capped=False`` chỉ cho việc CHƯA chạy (hàng đầy ngay lúc nhận).
+        ``input_tokens``/``output_tokens``/``images`` là TỔNG của việc (không phải phần tăng thêm): ghi lấy giá trị lớn
+        hơn giữa số đã ghi dần (``progress``) và số truyền vào — gọi nhiều lần không đếm đôi."""
         with self._lock:
             try:
                 data = self._read()
@@ -183,9 +187,9 @@ class Ledger:
                         status = "failed"
                         job["refund_denied"] = True
                 job["status"] = status
-                job["input_tokens"] = job.get("input_tokens", 0) + int(input_tokens)
-                job["output_tokens"] = job.get("output_tokens", 0) + int(output_tokens)
-                job["images"] = job.get("images", 0) + int(images)
+                job["input_tokens"] = max(job.get("input_tokens", 0), int(input_tokens))
+                job["output_tokens"] = max(job.get("output_tokens", 0), int(output_tokens))
+                job["images"] = max(job.get("images", 0), int(images))
                 if error:
                     job["error"] = error[:300]
                 if status != "running" and previous in OPEN_STATES:
@@ -206,15 +210,40 @@ class Ledger:
                 logger.error("[zalo] không ghi được sổ lượt xưởng %s: %s", self.path, exc)
                 return None
 
+    def progress(self, job_id: str, *, input_tokens: int = 0, output_tokens: int = 0, images: int = 0) -> None:
+        """Ghi dần chi phí (tổng đến lúc này) của việc đang chạy, để ``sweep_lost`` biết việc đã tốn gì nếu gateway chết
+        giữa chừng. Chỉ chạm việc còn mở; không đụng số liệu theo người (``finish`` làm khi kết thúc)."""
+        with self._lock:
+            try:
+                data = self._read()
+                job = next((j for j in reversed(data["jobs"]) if j.get("id") == job_id), None)
+                if job is None or job.get("status") not in OPEN_STATES:
+                    return
+                job["input_tokens"] = max(job.get("input_tokens", 0), int(input_tokens))
+                job["output_tokens"] = max(job.get("output_tokens", 0), int(output_tokens))
+                job["images"] = max(job.get("images", 0), int(images))
+                self._write(data)
+            except OSError as exc:
+                logger.warning("[zalo] không ghi được chi phí đang chạy vào sổ lượt xưởng %s: %s", self.path, exc)
+
     def sweep_lost(self) -> int:
-        """Gateway khởi động lại giữa chừng: việc còn ``queued``/``running`` coi như mất, trả lượt."""
+        """Gateway khởi động lại giữa chừng: việc còn ``queued``/``running`` coi như mất.
+
+        Việc chưa chạy (``queued``) hoặc đang chạy mà sổ ghi chưa tốn gì (không ảnh, token ≤ ``SPEND_TOKENS``) → trả
+        lượt (vẫn chịu trần trả lượt mỗi ngày). Việc ``running`` đã tốn → ``failed``, tính lượt: nếu không, khởi động
+        lại gateway đúng lúc là cách lấy việc tốn tiền miễn phí."""
         with self._lock:
             try:
                 data = self._read()
             except OSError as exc:
                 logger.error("[zalo] không đọc được sổ lượt xưởng %s: %s", self.path, exc)
                 return 0
-            lost = [j for j in data["jobs"] if j.get("status") in OPEN_STATES]
+            lost = [dict(j) for j in data["jobs"] if j.get("status") in OPEN_STATES]
         for job in lost:
-            self.finish(job["id"], "refunded", error="gateway khởi động lại khi đang làm")
+            spent = (job.get("images", 0) > 0
+                     or job.get("input_tokens", 0) + job.get("output_tokens", 0) > SPEND_TOKENS)
+            if job.get("status") == "running" and spent:
+                self.finish(job["id"], "failed", error="gateway khởi động lại khi đang làm")
+            else:
+                self.finish(job["id"], "refunded", error="gateway khởi động lại khi đang làm")
         return len(lost)

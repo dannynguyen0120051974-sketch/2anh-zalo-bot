@@ -24,6 +24,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tup
 
 from . import author, builtin, doan_docx, images, recipes, sandbox, validate
 from .. import group_permissions as gp
+from . import ledger as ledger_module
 from .ledger import Ledger
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ DOAN_DRAFT_CODES = {"placeholder": "Bản nháp: còn ô [CẦN BỔ SUNG] cần
 # Trả lượt CHỈ khi việc chưa tốn gì: không ảnh nào, token ≤ ngưỡng nhỏ này (một lời gọi AI thật — có hướng dẫn
 # trong system prompt — luôn vượt xa). Lỗi máy sau khi đã tốn (bộ dựng hỏng, gửi không được…) vẫn tính lượt:
 # nếu không, người ngoài cố tình làm hỏng (tìm ảnh không ra, ký tự lạ…) là được việc miễn phí vô hạn.
-SPEND_TOKENS = 1_000
+SPEND_TOKENS = ledger_module.SPEND_TOKENS
 # Trang thí nghiệm ảo (2Anh Studio) chỉ cần CSS + JS nội tuyến và canvas — như games.html, không mạng, không ảnh.
 THI_NGHIEM_CSP = ("default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'none'; "
                   "connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; "
@@ -191,14 +192,24 @@ def collect(job_dir: Path, project: Path, outputs: Sequence[str]) -> List[Path]:
 class Builder:
     """Một việc: chỗ cài, thư mục việc, AI viết, chạy bộ dựng. Tách riêng để test thay từng phần."""
 
-    def __init__(self, job: Job, llm: Any, where: recipes.Places, job_dir: Path):
+    def __init__(self, job: Job, llm: Any, where: recipes.Places, job_dir: Path,
+                 on_spend: Optional[Callable[[author.Usage, int], None]] = None):
         self.job, self.llm, self.where, self.job_dir = job, llm, where, job_dir
         self.recipe = job.recipe
         self.project = job_dir / "p"
-        self.usage = author.Usage(limit=self.recipe.max_tokens)
+        self.on_spend = on_spend
+        self.usage = author.Usage(limit=self.recipe.max_tokens, listener=self._spent)
         self.notes: List[str] = []
         self.images_used = 0
         self.guides = author.read_guides(recipes.guide_paths(self.recipe, where, job.options))
+
+    def _spent(self) -> None:
+        """Token/ảnh vừa tăng — báo bên gọi để ghi sổ dần (lỗi ghi sổ không được làm hỏng việc)."""
+        if self.on_spend:
+            try:
+                self.on_spend(self.usage, self.images_used)
+            except Exception as exc:
+                logger.warning("[zalo] xưởng %s: không ghi dần chi phí: %s", self.job.id, exc)
 
     async def write(self, *, types: Sequence[str] = (), repair: Optional[Tuple[str, str]] = None) -> str:
         return await author.write_source(
@@ -238,6 +249,7 @@ class Builder:
         else:
             picture = await images.search_web(request["web"], orientation)
         self.images_used += 1
+        self._spent()
         return picture
 
     async def deck_images(self, requests: List[Dict[str, str]], folder: Path) -> Dict[str, Dict[str, str]]:
@@ -587,7 +599,8 @@ class Builder:
 
 
 async def produce(job: Job, llm: Any, job_dir: Path, where: Optional[recipes.Places] = None, *,
-                  track: Optional[List["Builder"]] = None) -> Outcome:
+                  track: Optional[List["Builder"]] = None,
+                  on_spend: Optional[Callable[[author.Usage, int], None]] = None) -> Outcome:
     """Làm một việc. Mọi lỗi ra ngoài mang ``usage``/``images`` đã tốn; ``track`` nhận Builder để bên gọi vẫn thấy chi
     phí khi việc bị huỷ giữa chừng (hết thời hạn). Lỗi lạ do nội dung (ký tự không mã hoá được, giá trị python-docx
     từ chối…) và vượt trần token → ``StudioError`` tính lượt."""
@@ -595,7 +608,7 @@ async def produce(job: Job, llm: Any, job_dir: Path, where: Optional[recipes.Pla
     reason = recipes.missing(job.recipe, where)
     if reason:
         raise StudioError(reason, refund=True)
-    builder = Builder(job, llm, where, job_dir)
+    builder = Builder(job, llm, where, job_dir, on_spend)
     if track is not None:
         track.append(builder)
     try:
@@ -638,10 +651,12 @@ class Studio:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._sem: Optional[asyncio.Semaphore] = None
         try:
-            sweep_work_root()
+            # Thứ tự: dừng đơn vị systemd còn sống từ lần trước → dọn thư mục việc mồ côi → xử lý sổ.
+            sandbox.stop_all_units()
+            sweep_work_root(orphans=True)
             lost = ledger.sweep_lost()
             if lost:
-                logger.info("[zalo] xưởng: %d việc dở từ lần chạy trước — đã trả lượt", lost)
+                logger.info("[zalo] xưởng: %d việc dở từ lần chạy trước — trả lượt nếu chưa tốn gì, còn lại tính lượt", lost)
         except Exception as exc:
             logger.warning("[zalo] xưởng: không dọn được việc cũ: %s", exc)
         # Dashboard đọc studio-policy.json để khoá nút video + hiện ghi chú (Windows / Linux không hộp cát).
@@ -702,6 +717,10 @@ class Studio:
         keep = False
         self.ledger.finish(job.id, "running")
 
+        def on_spend(usage: author.Usage, images_used: int) -> None:
+            self.ledger.progress(job.id, input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
+                                 images=images_used)
+
         def cost() -> Tuple[author.Usage, int]:
             if outcome is not None:
                 return outcome.usage, outcome.images
@@ -717,7 +736,7 @@ class Studio:
             loop = asyncio.get_running_loop()
             started = loop.time()
             try:
-                outcome = await asyncio.wait_for(produce(job, llm, job_dir, track=track), timeout=job.recipe.deadline)
+                outcome = await asyncio.wait_for(produce(job, llm, job_dir, track=track, on_spend=on_spend), timeout=job.recipe.deadline)
             except asyncio.TimeoutError:
                 if loop.time() - started < job.recipe.deadline - 1:
                     raise  # hết giờ của một lời gọi bên trong, không phải thời hạn của việc
@@ -767,15 +786,22 @@ class Studio:
             logger.warning("[zalo] xưởng %s: không báo được người nhờ: %s", job.id, exc)
 
 
-def sweep_work_root(now: Optional[float] = None) -> None:
-    """Dọn thư mục việc sót lại quá 24 giờ (gateway tắt ngang khi đang dựng)."""
+JOB_DIR_NAME = re.compile(r"^\d{8}-\d{6}-[0-9a-f]{6}$")
+
+
+def sweep_work_root(now: Optional[float] = None, *, orphans: bool = False) -> None:
+    """Dọn thư mục việc sót lại quá 24 giờ (gateway tắt ngang khi đang dựng). ``orphans=True`` (lúc khởi tạo xưởng,
+    chưa có việc nào chạy): xoá mọi thư mục việc còn lại bất kể tuổi — chỉ thư mục đúng dạng mã việc, không đi theo
+    liên kết."""
     root = sandbox.work_root()
     if not root.is_dir():
         return
     now = now or time.time()
     for child in root.iterdir():
         try:
-            if child.is_dir() and now - child.stat().st_mtime > STALE_DIR_SECONDS:
+            if child.is_symlink() or not child.is_dir():
+                continue
+            if (orphans and JOB_DIR_NAME.match(child.name)) or now - child.stat().st_mtime > STALE_DIR_SECONDS:
                 shutil.rmtree(child, ignore_errors=True)
         except OSError:
             continue

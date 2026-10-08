@@ -66,6 +66,15 @@ DENIED_NETWORKS = ("localhost", "link-local", "multicast", "0.0.0.0/8", "10.0.0.
                    "172.16.0.0/12", "192.168.0.0/16", "198.18.0.0/15", "fc00::/7", "fe80::/10", "fec0::/10")
 
 
+# Bộ phân giải DNS cục bộ của Ubuntu (systemd-resolved). ``localhost`` nằm trong DENIED_NETWORKS nên phải cho phép riêng.
+STUB_RESOLVER = "127.0.0.53/32"
+# Địa chỉ mà /etc/resolv.conf có thể ghi nhưng KHÔNG BAO GIỜ được mở: IMDS của đám mây (lộ khoá).
+NEVER_ALLOW = ("169.254.169.254", "fd00:ec2::254")
+_DENIED_NETS = tuple(ipaddress.ip_network(n) for n in (
+    "127.0.0.0/8", "::1/128", "169.254.0.0/16", "fe80::/10", "224.0.0.0/4", "ff00::/8", "0.0.0.0/8", "10.0.0.0/8",
+    "100.64.0.0/10", "172.16.0.0/12", "192.168.0.0/16", "198.18.0.0/15", "fc00::/7", "fec0::/10"))
+
+
 class UnsafeJobDir(RuntimeError):
     """Thư mục việc có liên kết tượng trưng/tệp lạ, hoặc đường dẫn trỏ ra ngoài thư mục việc."""
 
@@ -192,6 +201,34 @@ def host_addresses() -> List[str]:
     return sorted(result)
 
 
+def resolver_addresses(resolv_conf: str = "/etc/resolv.conf",
+                       own_addresses: Sequence[str] = ()) -> List[str]:
+    """Máy chủ DNS thật của máy (``nameserver`` trong resolv.conf) mà nằm trong dải bị chặn (mạng nội bộ của nhà cung
+    cấp…) → ``ip/32``/``ip/128`` để ``IPAddressAllow`` (Allow thắng Deny). Cố hết sức, lỗi thì bỏ qua. Không bao giờ
+    mở: loopback khác 127.0.0.53 (9router, dashboard…), địa chỉ của chính máy chủ, IMDS đám mây, địa chỉ lạ."""
+    try:
+        lines = Path(resolv_conf).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    own = {a.split("/", 1)[0] for a in own_addresses}
+    found = set()
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 2 or parts[0] != "nameserver":
+            continue
+        try:
+            ip = ipaddress.ip_address(parts[1].split("%", 1)[0])
+        except ValueError:
+            continue
+        text = str(ip)
+        if (text in NEVER_ALLOW or text in own or ip.is_unspecified or ip.is_multicast
+                or (ip.is_loopback and f"{ip}/32" != STUB_RESOLVER)):
+            continue
+        if any(ip in net for net in _DENIED_NETS):
+            found.add(f"{ip}/{ip.max_prefixlen}")
+    return sorted(found)[:3]
+
+
 _UNSAFE_UNIT_CHARS = re.compile(r"[\s\"'\\:%;]|[\x00-\x1f\x7f]")
 
 
@@ -216,10 +253,12 @@ def _real(path: Path) -> str:
 
 def systemd_command(argv: Sequence[str], job_dir: Path, env: Dict[str, str], *, network: bool,
                     timeout: int, read_only: Sequence[Path] = (), hidden: Optional[Sequence[str]] = None,
-                    own_addresses: Optional[Sequence[str]] = None, unit: Optional[str] = None,
+                    own_addresses: Optional[Sequence[str]] = None, resolvers: Optional[Sequence[str]] = None,
+                    unit: Optional[str] = None,
                     exists: Callable[[str], bool] = os.path.exists) -> List[str]:
     """Dòng lệnh ``systemd-run`` bọc ``argv``. ``read_only``: thư mục cần đọc (gắn lại nếu nằm dưới chỗ bị che).
-    ``hidden``/``own_addresses``: mặc định lấy từ máy (``hidden_paths``, ``host_addresses``)."""
+    ``hidden``/``own_addresses``/``resolvers``: mặc định lấy từ máy (``hidden_paths``, ``host_addresses``,
+    ``resolver_addresses``)."""
     work = unit_path(job_dir.as_posix())
     hidden = list(hidden_paths(job_dir) if hidden is None else hidden)
     props = [
@@ -246,6 +285,10 @@ def systemd_command(argv: Sequence[str], job_dir: Path, env: Dict[str, str], *, 
     if network:
         own = list(host_addresses() if own_addresses is None else own_addresses)
         props.append("IPAddressDeny=" + " ".join([*DENIED_NETWORKS, *own]))
+        # Bước đọc giọng cần DNS: Allow thắng Deny trong systemd → mở đúng stub 127.0.0.53 và máy chủ DNS thật nằm
+        # trong dải bị chặn; mọi thứ khác vẫn chặn.
+        dns = list(resolver_addresses(own_addresses=own) if resolvers is None else resolvers)
+        props.append("IPAddressAllow=" + " ".join(dict.fromkeys([STUB_RESOLVER, *dns])))
     else:
         props.append("PrivateNetwork=yes")
     cmd = ["systemd-run", "--quiet", "--wait", "--pipe", "--collect", "--service-type=exec"]
@@ -382,6 +425,18 @@ async def kill_tree(proc, name: str = os.name) -> None:
         await asyncio.wait_for(proc.wait(), timeout=10)
     except Exception as exc:  # pragma: no cover — dọn dẹp, không được ném đè lỗi gốc
         logger.warning("[zalo] không dừng hẳn được bộ dựng %s: %s", proc.pid, exc)
+
+
+def stop_all_units(timeout: int = 30) -> None:
+    """Gateway khởi động lại: đơn vị ``zalo-studio-*`` của lần chạy trước sống sót (systemd quản). Dừng hết, cố hết sức.
+    Dòng lệnh cố định; ``zalo-studio-*`` là MỘT đối số (systemctl tự khớp mẫu, không qua shell)."""
+    if mode() != "systemd":
+        return
+    try:
+        subprocess.run([SYSTEMCTL, "stop", "zalo-studio-*"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=timeout, check=False)
+    except Exception as exc:
+        logger.warning("[zalo] xưởng: không dừng được các đơn vị cũ: %s", exc)
 
 
 async def stop_unit(unit: str) -> None:

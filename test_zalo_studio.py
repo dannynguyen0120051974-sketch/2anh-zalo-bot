@@ -2004,3 +2004,157 @@ class StudioToolTest(unittest.IsolatedAsyncioTestCase):
             t.join()
         self.assertEqual(sum(1 for r in results if r.get("success")), 2)
         self.assertEqual(ledger.Ledger().used_today(MEMBER), 2)
+
+
+class RestartSafetyTest(unittest.TestCase):
+    """Review cuối GĐ6: policy ghi lúc nạp plugin, DNS trong hộp cát, gateway khởi động lại giữa việc."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="zalo-restart-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.enterContext(patch.dict(os.environ, {"ZALO_STUDIO_WORK": str(self.tmp / "work"),
+                                                  "ZALO_PERMISSIONS_FILE": str(self.tmp / "permissions.json")}))
+        self.book = ledger.Ledger(self.tmp / "usage.json")
+
+    def take(self, job_id, quota=10):
+        return self.book.take(job_id=job_id, uid=MEMBER, name="Lan", kind="giao_an", thread_id=GROUP,
+                              is_group=True, quota=quota)
+
+    def record(self, job_id):
+        return next(j for j in json.loads(self.book.path.read_text(encoding="utf-8"))["jobs"] if j["id"] == job_id)
+
+    # -- I-1
+    def test_register_publishes_the_video_policy_without_waiting_for_the_first_job(self):
+        from unittest.mock import MagicMock
+        import plugins.zalo_tools as pkg
+
+        policy = self.tmp / "studio-policy.json"
+        self.assertFalse(policy.exists())
+        pkg.register(MagicMock())
+        self.assertTrue(policy.exists())
+        self.assertEqual(json.loads(policy.read_text(encoding="utf-8"))["version"], 1)
+
+    def test_register_survives_a_policy_write_failure(self):
+        from unittest.mock import MagicMock
+        import plugins.zalo_tools as pkg
+
+        with patch.object(pkg, "publish_video_policy", side_effect=RuntimeError("hỏng")):
+            pkg.register(MagicMock())
+
+    # -- I-2
+    def test_network_step_allows_the_stub_resolver_and_denies_the_rest(self):
+        cmd = sandbox.systemd_command(["x"], Path("/w"), {}, network=True, timeout=10, hidden=[],
+                                      own_addresses=["203.0.113.7/32"], resolvers=["10.0.0.2/32", "fd00::53/128"])
+        props = [cmd[i + 1] for i, part in enumerate(cmd) if part == "-p"]
+        allow = next(p for p in props if p.startswith("IPAddressAllow=")).split("=", 1)[1].split()
+        self.assertEqual(allow, ["127.0.0.53/32", "10.0.0.2/32", "fd00::53/128"])
+        deny = next(p for p in props if p.startswith("IPAddressDeny=")).split("=", 1)[1].split()
+        for item in ("localhost", "10.0.0.0/8", "203.0.113.7/32"):
+            self.assertIn(item, deny, "vẫn chặn phần còn lại")
+        offline = sandbox.systemd_command(["x"], Path("/w"), {}, network=False, timeout=10, hidden=[])
+        offline_props = [offline[i + 1] for i, part in enumerate(offline) if part == "-p"]
+        self.assertFalse(any(p.startswith("IPAddressAllow=") for p in offline_props), "bước không mạng: không mở gì")
+        self.assertIn("PrivateNetwork=yes", offline_props)
+
+    def test_resolver_addresses_only_allow_denied_range_nameservers_never_loopback_or_metadata(self):
+        conf = self.tmp / "resolv.conf"
+        conf.write_text("# x\nnameserver 127.0.0.53\nnameserver 127.0.0.1\nnameserver 10.0.0.2\nnameserver 8.8.8.8\n"
+                        "nameserver 169.254.169.254\nnameserver fd00::53\nnameserver 192.168.1.5\nnameserver ::1\n"
+                        "nameserver khong-phai-ip\nsearch lan\n", encoding="utf-8")
+        got = sandbox.resolver_addresses(str(conf), own_addresses=["192.168.1.5/32"])
+        self.assertEqual(got, ["10.0.0.2/32", "127.0.0.53/32", "fd00::53/128"])
+        self.assertEqual(sandbox.resolver_addresses(str(self.tmp / "khong-co")), [])
+        with patch.object(sandbox, "resolver_addresses", return_value=[]):
+            cmd = sandbox.systemd_command(["x"], Path("/w"), {}, network=True, timeout=10, hidden=[], own_addresses=[])
+        self.assertIn("IPAddressAllow=127.0.0.53/32", cmd)
+
+    # -- I-3
+    def test_stop_all_units_uses_a_fixed_argv_and_a_single_glob_argument(self):
+        with patch.object(sandbox, "mode", return_value="systemd"), \
+                patch.object(sandbox.subprocess, "run") as run:
+            sandbox.stop_all_units()
+        self.assertEqual(run.call_args.args[0], ["systemctl", "stop", "zalo-studio-*"])
+        self.assertFalse(run.call_args.kwargs.get("shell"))
+        self.assertTrue(run.call_args.kwargs["timeout"])
+        with patch.object(sandbox, "mode", return_value="plain"), patch.object(sandbox.subprocess, "run") as run:
+            sandbox.stop_all_units()
+        run.assert_not_called()
+        with patch.object(sandbox, "mode", return_value="systemd"), \
+                patch.object(sandbox.subprocess, "run", side_effect=sandbox.subprocess.TimeoutExpired("systemctl", 30)):
+            with self.assertLogs(sandbox.logger, level="WARNING"):
+                sandbox.stop_all_units()
+
+    def test_studio_init_stops_old_units_and_removes_orphan_job_dirs_only(self):
+        work = self.tmp / "work"
+        orphan = work / "20261008-101010-ab12cd"
+        (orphan / "p").mkdir(parents=True)
+        (orphan / "p" / "x.docx").write_bytes(b"x")
+        other = work / "ghi-chu-cua-chu-bot"
+        other.mkdir()
+        calls = []
+        with patch.object(sandbox, "stop_all_units", side_effect=lambda *a, **k: calls.append(1)):
+            jobs.Studio(ledger=self.book, llm=lambda: None, deliver=None, notify=None,
+                        still_allowed=lambda j: True, quota_left=lambda j: None)
+        self.assertEqual(calls, [1])
+        self.assertFalse(orphan.exists())
+        self.assertTrue(other.exists(), "chỉ xoá thư mục đúng dạng mã việc")
+
+    def test_sweep_lost_fails_running_jobs_that_spent_and_refunds_the_rest(self):
+        for job_id in ("queued", "idle", "tokens", "images"):
+            self.take(job_id)
+        self.book.finish("idle", "running")
+        self.book.finish("tokens", "running")
+        self.book.progress("tokens", input_tokens=900, output_tokens=200)
+        self.book.finish("images", "running")
+        self.book.progress("images", images=1)
+        self.assertEqual(self.book.sweep_lost(), 4)
+        self.assertEqual(self.record("queued")["status"], "refunded")
+        self.assertEqual(self.record("idle")["status"], "refunded", "chưa tốn gì → trả lượt")
+        self.assertEqual(self.record("tokens")["status"], "failed", "tốn token → tính lượt")
+        self.assertEqual(self.record("images")["status"], "failed", "tốn ảnh → tính lượt")
+        day = json.loads(self.book.path.read_text(encoding="utf-8"))["days"][ledger.vn_day()][MEMBER]
+        self.assertEqual((day["refunded"], day["failed"], day["images"], day["input_tokens"]), (2, 2, 1, 900))
+        self.assertEqual(self.book.used_today(MEMBER), 2)
+
+    def test_sweep_lost_refund_still_obeys_the_daily_cap(self):
+        self.take("j0", quota=2)
+        self.take("j1", quota=2)
+        self.book.finish("j0", "refunded", error="máy hỏng")      # trả 1 lượt, mở chỗ cho việc thứ ba
+        self.take("j2", quota=2)
+        self.book.finish("j1", "running")
+        self.book.finish("j2", "running")
+        self.assertEqual(self.book.sweep_lost(), 2)
+        self.assertEqual((self.record("j1")["status"], self.record("j2")["status"]), ("refunded", "failed"))
+        self.assertTrue(self.record("j2")["refund_denied"], "đã trả đủ 2 lượt hôm nay")
+
+    def test_progress_is_incremental_and_never_double_counted_by_finish(self):
+        self.take("j1")
+        self.book.finish("j1", "running")
+        self.book.progress("j1", input_tokens=500, output_tokens=100, images=1)
+        self.assertEqual((self.record("j1")["input_tokens"], self.record("j1")["images"]), (500, 1))
+        self.book.progress("j1", input_tokens=300, images=0)
+        self.assertEqual(self.record("j1")["input_tokens"], 500, "không bao giờ giảm")
+        self.book.finish("j1", "ok", input_tokens=700, output_tokens=150, images=2)
+        job = self.record("j1")
+        self.assertEqual((job["input_tokens"], job["output_tokens"], job["images"]), (700, 150, 2))
+        day = json.loads(self.book.path.read_text(encoding="utf-8"))["days"][ledger.vn_day()][MEMBER]
+        self.assertEqual((day["input_tokens"], day["images"]), (700, 2))
+        self.book.progress("j1", input_tokens=9999)       # việc đã đóng: bỏ qua
+        self.assertEqual(self.record("j1")["input_tokens"], 700)
+
+    def test_builder_reports_spend_as_it_accrues(self):
+        seen = []
+        job = make_job("de_kiem_tra")
+        places = fake_places(self.tmp)
+        builder = jobs.Builder(job, FakeLlm(), places, self.tmp / "job",
+                               on_spend=lambda usage, images: seen.append((usage.input_tokens, images)))
+
+        class Result:
+            usage = type("U", (), {"input_tokens": 70, "output_tokens": 5})()
+
+        builder.usage.add(Result())
+        builder.images_used += 1
+        builder._spent()
+        self.assertEqual(seen, [(70, 0), (70, 1)])
+        jobs.Builder(job, FakeLlm(), places, self.tmp / "job",
+                     on_spend=lambda *a: 1 / 0).usage.add(Result())     # lỗi ghi sổ không làm hỏng việc
