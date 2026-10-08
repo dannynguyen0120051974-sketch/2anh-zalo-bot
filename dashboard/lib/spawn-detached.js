@@ -1,7 +1,9 @@
-// Môi trường cho tiến trình con khởi động lại: không mang theo danh sách chủ nhân cũ (nó tự nạp từ .env Hermes).
+import { EDITABLE_KEYS } from './env-file.js';
+
+// Môi trường cho tiến trình con khởi động lại: không mang theo giá trị cũ của mọi khoá dashboard sửa được
+// (chủ nhân + Cấu hình) — con tự nạp lại từ .env Hermes.
 export function childEnv(env = process.env) {
-  const { ZALO_ALLOWED_USERS: _stale, ...rest } = env;
-  return rest;
+  return Object.fromEntries(Object.entries(env).filter(([k]) => !EDITABLE_KEYS.has(k)));
 }
 
 // Chờ tiến trình con thật sự khởi động (sự kiện 'spawn') hoặc báo lỗi ('error', ví dụ ENOENT)
