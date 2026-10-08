@@ -113,13 +113,16 @@ def find(scope: str, query: str) -> List[Dict[str, str]]:
 
 
 def forget(scope: str, uris: List[Any]) -> List[str]:
-    """Xoá các mục đã chọn; URI ngoài kho của phạm vi này bị từ chối trước khi gọi mạng."""
-    chosen = [str(u) for u in (uris or [])][:MAX_FORGET]
+    """Xoá các mục đã chọn. Kiểm TOÀN BỘ URI trước: một URI ngoài kho của phạm vi này → từ chối cả lô; quá 5 mục →
+    từ chối (không lặng lẽ xoá 5 mục đầu). Mọi từ chối xảy ra trước khi gọi mạng."""
+    chosen = list(dict.fromkeys(str(u) for u in (uris or [])))
     if not chosen:
         raise ValueError("chưa chọn mục nào để quên")
     bad = [u for u in chosen if not _deletable(u, scope)]
     if bad:
         raise ValueError("chỉ quên được mục của chính cuộc trò chuyện này — gọi lại với `query` để lấy danh sách")
+    if len(chosen) > MAX_FORGET:
+        raise ValueError(f"mỗi lần quên tối đa {MAX_FORGET} mục — chọn lại tối đa {MAX_FORGET} URI rồi gọi lại")
     for uri in chosen:
         _call(scope, "DELETE", "/api/v1/fs", params={"uri": uri, "recursive": "false"})
     return chosen

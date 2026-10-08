@@ -34,6 +34,8 @@ if _ALT_BASE:
 plugins.memory.__path__ = [os.path.join(ROOT, "hermes-plugin"), *list(plugins.memory.__path__)]
 from plugins.memory import zalo_memory as zm  # noqa: E402
 
+BASE = sys.modules[zm.OpenVikingMemoryProvider.__module__]
+
 plugins.__path__ = [os.path.join(ROOT, "hermes-plugin"), *list(plugins.__path__)]
 from plugins.zalo_tools import memory_store  # noqa: E402
 from plugins.zalo_tools import tools as zalo_tools  # noqa: E402
@@ -72,6 +74,7 @@ class FakeOpenViking:
                 fake.requests.append({
                     "method": method, "path": url.path, "query": parse_qs(url.query), "body": body, "user": user,
                     "account": self.headers.get("X-OpenViking-Account", ""), "peer": self.headers.get("X-OpenViking-Actor-Peer"),
+                    "key": self.headers.get("X-API-Key") or self.headers.get("Authorization") or "",
                 })
                 if url.path == "/health":
                     return self._reply({"status": "ok", "healthy": True, "version": "0.4.13", "auth_mode": "dev"})
@@ -248,6 +251,65 @@ class IsolationTest(ZaloMemoryTestBase):
         self.assertEqual(self.ov.requests, [], "không một yêu cầu nào tới OpenViking")
 
 
+class ApiKeyTest(ZaloMemoryTestBase):
+    """Có khoá API từ BẤT KỲ nguồn nào lớp gốc đọc (env, hồ sơ ovcli…) → tắt, không gửi khoá đi; không rõ nguồn → tắt."""
+
+    def ovcli(self, data):
+        path = os.path.join(self.home, "ovcli.conf")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        self.enterContext(patch.dict(os.environ, {"OPENVIKING_CLI_CONFIG_FILE": path}))
+        self.enterContext(patch.object(BASE, "_load_hermes_openviking_config", return_value={"use_ovcli_config": True}))
+
+    def test_key_from_ovcli_profile_disables_provider_and_sends_nothing(self):
+        self.ovcli({"url": self.ov.url, "api_key": "k-ovcli"})
+        self.assertTrue(zm.api_key_would_be_sent())
+        p = zm.ZaloMemoryProvider()
+        self.providers.append(p)
+        self.assertFalse(p.is_available())
+        p.initialize("s-1", platform="zalo", chat_type="group", chat_id=GROUP_A, hermes_home=self.home)
+        self.assertEqual(p.prefetch("hôm trước nhóm thống nhất gì về lịch trực"), "")
+        p.sync_turn("nhóm chốt lịch trực tuần sau", "Đã ghi nhận.", session_id="s-1")
+        self.assertEqual(p.system_prompt_block(), "")
+        time.sleep(0.2)
+        self.assertEqual(self.ov.requests, [], "không một yêu cầu nào, càng không gửi khoá")
+
+    def test_ovcli_profile_without_key_stays_available(self):
+        self.ovcli({"url": self.ov.url})
+        self.assertFalse(zm.api_key_would_be_sent())
+        self.assertTrue(zm.ZaloMemoryProvider().is_available())
+
+    def test_unknown_key_source_fails_closed(self):
+        with patch.object(BASE, "_resolve_connection_settings", side_effect=RuntimeError("đổi cấu trúc")):
+            self.assertTrue(zm.api_key_would_be_sent())
+            self.assertFalse(zm.ZaloMemoryProvider().is_available())
+        with patch.object(BASE, "_load_hermes_openviking_config", side_effect=ValueError("config.yaml hỏng")):
+            self.assertFalse(zm.ZaloMemoryProvider().is_available())
+
+    def test_key_appearing_after_start_stops_all_traffic_and_never_sends_the_key(self):
+        p = self.provider()
+        p.prefetch("nhóm mình hay họp hôm nào nhỉ")
+        before = len(self.ov.requests)
+        self.assertGreater(before, 0)
+        with patch.dict(os.environ, {"OPENVIKING_API_KEY": "k-late"}):
+            self.assertEqual(p.prefetch("hôm trước nhóm thống nhất gì về lịch trực"), "")
+            p.sync_turn("nhóm chốt lịch trực tuần sau", "Đã ghi nhận.", session_id="s-1")
+            time.sleep(0.3)
+        self.assertEqual(len(self.ov.requests), before)
+        self.assertEqual([r for r in self.ov.requests if r["key"]], [])
+
+    def test_client_carrying_a_key_is_refused_even_if_resolver_missed_it(self):
+        p = self.provider()
+        keyed = zm._VikingClient(self.ov.url, "k-sneaky", account="default", user="default")
+        with self.assertRaises(zm._ApiKeyRefused):
+            p._rescope(keyed)
+        with patch.object(zm.OpenVikingMemoryProvider, "_ensure_client", return_value=keyed):
+            self.assertIsNone(p._ensure_client())
+            p.sync_turn("nhóm chốt lịch trực tuần sau", "Đã ghi nhận.", session_id="s-1")
+        time.sleep(0.2)
+        self.assertEqual([r for r in self.ov.requests if r["key"]], [])
+
+
 class CaptureTest(ZaloMemoryTestBase):
     def test_turn_is_clipped_text_only_and_nothing_is_extracted_before_the_interval(self):
         p = self.provider()
@@ -387,6 +449,22 @@ class OwnerMemoryToolTest(unittest.IsolatedAsyncioTestCase):
         delete = self.ov.where("/api/v1/fs")[0]
         self.assertEqual((delete["method"], delete["query"]["uri"][0], delete["user"]),
                          ("DELETE", listed[0]["uri"], f"zalo-g-{GROUP_A}"))
+
+    async def test_forget_checks_every_uri_before_capping_and_refuses_more_than_five(self):
+        self.turn()
+        root = f"viking://user/zalo-g-{GROUP_A}/memories/preferences"
+        mine = [f"{root}/mem_{i}.md" for i in range(5)]
+        foreign = f"viking://user/zalo-u-{OWNER}/memories/preferences/mem_owner.md"
+        refused = json.loads(await zalo_tools.zalo_memory_forget({"uris": mine + [foreign]}))
+        self.assertFalse(refused["success"])
+        self.assertIn("chính cuộc trò chuyện", refused["error"], "URI lạ ở vị trí thứ 6 vẫn làm hỏng cả lô")
+        too_many = json.loads(await zalo_tools.zalo_memory_forget({"uris": mine + [f"{root}/mem_5.md"]}))
+        self.assertFalse(too_many["success"])
+        self.assertIn("tối đa 5", too_many["error"])
+        self.assertEqual(self.ov.where("/api/v1/fs"), [], "từ chối thì không xoá mục nào")
+        done = json.loads(await zalo_tools.zalo_memory_forget({"uris": mine + [mine[0]]}))
+        self.assertEqual(done["result"]["da_quen"], 5)
+        self.assertEqual(sorted(r["query"]["uri"][0] for r in self.ov.where("/api/v1/fs")), sorted(mine))
 
     async def test_owner_only_registered_guarded_and_refused_in_cron_or_when_memory_off(self):
         names = {name: toolset for name, _e, _s, _h, toolset in zalo_tools.TOOLS}

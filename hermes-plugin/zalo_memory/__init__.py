@@ -136,6 +136,24 @@ def base_compatible(base=OpenVikingMemoryProvider) -> bool:
         return False
 
 
+def api_key_would_be_sent() -> bool:
+    """Lớp gốc có gửi khoá API (từ BẤT KỲ nguồn nào: biến môi trường, hồ sơ ovcli…) không.
+
+    Hỏi chính bộ phân giải kết nối của plugin OpenViking của Hermes thay vì tự đoán nguồn khoá. Có khoá thì máy
+    chủ suy danh tính từ khoá, bỏ qua tiêu đề người dùng → mất tách phạm vi. Không xác định được → coi như có (đóng).
+    """
+    try:
+        base_mod = sys.modules[OpenVikingMemoryProvider.__module__]
+        settings = base_mod._resolve_connection_settings(base_mod._load_hermes_openviking_config())
+        return bool(str(settings.get("api_key") or "").strip())
+    except Exception:
+        return True
+
+
+class _ApiKeyRefused(RuntimeError):
+    """Client của lớp gốc mang khoá API — không dùng (mất tách phạm vi)."""
+
+
 def scope_user(platform: Any, chat_type: Any, chat_id: Any) -> Optional[str]:
     """Người dùng OpenViking của một phiên; None = phiên này không có trí nhớ dài hạn."""
     if str(platform or "") != "zalo":
@@ -218,6 +236,11 @@ def _warn_once(key: str, message: str, *args) -> None:
     logger.warning(message, *args)
 
 
+def _warn_api_key() -> None:
+    _warn_once("apikey", "[zalo_memory] OpenViking đang được cấu hình với khoá API (OPENVIKING_API_KEY hoặc hồ sơ ovcli) — "
+               "trí nhớ theo nhóm/người cần OpenViking chế độ dev/trusted không khoá; tắt trí nhớ dài hạn.")
+
+
 class ZaloMemoryProvider(OpenVikingMemoryProvider):
     """OpenViking theo phạm vi nhóm/người cho nền tảng Zalo."""
 
@@ -236,14 +259,14 @@ class ZaloMemoryProvider(OpenVikingMemoryProvider):
         # Máy Windows: 127.0.0.1:1933 thường là bộ nhớ RIÊNG của chủ máy (Claude Code) — không bao giờ đụng.
         if _host_platform() == "win32":
             return False
-        # Có khoá API thì máy chủ tự suy danh tính từ khoá, bỏ qua tiêu đề người dùng → mất tách phạm vi.
-        if str(os.environ.get("OPENVIKING_API_KEY") or "").strip():
-            _warn_once("apikey", "[zalo_memory] OPENVIKING_API_KEY đang đặt — trí nhớ theo nhóm/người cần OpenViking "
-                       "chế độ dev/trusted không khoá; tắt trí nhớ dài hạn.")
-            return False
         if not base_compatible():
             _warn_once("shape", "[zalo_memory] plugin OpenViking của Hermes đã đổi cấu trúc — tắt trí nhớ dài hạn để không "
                        "rò giữa các nhóm. Cập nhật 2anh-zalo-bot.")
+            return False
+        # Có khoá API (env, hồ sơ ovcli hay nguồn nào lớp gốc đọc) thì máy chủ tự suy danh tính từ khoá, bỏ qua
+        # tiêu đề người dùng → mất tách phạm vi.
+        if api_key_would_be_sent():
+            _warn_api_key()
             return False
         return super().is_available()
 
@@ -252,6 +275,9 @@ class ZaloMemoryProvider(OpenVikingMemoryProvider):
     def initialize(self, session_id: str, **kwargs) -> None:
         self._scope = scope_user(kwargs.get("platform"), kwargs.get("chat_type"), kwargs.get("chat_id"))
         self._session_id = session_id
+        if self._scope and api_key_would_be_sent():
+            _warn_api_key()
+            self._scope = None  # cấu hình đổi sau is_available: vẫn đóng
         if not self._scope:
             return  # phiên không phải Zalo: không mở kết nối, không ghi gì
         super().initialize(session_id, **kwargs)
@@ -261,6 +287,9 @@ class ZaloMemoryProvider(OpenVikingMemoryProvider):
     def _rescope(self, client: Optional[_VikingClient]) -> Optional[_VikingClient]:
         if client is None:
             return None
+        if str(getattr(client, "_api_key", "") or "").strip():
+            _warn_api_key()
+            raise _ApiKeyRefused("client OpenViking mang khoá API")
         if (getattr(client, "_account", None) == OV_ACCOUNT and getattr(client, "_user", None) == self._scope
                 and not getattr(client, "_agent", "")):
             return client
@@ -269,10 +298,20 @@ class ZaloMemoryProvider(OpenVikingMemoryProvider):
     def _ensure_client(self):
         if not self._scope:
             return None
+        if api_key_would_be_sent():  # cấu hình đổi giữa chừng (/reload, .env): đóng trước khi lớp gốc dựng client
+            _warn_api_key()
+            self._client = None
+            return None
         client = super()._ensure_client()
         if client is None:
             return None
-        scoped = self._rescope(client)
+        try:
+            scoped = self._rescope(client)
+        except _ApiKeyRefused:
+            # Đóng và ghi "lần thử hỏng" dạng của lớp gốc để không dò lại mỗi lượt trong thời gian chờ.
+            self._client = None
+            self._failed_refresh = ((self._endpoint, self._api_key, self._account, self._user, self._agent), time.monotonic())
+            return None
         if scoped is not client:
             self._client = scoped
         return scoped
