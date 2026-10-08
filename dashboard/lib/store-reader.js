@@ -5,7 +5,8 @@
  */
 import { existsSync, statSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
-import { fold } from '../public/fold.js';
+import { fold, indexOfFolded } from '../public/fold.js';
+import { classifyMedia, linksOf, NOT_LINK_TYPES } from '../public/media.js';
 
 export const LOGIN_CODE_PREFIX = 'Mã đăng nhập dashboard:';
 const SECRET = `${LOGIN_CODE_PREFIX}%`;
@@ -59,7 +60,53 @@ export const SQL = {
       AND timestamp_ms <= ? AND (timestamp_ms < ? OR rowid < ?)
     ORDER BY timestamp_ms DESC, rowid DESC LIMIT ?`,
 };
+
+// Câu trong một hội thoại: đi theo idx_messages_thread_time (account_id, thread_type, thread_id, timestamp_ms),
+// mới nhất trước, dừng khi đủ trang. Con trỏ cùng dạng với getMessages: "<timestamp_ms>:<rowid>".
+const THREAD_WHERE = 'account_id = ? AND thread_type = ? AND thread_id = ? AND text NOT LIKE ?';
+const COLS = 'rowid AS id, sender_name, text, msg_type, timestamp_ms, is_self';
+const OLDER = 'timestamp_ms <= ? AND (timestamp_ms < ? OR rowid < ?)';
+const quoted = (list) => list.map((x) => `'${x}'`).join(', ');
+export const MEDIA_MATCH = {
+  photo: "msg_type IN ('chat.photo', 'chat.video.msg')",
+  file: "msg_type = 'share.file'",
+  link: `msg_type NOT IN (${quoted(NOT_LINK_TYPES)}) AND text LIKE '%https://%'`,
+};
+export const THREAD_SQL = {
+  search: (match) => `
+    SELECT ${COLS} FROM messages
+    WHERE ${THREAD_WHERE} AND ${match} AND ${OLDER}
+    ORDER BY timestamp_ms DESC, rowid DESC LIMIT ?`,
+  media: (kind) => `
+    SELECT ${COLS} FROM messages
+    WHERE ${THREAD_WHERE} AND ${MEDIA_MATCH[kind]} AND ${OLDER}
+    ORDER BY timestamp_ms DESC, rowid DESC LIMIT ?`,
+  // Phía cũ của một mốc, gồm cả chính mốc (rowid <= ?).
+  upTo: `
+    SELECT ${COLS} FROM messages
+    WHERE ${THREAD_WHERE} AND timestamp_ms <= ? AND (timestamp_ms < ? OR rowid <= ?)
+    ORDER BY timestamp_ms DESC, rowid DESC LIMIT ?`,
+  // Phía mới hơn một mốc (không gồm mốc), cũ trước.
+  after: `
+    SELECT ${COLS} FROM messages
+    WHERE ${THREAD_WHERE} AND timestamp_ms >= ? AND (timestamp_ms > ? OR rowid > ?)
+    ORDER BY timestamp_ms ASC, rowid ASC LIMIT ?`,
+};
 export const SEARCH_MATCH = { fold: 'instr(zd_fold(text), ?) > 0', like: "text LIKE ? ESCAPE '\\'" };
+
+const MEDIA_ROUNDS = 20;
+const who = (r) => ({ senderName: r.sender_name, isSelf: Boolean(r.is_self), ts: Number(r.timestamp_ms) });
+
+/** Một dòng tin → các mục của bảng Ảnh/Video · Tệp · Link (không bao giờ có senderUid). */
+export function mediaItems(kind, r) {
+  const base = { msgId: Number(r.id), ...who(r) };
+  if (kind === 'link') return linksOf(r.msg_type, r.text).map((l, i) => ({ id: `${r.id}:${i}`, ...base, ...l }));
+  const m = classifyMedia(r.msg_type, r.text);
+  if (!m) return [];
+  if (kind === 'file') return m.kind === 'file' ? [{ id: String(r.id), ...base, name: m.name, url: m.url, ext: m.ext }] : [];
+  if (m.kind === 'photo' || m.kind === 'video') return [{ id: String(r.id), ...base, url: m.url, video: m.kind === 'video', caption: m.caption.slice(0, 300) }];
+  return [];
+}
 
 const fileIdentity =(p) => { const s = statSync(p, { bigint: true }); return `${s.dev}:${s.ino}:${s.birthtimeNs}`; };
 
@@ -184,6 +231,91 @@ export function createStoreReader({
     };
   }
 
+  const cursorOf = (r) => `${r.timestamp_ms}:${r.id}`;
+  const threadArgs = (acc, threadId, threadType) => [acc, Number(threadType), String(threadId), SECRET];
+  const needleOf = (query) => (folding ? fold(query) : `%${String(query).replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`);
+
+  /** Tin mới hơn con trỏ (cuộn xuống sau khi nhảy tới một tin cũ), cũ trước. */
+  function getMessagesAfter(threadId, threadType, after, { limit } = {}) {
+    const acc = account();
+    if (!acc) return { messages: [], nextAfter: null };
+    const size = pageSize(limit, 100, 50);
+    const c = parseCursor(after);
+    const rows = open().prepare(THREAD_SQL.after).all(...threadArgs(acc, threadId, threadType), c.ts, c.ts, c.id, size + 1);
+    const page = rows.slice(0, size);
+    return { messages: page.map(toMessage), nextAfter: rows.length > size ? cursorOf(page[page.length - 1]) : null };
+  }
+
+  /** Trang quanh một tin (kết quả tìm): chừng `limit` tin mỗi phía, kèm con trỏ đi tiếp hai chiều. */
+  function getMessagesAround(threadId, threadType, around, { limit } = {}) {
+    const acc = account();
+    if (!acc) return { messages: [], nextBefore: null, nextAfter: null };
+    const size = pageSize(limit, 50, 25);
+    const c = parseCursor(around);
+    const d = open();
+    const older = d.prepare(THREAD_SQL.upTo).all(...threadArgs(acc, threadId, threadType), c.ts, c.ts, c.id, size + 2);
+    const oldPage = older.slice(0, size + 1); // chính tin đó + `size` tin cũ hơn
+    const newer = getMessagesAfter(threadId, threadType, around, { limit: size });
+    const oldest = oldPage[oldPage.length - 1];
+    return {
+      messages: [...oldPage.reverse().map(toMessage), ...newer.messages],
+      nextBefore: older.length > size + 1 ? cursorOf(oldest) : null,
+      nextAfter: newer.nextAfter,
+    };
+  }
+
+  /** Tìm trong một hội thoại: cùng cách gấp chữ với tìm toàn văn, mới nhất trước. */
+  function searchThread(threadId, threadType, query, { before = null, limit } = {}) {
+    const acc = account();
+    if (!acc) return { results: [], nextBefore: null };
+    const size = pageSize(limit, 50, 30);
+    const c = before ? parseCursor(before) : null;
+    const sql = THREAD_SQL.search(folding ? SEARCH_MATCH.fold : SEARCH_MATCH.like);
+    const [a, type, id, secret] = threadArgs(acc, threadId, threadType);
+    const rows = open().prepare(sql).all(a, type, id, secret, needleOf(query), c?.ts ?? END, c?.ts ?? END, c?.id ?? END, size + 1);
+    const page = rows.slice(0, size);
+    return {
+      results: page.map((r) => ({ ...toMessage(r), text: excerpt(String(r.text), query) })),
+      nextBefore: rows.length > size ? cursorOf(page[page.length - 1]) : null,
+    };
+  }
+
+  /** 300 ký tự quanh chỗ trùng (tin dài mà chỗ trùng nằm sâu thì vẫn thấy được chỗ tô sáng). */
+  function excerpt(text, query) {
+    const at = folding ? indexOfFolded(text, query) : text.toLowerCase().indexOf(String(query).toLowerCase());
+    const from = at > 120 ? at - 60 : 0;
+    return `${from ? '…' : ''}${text.slice(from, from + 300)}`;
+  }
+
+  /**
+   * Ảnh/video, tệp hoặc link của một hội thoại, mới nhất trước. Link lấy từ chữ nên một tin có thể ra 0..n mục:
+   * đọc từng lô cho tới khi đủ trang (tối đa MEDIA_ROUNDS lô một lần gọi, còn nữa thì trả con trỏ đi tiếp).
+   */
+  function listMedia(threadId, threadType, kind, { before = null, limit } = {}) {
+    const acc = account();
+    if (!acc) return { items: [], nextBefore: null };
+    const size = pageSize(limit, 60, 30);
+    const batch = size + 1;
+    const stmt = open().prepare(THREAD_SQL.media(kind));
+    const c = before ? parseCursor(before) : null;
+    let cur = c ? { ts: c.ts, id: c.id } : { ts: END, id: END };
+    const items = [];
+    for (let round = 0; round < MEDIA_ROUNDS; round += 1) {
+      const rows = stmt.all(...threadArgs(acc, threadId, threadType), cur.ts, cur.ts, cur.id, batch);
+      for (let i = 0; i < rows.length; i += 1) {
+        const r = rows[i];
+        cur = { ts: Number(r.timestamp_ms), id: Number(r.id) };
+        items.push(...mediaItems(kind, r));
+        if (items.length >= size) {
+          const more = i < rows.length - 1 || rows.length === batch;
+          return { items, nextBefore: more ? `${cur.ts}:${cur.id}` : null };
+        }
+      }
+      if (rows.length < batch) return { items, nextBefore: null };
+    }
+    return { items, nextBefore: `${cur.ts}:${cur.id}` };
+  }
+
   function hasThread(threadId, threadType) {
     const acc = account();
     if (!acc) return false;
@@ -257,6 +389,10 @@ export function createStoreReader({
     listConversations,
     getMessages,
     searchMessages,
+    getMessagesAfter,
+    getMessagesAround,
+    searchThread,
+    listMedia,
     hasThread,
     todayStats,
     senderNames,

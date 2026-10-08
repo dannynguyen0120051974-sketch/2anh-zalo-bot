@@ -87,7 +87,118 @@ test('chưa có lịch sử: danh sách rỗng có cờ unavailable, xem tin tr�
   assert.equal(msgs.status, 503);
   assert.match(msgs.json.error, /báo người cài đặt/);
   assert.equal((await call('/api/chats/search?q=chao', { cookie })).status, 503);
+  for (const p of ['/api/chats/100/search?type=0&q=chao', '/api/chats/100/media?type=0&kind=link', '/api/chats/100/messages?type=0&around=5:1']) {
+    const res = await call(p, { cookie });
+    assert.equal(res.status, 503, p);
+    assert.match(res.json.error, /báo người cài đặt/, p);
+  }
   assert.equal(existsSync(join(deps.dir, 'zalo.sqlite')), false);
+});
+
+const PHOTO = 'https://photo-stal-27.zdn.vn/gr/jpg/4465fc927e4faf11f65e/2aOboR44d1PKLnuojjTWw89o8pKvNcouPXM6dnTE.jpg';
+const FILE = 'https://file-stal-18.dlfl.vn/gr/4e7412403493e5cdbc82/2aOboR448crP59vGXdg7cy4myByEAcqBLYc8diiW';
+const VIDEO = 'https://video-stal-46.dlmd.me/gr/1f78a5bfe81c36426f0d/2aOboR3605P4uCnJwRiSwTYeOw2uLdFtv234Ay24';
+
+function seedGroup(deps) {
+  const gm = (n, over) => chatMsg({ msgId: `gm${n}`, threadId: '200', threadType: 1, senderUid: '300', senderName: 'Minh', ts: 5000 + n, ...over });
+  const filler = Array.from({ length: 60 }, (_, i) => gm(100 + i, { text: `tin thường ${i}` }));
+  seedHistory(deps, { messages: [
+    gm(1, { text: `Ảnh lớp\n${PHOTO}`, msgType: 'chat.photo' }),
+    gm(2, { text: `KH.docx\n${FILE}`, msgType: 'share.file' }),
+    gm(3, { text: VIDEO, msgType: 'chat.video.msg' }),
+    gm(4, { text: 'Nộp ở https://forms.gle/abc nhé', msgType: 'webchat' }),
+    gm(5, { text: 'Họp tổ chiều nay ở phòng Hoá', msgType: 'webchat' }),
+    ...filler,
+    chatMsg({ msgId: 'o1', threadId: '201', threadType: 1, senderUid: '300', text: 'Họp tổ nhóm khác', ts: 9000 }),
+  ] });
+}
+
+async function readyGroup(t, role = 'owner') {
+  const deps = makeDeps(t);
+  seedGroup(deps);
+  const { call } = await startApp(t, deps);
+  const cookie = await loginAs(t, deps, call, { username: `k-${role}`, role });
+  return { call, cookie };
+}
+
+test('tìm trong hội thoại, bảng media, trang quanh tin: cần đăng nhập, cả hai vai trò dùng được', async (t) => {
+  const { call } = await startApp(t, makeDeps(t));
+  for (const p of ['/api/chats/200/search?type=1&q=hop', '/api/chats/200/media?type=1&kind=photo', '/api/chats/200/messages?type=1&around=5001:1']) {
+    assert.equal((await call(p)).status, 401, p);
+  }
+  for (const role of ['admin', 'owner']) {
+    const { call: c, cookie } = await readyGroup(t, role);
+    assert.equal((await c('/api/chats/200/search?type=1&q=hop', { cookie })).status, 200, role);
+    assert.equal((await c('/api/chats/200/media?type=1&kind=file', { cookie })).status, 200, role);
+  }
+});
+
+test('tìm trong một hội thoại: không dấu, chỉ hội thoại đó, có tên người gửi, không senderUid', async (t) => {
+  const { call, cookie } = await readyGroup(t);
+  const res = await call(`/api/chats/200/search?type=1&q=${encodeURIComponent('HOP TO')}`, { cookie });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.json.results.map((r) => [r.text, r.senderName]), [['Họp tổ chiều nay ở phòng Hoá', 'Minh']]);
+  assert.equal('senderUid' in res.json.results[0], false);
+  assert.equal(res.json.nextBefore, null);
+  const page = await call('/api/chats/200/search?type=1&q=thuong', { cookie });
+  assert.equal(page.json.results.length, 30);
+  const more = await call(`/api/chats/200/search?type=1&q=thuong&before=${encodeURIComponent(page.json.nextBefore)}`, { cookie });
+  assert.equal(more.json.results.length, 30);
+});
+
+test('bảng Ảnh/Video · Tệp · Link trả đúng dạng, không senderUid', async (t) => {
+  const { call, cookie } = await readyGroup(t);
+  const photo = await call('/api/chats/200/media?type=1&kind=photo', { cookie });
+  assert.deepEqual(photo.json.items.map((x) => [x.url, x.video, x.caption]), [[VIDEO, true, ''], [PHOTO, false, 'Ảnh lớp']]);
+  const file = await call('/api/chats/200/media?type=1&kind=file', { cookie });
+  assert.deepEqual(file.json.items.map((x) => [x.name, x.url, x.ext, x.senderName]), [['KH.docx', FILE, 'docx', 'Minh']]);
+  const link = await call('/api/chats/200/media?type=1&kind=link', { cookie });
+  assert.deepEqual(link.json.items.map((x) => [x.url, x.host]), [['https://forms.gle/abc', 'forms.gle']]);
+  for (const x of [...photo.json.items, ...file.json.items, ...link.json.items]) {
+    assert.equal('senderUid' in x, false);
+    assert.equal(typeof x.ts, 'number');
+  }
+});
+
+test('trang quanh một tin rồi cuộn xuống tải tin mới hơn tới hết', async (t) => {
+  const { call, cookie } = await readyGroup(t);
+  const hit = (await call('/api/chats/200/search?type=1&q=forms', { cookie })).json.results[0];
+  const around = await call(`/api/chats/200/messages?type=1&around=${encodeURIComponent(`${hit.ts}:${hit.id}`)}`, { cookie });
+  assert.equal(around.status, 200);
+  const ids = around.json.messages.map((m) => m.id);
+  assert.ok(ids.includes(hit.id));
+  assert.equal(around.json.nextBefore, null); // chỉ có 3 tin cũ hơn
+  assert.equal(ids.indexOf(hit.id), 3);
+  assert.equal(around.json.messages.length, 4 + 25);
+  let after = around.json.nextAfter; let total = around.json.messages.length;
+  while (after) {
+    const p = await call(`/api/chats/200/messages?type=1&after=${encodeURIComponent(after)}`, { cookie });
+    total += p.json.messages.length; after = p.json.nextAfter;
+  }
+  assert.equal(total, 65);
+});
+
+test('tham số sai của các đường mới bị từ chối 400 có bước tiếp theo', async (t) => {
+  const { call, cookie } = await readyGroup(t);
+  for (const p of [
+    '/api/chats/200/search?type=1&q=a',
+    `/api/chats/200/search?type=1&q=${'a'.repeat(101)}`,
+    '/api/chats/200/search?type=1&q=hop&before=x',
+    '/api/chats/200/search?q=hop',
+    '/api/chats/abc/search?type=1&q=hop',
+    '/api/chats/200/media?type=1',
+    '/api/chats/200/media?type=1&kind=video',
+    '/api/chats/200/media?type=1&kind=photo&before=..%2F',
+    '/api/chats/200/media?type=1&kind=photo&kind=file',
+    '/api/chats/200/messages?type=1&around=x',
+    '/api/chats/200/messages?type=1&after=1:',
+    '/api/chats/200/messages?type=1&around=5:1&before=5:1',
+    '/api/chats/200/messages?type=1&around=5:1&after=5:1',
+  ]) {
+    const res = await call(p, { cookie });
+    assert.equal(res.status, 400, p);
+    assert.match(res.json.error, /—/, p);
+  }
 });
 
 test('kết nối Zalo tắt vẫn xem được hội thoại, nhóm dùng tên dự phòng', async (t) => {
