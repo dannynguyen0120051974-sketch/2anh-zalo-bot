@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAuditFeed, describe } from './audit-feed.js';
+import { ACTION_LABELS, createAuditFeed, describe } from './audit-feed.js';
 
 const fakeStore = (rows, { available = true } = {}) => ({
   available: () => available,
@@ -90,4 +90,10 @@ test('đọc lịch sử bot lỗi vẫn còn hoạt động dashboard', async (
   const feed = createAuditFeed({ store, activity: fakeActivity([{ at: 5, actor: 'anh', action: 'zalo_logout', ok: true }]), threadNames: names });
   const { items } = await feed.list({ role: 'owner' });
   assert.deepEqual(items.map((i) => i.what), ['Đăng xuất Zalo']);
+});
+
+test('giai đoạn 7A: mọi thao tác mới đều có nhãn tiếng Việt', () => {
+  const actions = ['people_update', 'people_delete', 'agent_memory_edit', 'agent_memory_delete', 'dashboard_friend_accept', 'dashboard_friend_reject',
+    'dashboard_reminder_remove', 'cron_pause', 'cron_resume', 'cron_remove', 'kb_upload', 'kb_delete'];
+  for (const a of actions) assert.match(ACTION_LABELS[a] || '', /[À-ỹ]/, a);
 });

@@ -43,6 +43,18 @@ export const ACTION_LABELS = {
   brand_logo_remove: 'Gỡ logo',
   brand_reset: 'Khôi phục thương hiệu mặc định',
   owners_update: 'Đổi chủ nhân bot',
+  people_update: 'Sửa sổ người quen',
+  people_delete: 'Xoá người khỏi sổ người quen',
+  agent_memory_edit: 'Sửa bộ nhớ của trợ lý',
+  agent_memory_delete: 'Xoá mục trong bộ nhớ của trợ lý',
+  dashboard_friend_accept: 'Chấp nhận lời mời kết bạn từ dashboard',
+  dashboard_friend_reject: 'Từ chối lời mời kết bạn từ dashboard',
+  dashboard_reminder_remove: 'Xoá lời nhắc Zalo từ dashboard',
+  cron_pause: 'Tạm dừng việc hẹn giờ của trợ lý',
+  cron_resume: 'Chạy lại việc hẹn giờ của trợ lý',
+  cron_remove: 'Xoá việc hẹn giờ của trợ lý',
+  kb_upload: 'Tải tài liệu lên kho tri thức',
+  kb_delete: 'Xoá tài liệu khỏi kho tri thức',
 };
 
 const REASONS = {
