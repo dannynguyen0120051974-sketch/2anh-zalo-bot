@@ -267,8 +267,15 @@ def _plain(value: Any, limit: int, what: str) -> str:
     return value
 
 
-def check_engine_json(text: str, allowed: Iterable[str]) -> Dict[str, Any]:
-    """JSON đầu vào bộ sinh văn bản: object, đúng loại, chỉ kiểu JSON thường, bỏ khoá đường dẫn ra."""
+ENGINE_NESTED_KEYS = frozenset({"noi_dung", "ngay", "thang", "nam"})
+
+
+def check_engine_json(text: str, allowed: Iterable[str], keys: Iterable[str]) -> Dict[str, Any]:
+    """JSON đầu vào bộ sinh văn bản: object, đúng loại, chỉ kiểu JSON thường.
+
+    Danh sách trắng: khoá cấp ngoài chỉ giữ những khoá ``keys`` mà bộ sinh thật sự đọc, khoá lồng
+    trong chỉ giữ ``ENGINE_NESTED_KEYS``; mọi khoá khác (``output_path``, ``template``, khoá giống
+    đường dẫn…) bị BỎ trước khi tới bộ sinh nên không bao giờ có tác dụng."""
     text = clean_text(text)
     try:
         data = json.loads(text)
@@ -292,9 +299,16 @@ def check_engine_json(text: str, allowed: Iterable[str]) -> Dict[str, Any]:
             raise SourceError("JSON có kiểu dữ liệu lạ")
 
     walk(data, 0)
-    for key in ("output_path", "output", "outputFile", "output_file"):
-        data.pop(key, None)
-    return data
+
+    def prune(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {k: prune(v) for k, v in value.items() if k in ENGINE_NESTED_KEYS}
+        if isinstance(value, list):
+            return [prune(v) for v in value]
+        return value
+
+    allowed_keys = set(keys)
+    return {k: prune(v) for k, v in data.items() if k in allowed_keys}
 
 
 def check_quiz(text: str) -> Dict[str, Any]:

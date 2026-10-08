@@ -317,7 +317,7 @@ class Builder:
         skill = self.where.skills / self.recipe.script
 
         async def attempt(text: str) -> List[Path]:
-            data = validate.check_engine_json(text, self._types())
+            data = validate.check_engine_json(text, self._types(), recipes.ENGINE_KEYS[self.recipe.script])
             if self.project.exists():
                 shutil.rmtree(self.project)
             self.project.mkdir(parents=True)

@@ -51,6 +51,18 @@ NODE_ENGINES = {
                           "engine/generate_vb_co_ten_loai.js"),
 }
 DOC_TYPES = {"soan-van-ban-hanh-chinh": ND30_TYPES, "soan-van-ban-dang": DANG_TYPES}
+# Khoá JSON cấp ngoài mà bộ sinh của từng skill thật sự đọc (kiểm trong engine/*.js). Khoá khác bị bỏ.
+_COMMON_KEYS = ("loai_van_ban", "co_quan_ban_hanh", "ky_hieu_co_quan", "ky_hieu_loai", "so_ky_hieu", "dia_danh", "ngay", "thang",
+                "nam", "trich_yeu", "ten_loai", "kinh_gui", "can_cu", "noi_dung", "cac_dieu", "dong_quyet_dinh", "theo_de_nghi",
+                "quyen_han_ky", "chuc_vu_ky", "nguoi_ky", "noi_nhan")
+ENGINE_KEYS = {
+    "soan-van-ban-hanh-chinh": frozenset(_COMMON_KEYS + (
+        "co_quan_chu_quan", "kt_chuc_vu", "thu_ky", "chu_toa", "chuc_vu_chu_tri", "chuc_vu_thu_ky",
+        "nguoi_chu_tri", "nguoi_ghi_bien_ban")),
+    "soan-van-ban-dang": frozenset(_COMMON_KEYS + (
+        "co_quan_cap_tren", "chu_de_dai_hoi", "phu_de_chu_de", "chi_dan_luu_hanh", "phu_luc", "xac_nhan", "line_spacing",
+        "ky_hieu_soan_thao", "co_kinh_gui_co", "chu_tri", "nguoi_ghi", "chuc_vu_trai", "chuc_vu_phai")),
+}
 
 
 def node_engine(recipe: "Recipe", loai: str) -> str:

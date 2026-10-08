@@ -272,14 +272,32 @@ class ValidateTest(unittest.TestCase):
                                  {"w1": r"..\images\w1.jpg"})
         self.assertIn(r'href="..\images\w1.jpg"', out)
 
-    def test_engine_json_checks_type_and_drops_output_path(self):
+    def test_engine_json_checks_type_and_keeps_only_allow_listed_keys(self):
+        keys = recipes.ENGINE_KEYS["soan-van-ban-hanh-chinh"]
         data = validate.check_engine_json(json.dumps({"loai_van_ban": "thong_bao", "noi_dung": "A",
                                                       "output_path": "C:/Windows/x.docx", "noi_nhan": ["a"]}),
-                                          recipes.ND30_TYPES)
-        self.assertNotIn("output_path", data)
+                                          recipes.ND30_TYPES, keys)
+        self.assertEqual(data, {"loai_van_ban": "thong_bao", "noi_dung": "A", "noi_nhan": ["a"]})
         for bad in ('{"loai_van_ban": "hack"}', "[1]", "{hỏng", json.dumps({"loai_van_ban": "thong_bao", "x": {"a": {"b": {"c": {"d": {"e": {"f": 1}}}}}}})):
             with self.assertRaises(validate.SourceError, msg=bad):
-                validate.check_engine_json(bad, recipes.ND30_TYPES)
+                validate.check_engine_json(bad, recipes.ND30_TYPES, keys)
+
+    def test_engine_json_drops_unknown_and_path_like_keys_at_every_level(self):
+        evil = {"loai_van_ban": "thong_bao", "noi_dung": "A",
+                "outputPath": "C:/x.docx", "output": "x", "template": "../../evil.docx", "path": "/etc/passwd",
+                "file": "a", "src": "b", "image": "c", "logo": "d", "include": "e", "..": "f", "../x": "g",
+                "OUTPUT_PATH": "h", "output_path ": "i",
+                "cac_dieu": [{"noi_dung": "ok", "template": "t", "output_path": "o", "path": "p"}],
+                "dong_quyet_dinh": {"ngay": "1", "thang": "2", "nam": "3", "file": "f"}}
+        for skill, types in (("soan-van-ban-hanh-chinh", recipes.ND30_TYPES), ("soan-van-ban-dang", recipes.DANG_TYPES)):
+            data = validate.check_engine_json(json.dumps(evil), types, recipes.ENGINE_KEYS[skill])
+            self.assertEqual(set(data) - recipes.ENGINE_KEYS[skill], set(), skill)
+            self.assertEqual(set(data), {"loai_van_ban", "noi_dung", "cac_dieu", "dong_quyet_dinh"}, skill)
+            self.assertEqual(data["cac_dieu"], [{"noi_dung": "ok"}], skill)
+            self.assertEqual(data["dong_quyet_dinh"], {"ngay": "1", "thang": "2", "nam": "3"}, skill)
+        for skill in recipes.ENGINE_KEYS.values():
+            for key in skill:
+                self.assertNotRegex(key, r"path|file|output|template|dir|src|url|image|logo", key)
 
     def test_games_all_six_templates_closed_schemas(self):
         mk = lambda d: json.dumps({"title": "Ôn tập", **d})
