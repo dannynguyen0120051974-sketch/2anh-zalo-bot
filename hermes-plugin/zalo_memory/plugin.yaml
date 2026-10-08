@@ -1,0 +1,8 @@
+name: zalo_memory
+version: 1.28.0
+description: "Trí nhớ dài hạn OpenViking cho Zalo — tách riêng từng nhóm, từng người (2anh-zalo-bot, spec §19)."
+pip_dependencies:
+  - httpx
+requires_env: []
+hooks:
+  - on_session_end
