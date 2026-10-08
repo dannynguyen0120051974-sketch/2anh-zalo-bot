@@ -3812,6 +3812,32 @@ def _studio_block(turn: Dict[str, Any], args: Dict[str, Any]) -> Optional[Dict[s
 
 
 
+def _tool_off_block(name: str, args: Any) -> Optional[Dict[str, str]]:
+    """Công cụ chủ bot tắt riêng ở trang Công cụ (``tools.off``, spec §18.6) → chặn. Đọc lỗi → không chặn thêm."""
+    real = name
+    if name == "tool_call":
+        try:
+            from tools.tool_search import resolve_underlying_call
+
+            real, _args, error = resolve_underlying_call(args if isinstance(args, dict) else {})
+        except Exception:
+            return None
+        if error or not real:
+            return None
+    try:
+        if not group_permissions.tool_off(real):
+            return None
+    except Exception as exc:
+        logger.warning("[zalo] không đọc được danh sách công cụ tắt: %s", exc)
+        return None
+    logger.info("[zalo] chặn %s — chủ bot đã tắt công cụ này với thành viên", real)
+    return {
+        "action": "block",
+        "message": (f"Chủ bot đã tắt công cụ {real} với người không phải chủ nhân. Hãy nói ngắn gọn với người hỏi "
+                    "rằng việc này hiện chưa làm được; đừng gọi lại công cụ này và đừng dùng công cụ khác để làm thay."),
+    }
+
+
 def guard_member_tool_call(tool_name: str = "", args: Any = None, **_kw) -> Optional[Dict[str, str]]:
     """Hook ``pre_tool_call``: lượt không phải của riêng chủ nhân chỉ chạy được công cụ công khai.
 
@@ -3830,7 +3856,7 @@ def guard_member_tool_call(tool_name: str = "", args: Any = None, **_kw) -> Opti
     if (turn.get("is_owner") or turn.get("core_tools")) and not _outsider_spoke_after(turn):
         return None
     name = str(tool_name or "")
-    blocked = _feature_block(turn, name, args)
+    blocked = _tool_off_block(name, args) or _feature_block(turn, name, args)
     if blocked:
         return blocked
     if _member_may_call(name, args):
@@ -3967,3 +3993,34 @@ def register_tools(ctx) -> None:
         sum(counts.values()), counts.get(TOOLSET_PUBLIC, 0), counts.get(TOOLSET_OWNER, 0),
         counts.get(TOOLSET_CRON, 0),
     )
+    # Trang Công cụ của dashboard (spec §18.6) đọc danh sách này — cố hết sức, không làm hỏng việc nạp plugin.
+    try:
+        write_tools_manifest(friend_tools=friend_tools)
+    except Exception:
+        logger.warning("[zalo] không ghi được tools-manifest.json", exc_info=True)
+
+
+def tools_manifest(*, friend_tools: bool) -> Dict[str, Any]:
+    """Mọi công cụ Zalo: tên, mức quyền, mô tả, nút tính năng điều khiển, có đang được đăng ký không."""
+    rows = []
+    for name, _emoji, schema, _handler, toolset in TOOLS:
+        rows.append({
+            "name": name,
+            "toolset": toolset,
+            "description": str(schema.get("description") or "")[:400],
+            "feature": group_permissions.feature_of(name) or ("studio" if name in group_permissions.STUDIO_TOOLS else
+                                                              ("always" if name in group_permissions.ALWAYS_ON else None)),
+            "registered": not (name in FRIEND_TOOL_NAMES and not friend_tools),
+            "dmOnly": name in DM_ONLY_TOOLS,
+            "confirm": name in DANGEROUS_TOOL_NAMES,
+        })
+    return {"v": 1, "generatedAt": int(time.time() * 1000), "tools": rows}
+
+
+def write_tools_manifest(*, friend_tools: bool, path=None) -> None:
+    from pathlib import Path
+    target = Path(path) if path else group_permissions.permissions_path().parent / "tools-manifest.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(target.name + ".tmp")
+    tmp.write_text(json.dumps(tools_manifest(friend_tools=friend_tools), ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, target)
