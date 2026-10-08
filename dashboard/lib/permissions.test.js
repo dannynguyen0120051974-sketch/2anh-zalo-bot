@@ -4,10 +4,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, uti
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPermissionsStore, FEATURE_KEYS, InvalidPermissions, makeDmEnv, makeGlobalReplyOnlyTagged, normalize, parseDm, parseSettings } from './permissions.js';
+import { createPermissionsStore, FEATURE_KEYS, InvalidPermissions, makeDmEnv, makeGlobalReplyOnlyTagged, normalize, parseDm, parseSettings, parseStudio, STUDIO_FEATURES, studioPolicy } from './permissions.js';
 
 const G = '2054797107487294899';
 const allOn = () => Object.fromEntries(FEATURE_KEYS.map((k) => [k, true]));
+const studioOff = () => ({ studioSlides: false, studioDocs: false, studioExams: false, studioVideo: false });
 const settings = (over = {}, features = {}) => ({ active: true, replyOnlyTagged: true, ...over, features: { ...allOn(), ...features } });
 
 function setup(t, opts = {}) {
@@ -21,7 +22,7 @@ test('chưa có tệp: mọi tính năng bật, cờ tag theo cài đặt chung,
   const s = setup(t, { globalReplyOnlyTagged: false });
   const v = s.store.get();
   assert.equal(v.exists, false);
-  assert.deepEqual(v.defaults, { active: true, replyOnlyTagged: false, features: allOn() });
+  assert.deepEqual(v.defaults, { active: true, replyOnlyTagged: false, features: allOn(), studio: studioOff() });
   assert.deepEqual(v.groups, {});
   assert.equal(existsSync(s.file), false);
 });
@@ -191,7 +192,7 @@ const dm8 = (over = {}) => ({ web: true, files: true, voice: true, reminders: tr
 
 test('nhắn riêng: chưa có mục dm → theo ZALO_DM_POLICY, mọi nút bật; báo Hermes có đang chặn người ngoài không', (t) => {
   const s = setup(t, { dmEnv: () => ({ legacyWho: 'everyone', gatewayOpen: false }) });
-  assert.deepEqual(s.store.get().dm, { who: 'everyone', explicit: false, gatewayOpen: false, features: dm8(), people: [] });
+  assert.deepEqual(s.store.get().dm, { who: 'everyone', explicit: false, gatewayOpen: false, features: dm8(), studio: studioOff(), people: [] });
 });
 
 test('nhắn riêng: lưu ghi who + 8 nút chung, người chỉ ghi nút khác; lưu nhóm sau đó không làm mất mục dm', (t) => {
@@ -205,8 +206,8 @@ test('nhắn riêng: lưu ghi who + 8 nút chung, người chỉ ghi nút khác;
     people: { [P1]: { name: 'Cô Lan', features: { web: true, voice: false } }, [P2]: {} },
   });
   assert.deepEqual(state.dm.people, [
-    { uid: P1, name: 'Cô Lan', custom: true, features: dm8({ voice: false }) },
-    { uid: P2, name: '', custom: false, features: dm8({ web: false }) },
+    { uid: P1, name: 'Cô Lan', custom: true, features: dm8({ voice: false }), studio: studioOff() },
+    { uid: P2, name: '', custom: false, features: dm8({ web: false }), studio: studioOff() },
   ]);
   assert.equal(state.dm.explicit, true);
   s.store.setGroup(G, settings({}, { web: false }), 'Tổ Hoá');
@@ -246,4 +247,86 @@ test('makeDmEnv: config.yaml thắng .env; "open" → mọi người; cờ mở 
   assert.equal(read().legacyWho, 'owners', 'extra.dm_policy trong config.yaml thắng .env như adapter');
   put(envFile, 'GATEWAY_ALLOW_ALL_USERS=1\n');
   assert.equal(read().gatewayOpen, true);
+});
+
+// --- Xưởng tạo sản phẩm (spec §17) ---
+const studioOn = (over = {}) => ({ ...studioOff(), ...over });
+
+test('xưởng: chưa có gì → 4 nút tắt, 3 lượt mỗi ngày; danh sách nút khớp STUDIO_FEATURES của plugin Python', (t) => {
+  const s = setup(t);
+  const v = s.store.get();
+  assert.deepEqual(v.defaults.studio, studioOff());
+  assert.deepEqual(v.dm.studio, studioOff());
+  assert.deepEqual(v.studio, { quota: 3, people: [] });
+  const py = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'hermes-plugin', 'zalo_tools', 'group_permissions.py'), 'utf8');
+  const tuple = /^STUDIO_FEATURES = \(([^)]*)\)/m.exec(py)[1];
+  assert.deepEqual([...tuple.matchAll(/"([A-Za-z]+)"/g)].map((m) => m[1]), STUDIO_FEATURES.map((f) => f.key));
+});
+
+test('xưởng: mặc định chỉ ghi nút đang bật vào features; nhóm ghi khác biệt + hạn mức riêng; null = theo mặc định', (t) => {
+  const s = setup(t);
+  s.store.setDefaults({ ...settings(), studio: studioOn({ studioSlides: true, studioDocs: true }) });
+  assert.deepEqual(s.disk().defaults.features, { ...allOn(), studioSlides: true, studioDocs: true });
+  const { changed, state } = s.store.setGroup(G, { ...settings(), studio: studioOn({ studioSlides: true, studioVideo: true }), studioQuota: 5 });
+  assert.deepEqual(changed, ['studioDocs', 'studioVideo', 'studioQuota']);
+  assert.deepEqual(s.disk().groups[G], { features: { studioDocs: false, studioVideo: true }, studioQuota: 5 });
+  assert.deepEqual(state.groups[G].studio, studioOn({ studioSlides: true, studioVideo: true }));
+  assert.deepEqual(state.groups[G].features, allOn(), 'nút xưởng không lẫn vào 9 nút');
+  assert.equal(state.groups[G].studioQuota, 5);
+  s.store.setGroup(G, { ...settings(), studio: studioOn({ studioSlides: true, studioDocs: true }), studioQuota: null });
+  assert.equal(s.disk().groups[G], undefined, 'trùng mặc định và hạn mức theo mặc định → bỏ mục nhóm');
+});
+
+test('xưởng: bản giao diện cũ (không gửi studio/studioQuota) lưu mặc định, nhóm, nhắn riêng không làm mất nút xưởng', (t) => {
+  const s = setup(t);
+  s.store.setDefaults({ ...settings(), studio: studioOn({ studioExams: true }) });
+  s.store.setGroup(G, { ...settings(), studio: studioOn({ studioExams: true, studioVideo: true }), studioQuota: 9 });
+  s.store.setDm(parseDm({ who: 'everyone', features: dm8(), studio: studioOn({ studioSlides: true }),
+    people: [{ uid: P1, features: dm8(), studio: studioOn({ studioDocs: true }) }] }));
+  s.store.setStudio(parseStudio({ quota: 4, people: [{ uid: P2, name: 'Thầy Nam', quota: 10 }] }));
+  s.store.setDefaults(parseSettings(settings({}, { web: false })));
+  s.store.setGroup(G, parseSettings(settings({}, { kb: false })));
+  s.store.setDm(parseDm({ who: 'everyone', features: dm8({ voice: false }), people: [{ uid: P1, features: dm8() }] }));
+  const v = s.store.get();
+  assert.deepEqual(v.defaults.studio, studioOn({ studioExams: true }));
+  assert.deepEqual(v.groups[G].studio, studioOn({ studioExams: true, studioVideo: true }));
+  assert.equal(v.groups[G].studioQuota, 9);
+  assert.deepEqual(v.dm.studio, studioOn({ studioSlides: true }));
+  assert.deepEqual(v.dm.people[0].studio, studioOn({ studioDocs: true }), 'người có tính năng riêng giữ nút xưởng riêng');
+  assert.deepEqual(v.studio, { quota: 4, people: [{ uid: P2, name: 'Thầy Nam', quota: 10 }] });
+});
+
+test('xưởng: normalize giữ mục studio hợp lệ, bỏ rác; parseSettings/parseStudio từ chối số lượt sai', () => {
+  const n = normalize({ version: 1, defaults: { features: { studioVideo: true, studioX: true } }, groups: { [G]: { studioQuota: 51 } },
+    studio: { quota: -1, people: { [P2]: { name: '  Thầy  Nam ', quota: 7 }, abc: { quota: 1 }, [P1]: { quota: 'x' } } } });
+  assert.deepEqual(n.defaults, { features: { studioVideo: true } });
+  assert.deepEqual(n.groups[G], {});
+  assert.deepEqual(n.studio, { people: { [P2]: { name: 'Thầy Nam', quota: 7 } } });
+  for (const bad of [{ ...settings(), studio: { studioSlides: true } }, { ...settings(), studio: { ...studioOff(), lạ: true } },
+    { ...settings(), studioQuota: 1.5 }, { ...settings(), studioQuota: 99 }]) {
+    assert.throws(() => parseSettings(bad), (e) => e instanceof InvalidPermissions && /—/.test(e.message), JSON.stringify(bad));
+  }
+  assert.equal(parseSettings({ ...settings(), studioQuota: null }).studioQuota, null);
+  for (const bad of [null, { quota: 60, people: [] }, { quota: 3, people: [{ uid: '0912345678', quota: 1 }] },
+    { quota: 3, people: [{ uid: P1, quota: -2 }] }, { quota: 3 }]) {
+    assert.throws(() => parseStudio(bad), (e) => e instanceof InvalidPermissions && /—/.test(e.message), JSON.stringify(bad));
+  }
+  assert.deepEqual(parseStudio({ quota: 0, people: [{ uid: P1, quota: 2 }, { uid: P1, quota: 9 }] }),
+    { quota: 0, people: [{ uid: P1, name: '', quota: 2 }] });
+});
+
+test('xưởng: chính sách máy chủ — Windows video tắt; Linux theo studio-policy.json của plugin, thiếu/hỏng = tắt', (t) => {
+  assert.deepEqual(studioPolicy('win32'), { videoBlocked: true, note: 'Máy chủ Windows không có hộp cát — video tắt' });
+  const dir = mkdtempSync(join(tmpdir(), 'studio-policy-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, 'studio-policy.json');
+  assert.equal(studioPolicy('linux', file).videoBlocked, true, 'chưa có tệp');
+  writeFileSync(file, '{hỏng');
+  assert.equal(studioPolicy('linux', file).videoBlocked, true, 'tệp hỏng');
+  writeFileSync(file, JSON.stringify({ version: 1, videoBlocked: false, note: '', sandbox: 'systemd' }));
+  assert.deepEqual(studioPolicy('linux', file), { videoBlocked: false, note: '' });
+  writeFileSync(file, JSON.stringify({ version: 1, videoBlocked: true, note: 'Máy chủ chưa dùng được hộp cát systemd — video tắt', sandbox: 'plain' }));
+  assert.deepEqual(studioPolicy('linux', file), { videoBlocked: true, note: 'Máy chủ chưa dùng được hộp cát systemd — video tắt' });
+  writeFileSync(file, JSON.stringify({ version: 1, videoBlocked: false, note: '' }));
+  assert.equal(studioPolicy('win32', file).videoBlocked, true, 'Windows luôn tắt, tệp nói gì cũng vậy');
 });

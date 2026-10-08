@@ -376,18 +376,21 @@ _NODE_FIXTURE = r"""
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 const [modUrl, home, stepsJson] = process.argv.slice(1);
-const { createPermissionsStore, makeGlobalReplyOnlyTagged, parseDm } = await import(modUrl);
+const { createPermissionsStore, makeGlobalReplyOnlyTagged, parseDm, parseStudio } = await import(modUrl);
 const store = createPermissionsStore({
   file: join(home, 'zalo', 'permissions.json'),
   globalReplyOnlyTagged: makeGlobalReplyOnlyTagged({ envFile: join(home, '.env'), configFile: join(home, 'config.yaml') }),
 });
 for (const step of JSON.parse(stepsJson)) {
   if (step.dm) { store.setDm(parseDm(step.dm)); continue; }
+  if (step.quotas) { store.setStudio(parseStudio(step.quotas)); continue; }
   const view = store.get();
   const base = step.group ? (view.groups[step.group] || view.defaults) : view.defaults;
-  const s = { active: base.active, replyOnlyTagged: base.replyOnlyTagged, features: { ...base.features } };
+  const s = { active: base.active, replyOnlyTagged: base.replyOnlyTagged, features: { ...base.features }, studio: { ...base.studio } };
   Object.assign(s, step.set || {});
   Object.assign(s.features, step.features || {});
+  Object.assign(s.studio, step.studio || {});
+  if (step.studioQuota !== undefined) s.studioQuota = step.studioQuota;
   if (step.group) store.setGroup(step.group, s); else store.setDefaults(s);
 }
 """
@@ -462,6 +465,28 @@ class DashboardContractTest(AdapterHarness, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gp.dm_disabled_features(lan), ["voice"], "người có nút riêng: video bật lại, thoại tắt")
         self.assertEqual(gp.dm_disabled_features(MEMBER), ["video"])
         self.assertEqual(gp.disabled_features(GROUP_A), ["web"])
+        self.assertEqual(gp.disabled_features(GROUP_B), ["kb"])
+
+    async def test_s4_studio_switches_and_quotas_written_by_dashboard_are_read_by_plugin(self):
+        self.enterContext(patch.object(gp, "VIDEO_BLOCKED", False))
+        self.enterContext(patch.object(gp, "sandbox_mode", lambda: "systemd"))
+        all8 = {feature: True for feature in gp.DM_FEATURES}
+        lan = "1234567890123456"
+        off = {f: False for f in gp.STUDIO_FEATURES}
+        self.dashboard_saves([
+            {"studio": {"studioSlides": True, "studioDocs": True}},
+            {"group": GROUP_A, "studio": {"studioDocs": False, "studioVideo": True}, "studioQuota": 5},
+            {"dm": {"who": "everyone", "features": all8, "studio": {**off, "studioExams": True},
+                    "people": [{"uid": lan, "features": all8, "studio": {**off, "studioExams": True, "studioSlides": True}}]}},
+            {"quotas": {"quota": 2, "people": [{"uid": lan, "name": "Cô Lan", "quota": 9}]}},
+            {"group": GROUP_B, "features": {"kb": False}},
+        ])
+        a = gp.studio_settings(MEMBER, GROUP_A, True)
+        self.assertEqual(a, {"features": {**off, "studioSlides": True, "studioVideo": True}, "quota": 5})
+        self.assertEqual(gp.studio_settings(MEMBER, GROUP_B, True), {"features": {**off, "studioSlides": True, "studioDocs": True}, "quota": 2})
+        self.assertEqual(gp.studio_settings(MEMBER, MEMBER, False), {"features": {**off, "studioExams": True}, "quota": 2})
+        self.assertEqual(gp.studio_settings(lan, lan, False), {"features": {**off, "studioExams": True, "studioSlides": True}, "quota": 9})
+        self.assertEqual(gp.studio_settings(lan, GROUP_A, True)["quota"], 9, "hạn mức riêng của người thắng nhóm")
         self.assertEqual(gp.disabled_features(GROUP_B), ["kb"])
 
 

@@ -36,7 +36,8 @@ test('Chủ bot xem và sửa được phân quyền (spec §6), có hiệu lự
 
   const saved = await call(`/api/permissions/groups/${G}`, { method: 'PUT', cookie: owner, body: body({ active: false }, { web: false }) });
   assert.equal(saved.status, 200);
-  assert.deepEqual(saved.json.groups[G], { name: 'Tổ Hoá', custom: true, active: false, replyOnlyTagged: true, features: { ...allOn(), web: false } });
+  assert.deepEqual(saved.json.groups[G], { name: 'Tổ Hoá', custom: true, active: false, replyOnlyTagged: true, features: { ...allOn(), web: false },
+    studio: { studioSlides: false, studioDocs: false, studioExams: false, studioVideo: false }, studioQuota: null });
   assert.deepEqual(disk().groups[G], { name: 'Tổ Hoá', active: false, features: { web: false } });
   // Lần lưu đầu ghi cờ tag thật của bot vào mặc định một lần, không ghi vào nhóm.
   assert.equal(disk().defaults.replyOnlyTagged, true);
