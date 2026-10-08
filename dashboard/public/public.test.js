@@ -893,3 +893,12 @@ test('Kết nối MCP: màu trạng thái', async () => {
   assert.deepEqual(['Đang mở', 'Không phản hồi', 'Đã tắt', 'Máy ngoài — không kiểm'].map(mcpKind), ['ok', 'danger', 'idle', 'warn']);
   assert.equal(mcpKind('Chạy cùng trợ lý — không kiểm được từ dashboard'), 'idle');
 });
+
+test('Cấu hình: chữ nhập thành giá trị đúng kiểu; chỉ gửi mục đã đổi', async () => {
+  const { parseInput, changedValues } = await import('./views/settings.js');
+  assert.equal(parseInput({ type: 'int' }, ' 12 '), 12);
+  assert.ok(Number.isNaN(parseInput({ type: 'int' }, '12a')));
+  assert.deepEqual(parseInput({ type: 'ids' }, '111, 222,,'), ['111', '222']);
+  const list = [{ id: 'a', value: 6 }, { id: 'b', value: ['1'] }, { id: 'c', value: true }];
+  assert.deepEqual(changedValues(list, { a: 6, b: ['1', '2'], c: false }), { b: ['1', '2'], c: false });
+});
