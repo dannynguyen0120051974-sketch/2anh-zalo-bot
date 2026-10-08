@@ -871,3 +871,11 @@ test('Agent: danh sách model — đang dùng đầu, chọn nhanh, phần còn 
   assert.deepEqual(modelOptions({ current: '', choices: [], all: ['a'], q: '' }), ['a']);
   assert.equal(REASONING_LABELS.medium, 'Vừa (mặc định)');
 });
+
+test('Công cụ: nhóm theo mức quyền giữ thứ tự; đếm thay đổi hai chiều', async () => {
+  const { groupTools, offDiff } = await import('./views/tools.js');
+  assert.deepEqual(groupTools([{ level: 'Mọi người', name: 'a' }, { level: 'Chỉ chủ nhân', name: 'b' }, { level: 'Mọi người', name: 'c' }]).map((g) => [g.level, g.list.length]),
+    [['Mọi người', 2], ['Chỉ chủ nhân', 1]]);
+  assert.equal(offDiff(new Set(['a', 'b']), new Set(['b', 'c'])), 2);
+  assert.equal(offDiff(new Set(), new Set()), 0);
+});

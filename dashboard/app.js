@@ -21,6 +21,7 @@ import { scheduleRoutes } from './routes/schedules.js';
 import { kbRoutes } from './routes/kb.js';
 import { insightRoutes } from './routes/insight.js';
 import { agentRoutes } from './routes/agent.js';
+import { toolRoutes } from './routes/tools.js';
 
 export function createDashboardApp(deps) {
   const app = express();
@@ -48,6 +49,7 @@ export function createDashboardApp(deps) {
   app.use('/api', insightRoutes(deps));
   if (deps.secondBrain) app.use('/api', secondBrainRoutes(deps));
   if (deps.agentConfig && deps.soul) app.use('/api', agentRoutes(deps));
+  if (deps.toolsManifestFile) app.use('/api', toolRoutes(deps));
   app.use('/api', adminRoutes(deps));
   // Gắn ở gốc: router này có cả /api/brand lẫn /brand.css, /brand/logo.png (công khai, trước giao diện tĩnh).
   app.use(brandRoutes(deps));

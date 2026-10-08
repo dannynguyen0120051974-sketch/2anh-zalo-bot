@@ -102,6 +102,8 @@ export function buildDeps({ env = process.env, sidecarRoot = join(here, '..'), i
     insightAi: createInsightAi({ dir: paths.insightDir }),
     agentConfig: createAgentConfig({ configFile: paths.hermesConfigFile, envValue: (k) => readEnvKey(paths.hermesEnvFile, k) }),
     soul: createSoul({ hermesHome: paths.hermesHome, historyDir: paths.soulHistoryDir }),
+    toolsManifestFile: paths.toolsManifestFile,
+    publicMcp: () => readEnvKey(paths.hermesEnvFile, 'ZALO_PUBLIC_MCP'),
     // Second brain: chỉ bật khi .env Hermes có ZALO_SECOND_BRAIN_URL (loopback), luôn tắt trên Windows; đọc lại .env mỗi lần.
     secondBrain: createSecondBrain({ settings: () => ({
       url: readEnvKey(paths.hermesEnvFile, 'ZALO_SECOND_BRAIN_URL'), account: readEnvKey(paths.hermesEnvFile, 'OPENVIKING_ACCOUNT'),
