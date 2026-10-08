@@ -1463,6 +1463,11 @@ test('history_search chỉ đọc kho của đúng hội thoại, không gọi Z
     const cross = await onceMessage(ws, (msg) => msg.reqId === 's3');
     assert.equal(cross.ok, false);
     assert.equal(cross.errorCode, 'cross_thread_denied');
+    // threadType dạng chuỗi: policy và phần thực thi hiểu cùng một hội thoại (nhóm), không rơi sang nhắn riêng.
+    store.upsertMessage('bot', { threadId: 'group-1', threadType: 0, msgId: 'dm', cliMsgId: 'dm', senderUid: 'u1', senderName: 'Yến', text: 'ke hoach rieng', msgType: 'webchat', ts: base + 4, isSelf: false });
+    ws.send(JSON.stringify({ type: 'history_search', reqId: 's4', threadId: 'group-1', threadType: '1', query: 'ke hoach', auth: { ...member, actorRole: 'public' } }));
+    const str = await onceMessage(ws, (msg) => msg.reqId === 's4');
+    assert.deepEqual(str.result.messages.map((m) => m.msgId), ['m1']);
     assert.deepEqual(calls.filter((n) => n !== 'then'), [], 'không gọi hàm Zalo nào');
   } finally {
     ws.close();

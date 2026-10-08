@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
-import { openZaloStore } from './zalo-store.js';
+import { HISTORY_SEARCH_PAGE, HISTORY_SEARCH_SCAN, openZaloStore } from './zalo-store.js';
 
 function withStore(t, options = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'zalo-store-'));
@@ -249,4 +249,23 @@ test('searchHistory: đúng một hội thoại, khớp không dấu, lọc ngư
   const capped = store.searchHistory('account-1', 'group-1', 1, { limit: 999 });
   assert.equal(capped.messages.length, 40);
   assert.equal(capped.messages.at(-1).text, 'tin 69', 'giữ 40 tin MỚI NHẤT, xếp cũ trước');
+});
+
+test('searchHistory: quét theo trang, đủ tin thì dừng; không thấy thì dừng ở trần HISTORY_SEARCH_SCAN', (t) => {
+  const { store } = withStore(t);
+  const n = HISTORY_SEARCH_SCAN + 700;
+  store.insertMessages('account-1', Array.from({ length: n }, (_, i) => ({
+    ...baseMessage, msgId: `p-${i}`, cliMsgId: `pc-${i}`, ts: 10_000 + Math.floor(i / 3), text: i === 5 ? 'kim trong đáy bể' : `tin ${i}`,
+  })));
+  const recent = store.searchHistory('account-1', 'group-1', 1, { limit: 10 });
+  assert.equal(recent.messages.length, 10);
+  assert.ok(recent.scanned <= HISTORY_SEARCH_PAGE, `đủ 10 tin trong trang đầu thì dừng (quét ${recent.scanned})`);
+  assert.equal(recent.messages.at(-1).msgId, `p-${n - 1}`);
+  const none = store.searchHistory('account-1', 'group-1', 1, { query: 'không có đâu' });
+  assert.deepEqual([none.messages.length, none.scanned, none.truncated], [0, HISTORY_SEARCH_SCAN, true]);
+  // Cùng mốc giờ nhiều tin (ts trùng): phân trang theo rowid không bỏ sót, không lặp.
+  const all = store.searchHistory('account-1', 'group-1', 1, { query: 'tin 4', limit: 40 });
+  assert.equal(new Set(all.messages.map((m) => m.msgId)).size, all.messages.length);
+  const old = store.searchHistory('account-1', 'group-1', 1, { query: 'kim', sinceMs: 0 });
+  assert.deepEqual(old.messages, [], 'tin quá xa ngoài trần quét');
 });

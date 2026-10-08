@@ -7,8 +7,10 @@ import { fold } from './dashboard/public/fold.js';
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Tin chứa mã đăng nhập dashboard (server.js gửi với remember:false, nhưng bản cũ từng lưu lại) — không bao giờ trả cho công cụ.
 export const LOGIN_CODE_MARK = 'Mã đăng nhập dashboard:';
-// Tra lịch sử cho thành viên (spec §19.5): quét tối đa chừng này tin gần nhất trong khoảng thời gian, trả tối đa 40 tin.
-export const HISTORY_SEARCH_SCAN = 20_000;
+// Tra lịch sử cho thành viên (spec §19.5): quét tối đa chừng này tin gần nhất trong khoảng thời gian (theo trang
+// HISTORY_SEARCH_PAGE, đủ tin thì dừng), trả tối đa 40 tin.
+export const HISTORY_SEARCH_SCAN = 5_000;
+export const HISTORY_SEARCH_PAGE = 500;
 export const HISTORY_SEARCH_MAX = 40;
 
 function text(value) {
@@ -305,20 +307,35 @@ export function openZaloStore({ path, retentionDays = 365, now = Date.now } = {}
     const safeLimit = Math.min(Math.max(Math.trunc(Number(limit)) || 20, 1), HISTORY_SEARCH_MAX);
     const needle = fold(String(query ?? '').trim()).slice(0, 100);
     const who = fold(String(sender ?? '').trim()).slice(0, 60);
-    const rows = db.prepare(`
-      SELECT * FROM messages
-      WHERE account_id = ? AND thread_id = ? AND thread_type = ? AND timestamp_ms >= ?
+    // Đi theo chỉ mục idx_messages_thread_time từ mới tới cũ, từng trang nhỏ: đủ tin thì dừng, không nạp cả
+    // HISTORY_SEARCH_SCAN dòng một lúc (giữ vòng lặp sự kiện của sidecar không bị chặn lâu).
+    const page = db.prepare(`
+      SELECT rowid AS cursor_rowid, * FROM messages
+      WHERE account_id = ? AND thread_type = ? AND thread_id = ? AND timestamp_ms >= ?
+        AND (timestamp_ms < ? OR (timestamp_ms = ? AND rowid < ?))
         AND instr(text, ?) = 0 AND msg_type NOT IN ('chat.delete', 'chat.undo')
       ORDER BY timestamp_ms DESC, rowid DESC LIMIT ?
-    `).all(String(accountId), String(threadId), Number(threadType), Number(sinceMs) || 0, LOGIN_CODE_MARK, HISTORY_SEARCH_SCAN);
+    `);
     const found = [];
-    for (const row of rows) {
-      if (needle && !fold(row.text).includes(needle)) continue;
-      if (who && !fold(row.sender_name).includes(who)) continue;
-      found.push(mapMessage(row));
-      if (found.length >= safeLimit) break;
+    let scanned = 0;
+    let beforeTs = Number.MAX_SAFE_INTEGER;
+    let beforeRowid = Number.MAX_SAFE_INTEGER;
+    while (found.length < safeLimit && scanned < HISTORY_SEARCH_SCAN) {
+      const rows = page.all(String(accountId), Number(threadType), String(threadId), Number(sinceMs) || 0,
+        beforeTs, beforeTs, beforeRowid, LOGIN_CODE_MARK, Math.min(HISTORY_SEARCH_PAGE, HISTORY_SEARCH_SCAN - scanned));
+      for (const row of rows) {
+        scanned += 1;
+        if (needle && !fold(row.text).includes(needle)) continue;
+        if (who && !fold(row.sender_name).includes(who)) continue;
+        found.push(mapMessage(row));
+        if (found.length >= safeLimit) break;
+      }
+      if (rows.length < HISTORY_SEARCH_PAGE) break;
+      const last = rows[rows.length - 1];
+      beforeTs = last.timestamp_ms;
+      beforeRowid = last.cursor_rowid;
     }
-    return { messages: found.reverse(), scanned: rows.length, truncated: rows.length >= HISTORY_SEARCH_SCAN };
+    return { messages: found.reverse(), scanned, truncated: scanned >= HISTORY_SEARCH_SCAN };
   }
 
   function findOwnMessage(accountId, threadId, threadType, ids = null) {

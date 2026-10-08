@@ -862,6 +862,10 @@ async function handleCommand(ws, cmd) {
     return send(ws, { type: 'pong', ts: Date.now() });
   }
 
+  // Chuẩn hoá kiểu hội thoại thành số ngay trước khi xét quyền: policy (so Number) và phần thực thi bên dưới
+  // (so === 1) phải hiểu cùng một hội thoại — "1" dạng chuỗi không được qua policy là nhóm rồi chạy như nhắn riêng.
+  if (cmd.threadType != null) cmd.threadType = Number(cmd.threadType);
+
   const authorization = authorizeBridgeCommand(cmd, { ownerUids: activeOwnerUids, dmRules: activeDmRules });
   const shouldAudit = ['send', 'admin', 'undo'].includes(authorization.category);
   const auditRequestId = String(cmd.reqId || `bridge-${Date.now()}-${Math.random().toString(16).slice(2)}`);
