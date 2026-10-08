@@ -639,5 +639,76 @@ class AdapterDmTest(PermissionsFile, AdapterHarness, unittest.IsolatedAsyncioTes
         self.assertEqual(sent[0]["actorUid"], STRANGER)
 
 
+class StudioPermissionsTest(PermissionsFile, unittest.TestCase):
+    """Xưởng tạo sản phẩm (spec §17): thiếu khoá/lỗi = tắt; hạn mức người ← nhóm ← mặc định ← 3."""
+
+    def setUp(self):
+        super().setUp()
+        # Máy chạy test có thể là Windows: chính sách "video tắt trên Windows" được thử riêng bên dưới.
+        self.enterContext(patch.object(gp, "VIDEO_BLOCKED", False))
+
+    def test_windows_policy_forces_video_off_whatever_the_file_says(self):
+        self.write({"version": 1, "defaults": {"features": {"studioVideo": True, "studioSlides": True}},
+                    "dm": {"features": {"studioVideo": True}}})
+        with patch.object(gp, "VIDEO_BLOCKED", True):
+            for thread, is_group in ((GROUP_A, True), (MEMBER, False)):
+                rules = gp.studio_settings(MEMBER, thread, is_group)["features"]
+                self.assertFalse(rules["studioVideo"])
+                self.assertEqual(rules["studioSlides"], is_group)
+
+    def test_missing_file_corrupt_file_and_missing_keys_keep_every_studio_switch_off(self):
+        for content in (None, "{hỏng", {"version": 1, "defaults": {"features": {"web": False}}, "groups": {}}):
+            if content is not None:
+                self.write(content)
+            for is_group, thread in ((True, GROUP_A), (False, MEMBER)):
+                rules = gp.studio_settings(MEMBER, thread, is_group)
+                self.assertEqual(rules["features"], {f: False for f in gp.STUDIO_FEATURES}, content)
+                self.assertEqual(rules["quota"], gp.DEFAULT_STUDIO_QUOTA)
+
+    def test_group_switches_layer_defaults_then_group_and_never_touch_old_switches(self):
+        self.write({"version": 1,
+                    "defaults": {"features": {"studioSlides": True, "studioDocs": True}},
+                    "groups": {GROUP_A: {"features": {"studioDocs": False, "studioVideo": True}, "studioQuota": 5}}})
+        a = gp.studio_settings(MEMBER, GROUP_A, True)
+        self.assertEqual(a["features"], {"studioSlides": True, "studioDocs": False, "studioExams": False, "studioVideo": True})
+        self.assertEqual(a["quota"], 5)
+        b = gp.studio_settings(MEMBER, GROUP_B, True)
+        self.assertEqual(b["features"]["studioDocs"], True)
+        self.assertEqual(b["quota"], 3)
+        self.assertEqual(gp.disabled_features(GROUP_A), [], "nút xưởng không lẫn vào 9 nút cũ")
+
+    def test_dm_switches_layer_dm_then_person_and_group_entries_do_not_leak_into_dm(self):
+        self.write({"version": 1,
+                    "defaults": {"features": {"studioVideo": True}},
+                    "groups": {},
+                    "dm": {"who": "everyone", "features": {"studioSlides": True},
+                           "people": {MEMBER: {"features": {"studioSlides": False, "studioExams": True}}}}})
+        mine = gp.studio_settings(MEMBER, MEMBER, False)["features"]
+        self.assertEqual(mine, {"studioSlides": False, "studioDocs": False, "studioExams": True, "studioVideo": False})
+        other = gp.studio_settings(OWNER, OWNER, False)["features"]
+        self.assertTrue(other["studioSlides"])
+        self.assertFalse(other["studioVideo"], "nút mặc định của nhóm không áp cho nhắn riêng")
+        self.assertEqual(gp.dm_disabled_features(MEMBER), [], "nút xưởng không lẫn vào 8 nút nhắn riêng")
+
+    def test_quota_person_beats_group_beats_default_and_garbage_is_ignored(self):
+        self.write({"version": 1, "defaults": {}, "groups": {GROUP_A: {"studioQuota": 7}, GROUP_B: {"studioQuota": 99}},
+                    "studio": {"quota": 2, "people": {MEMBER: {"name": "Lan", "quota": 10}, "abc": {"quota": 1},
+                                                      OWNER: {"quota": True}}}})
+        self.assertEqual(gp.studio_settings(MEMBER, GROUP_A, True)["quota"], 10)
+        self.assertEqual(gp.studio_settings(MEMBER, MEMBER, False)["quota"], 10)
+        self.assertEqual(gp.studio_settings(OWNER, GROUP_A, True)["quota"], 7)
+        self.assertEqual(gp.studio_settings(OWNER, GROUP_B, True)["quota"], 2, "99 vượt trần 50 → bỏ")
+        self.assertEqual(gp.studio_settings(OWNER, OWNER, False)["quota"], 2, "True không phải số lượt")
+        self.write({"version": 1, "studio": {"quota": 0}})
+        self.assertEqual(gp.studio_settings(MEMBER, GROUP_A, True)["quota"], 0)
+
+    def test_wrong_types_never_turn_a_switch_on(self):
+        self.write({"version": 1, "defaults": {"features": {"studioSlides": "true", "studioDocs": 1}},
+                    "groups": {GROUP_A: {"features": ["studioVideo"]}},
+                    "dm": {"features": {"studioExams": "yes"}}})
+        self.assertFalse(any(gp.studio_settings(MEMBER, GROUP_A, True)["features"].values()))
+        self.assertFalse(any(gp.studio_settings(MEMBER, MEMBER, False)["features"].values()))
+
+
 if __name__ == "__main__":
     unittest.main()
