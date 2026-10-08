@@ -581,6 +581,39 @@ Gỡ cài đặt (`npm run uninstall:hermes`) cũng gỡ dịch vụ dashboard, 
 - [ ] VPS: bước giọng đọc của video phân giải được DNS (video có tiếng); từ trong đơn vị không tới được `127.0.0.1:20128`. Khởi động lại gateway lúc đang dựng → `systemctl list-units 'zalo-studio-*'` trống sau khi gateway lên lại, `/var/lib/zalo-studio` không còn thư mục việc cũ, việc dở đã tốn ảnh/token bị tính lượt.
 - [ ] Sức khoẻ máy chủ → Xưởng tạo sản phẩm có dòng của người thử với số việc, token, ảnh. Nhật ký có "Đổi hạn mức xưởng tạo sản phẩm".
 
+### Dashboard giai đoạn 7A — sáu trang mới (1.26.0)
+
+Thanh bên chia năm nhóm: Tổng quan · Hội thoại · Dữ liệu · Hệ thống · Quản trị (Chủ bot thấy bốn nhóm). Mỗi trang có đường dẫn vị trí ở đầu; dòng phụ dưới tên thương hiệu sửa ở **Thương hiệu**.
+
+| Trang | Ai thấy | Làm được gì |
+|---|---|---|
+| Liên hệ | Quản trị, Chủ bot | Xem bạn bè của bot, người đã nhắn riêng, người có hồ sơ; Đồng ý / Từ chối lời mời kết bạn đang chờ (có ghi Nhật ký). Tắt kết nối Zalo vẫn thấy người nhắn riêng, kèm câu báo. |
+| Lịch hẹn | Quản trị, Chủ bot | Việc hẹn giờ của trợ lý gửi về Zalo (hẹn giờ nhóm, việc của chủ nhân): tạm dừng, chạy lại, xoá. Lời nhắc Zalo theo từng hội thoại: xem, xoá. Việc gửi sang Telegram không hiện. |
+| Trí nhớ | Quản trị, Chủ bot (bộ nhớ trợ lý: chỉ Quản trị) | Sửa/xoá hồ sơ trong sổ người quen; Quản trị sửa/xoá từng mục MEMORY.md / USER.md của trợ lý. Ghi bằng tệp tạm + `.bak`, từ chối (409) khi bot vừa ghi. |
+| Kho tri thức | Quản trị, Chủ bot | Danh sách tài liệu bot đọc được (`ZALO_KB_DIR`); tải lên .docx/.pdf/.md/.txt (≤ 10 MB) vào thư mục `tai-len-dashboard`; chỉ xoá được tệp đã tải lên. Bot thấy tệp mới sau tối đa 5 phút. |
+| Insight nhóm | Quản trị, Chủ bot | Tin theo ngày, người nhắn nhiều, giờ sôi nổi, loại tin của từng nhóm; nút **Tóm tắt chủ đề** nhờ AI tóm tắt (không công cụ, chỉ chạy khi bấm, tối đa `ZALO_INSIGHT_DAILY` lượt/ngày, mặc định 10). |
+| Second brain | Chỉ Quản trị, chỉ máy chủ Linux | Tìm, xem và thêm ghi chú vào OpenViking trên cùng máy. Chỉ đọc trong 3 gốc (`viking://resources`, `…/memories`, `…/peers`), chỉ ghi ghi chú mới vào `so-tay-dashboard`, có ghi Nhật ký. |
+
+Biến tuỳ chọn trong `.env` của Hermes:
+
+- `ZALO_INSIGHT_DAILY` — số lượt "Tóm tắt chủ đề" mỗi ngày (mặc định 10, 0 = tắt).
+- `ZALO_INSIGHT_AI=off` — tắt hẳn tóm tắt bằng AI.
+- `ZALO_HERMES_BIN` — đường tới lệnh `hermes` khi dịch vụ dashboard không tìm thấy trên PATH (VPS: thường `/usr/local/bin/hermes`).
+- `ZALO_SECOND_BRAIN_URL` — **chỉ Linux/VPS**. Đặt `http://127.0.0.1:1933` (OpenViking trên cùng máy) thì Quản trị thấy mục Second brain. Chỉ nhận địa chỉ loopback; máy Windows luôn tắt dù có đặt (OpenViking ở máy nhà là bộ nhớ riêng của chủ máy). Tuỳ chọn `OPENVIKING_ACCOUNT`, `OPENVIKING_USER` (mặc định `default`), `OPENVIKING_API_KEY` — chỉ dùng ở máy chủ, không bao giờ hiện lên giao diện. Bộ cài chỉ gợi ý cách bật khi thấy OpenViking, không tự đặt; `npm run doctor` có dòng `second-brain`.
+
+**Cập nhật lên 1.26.0**: kết nối Zalo (`zalo-directory.js`, `control-api.js`, `hermes-bridge.js`, `server.js`), plugin Hermes (`zalo_tools/insight_ai.py`, `zalo_tools/__init__.py`, hai `plugin.yaml`) và dashboard (`dashboard/`, `scripts/hermes-install-lib.js`, `scripts/install-hermes.js`) cập nhật **cùng lúc**, rồi khởi động lại `zalo-bridge`, gateway và `zalo-dashboard`.
+
+### Kiểm tay sau khi cài (Giai đoạn 7A)
+
+- [ ] Quản trị và Chủ bot đăng nhập: thanh bên đúng 5/4 nhóm, Chủ bot không thấy Second brain; đường dẫn vị trí đúng; điện thoại "Thêm" chia nhóm.
+- [ ] Thương hiệu: đổi dòng phụ → thanh bên đổi ngay.
+- [ ] Liên hệ: có bạn bè; tắt kết nối Zalo → vẫn thấy người nhắn riêng + câu báo; dùng tài khoản phụ gửi lời mời → Đồng ý → Nhật ký có "Đồng ý lời mời kết bạn".
+- [ ] Lịch hẹn: tạo một hẹn giờ nhóm bằng tài khoản phụ → thấy ở "Hẹn giờ cho nhóm" → Tạm dừng → `hermes cron list` thấy paused → Chạy lại → Xoá. Việc gửi Telegram không hiện.
+- [ ] Trí nhớ: sửa một hồ sơ → hỏi bot trong nhóm "bạn biết gì về tôi" thấy nội dung mới. Quản trị sửa một mục MEMORY.md → tệp còn đúng dấu §.
+- [ ] Kho tri thức: tải một PDF → sau ≤ 5 phút bot tìm thấy bằng `zalo_kb_list`; xoá tệp đó.
+- [ ] Insight: chọn nhóm đông → số liệu khớp cảm nhận; Tóm tắt chủ đề → có kết quả trong 1–2 phút; gửi 11 lần/ngày → câu "hết lượt".
+- [ ] Second brain: Lăng Tiêu (Windows) — dù đặt `ZALO_SECOND_BRAIN_URL` vẫn không có mục ở thanh bên, `#/second-brain` ghi "Second brain chỉ bật trên máy chủ VPS". Uyển Nhi (VPS) — chưa đặt biến: ẩn; `npm run install:hermes` in gợi ý; đặt biến + khởi động lại dashboard → mục hiện, tìm "dashboard" ra kết quả, thêm ghi chú → thấy dưới `so-tay-dashboard`; `npm run doctor` có dòng `second-brain - bật — http://127.0.0.1:1933`.
+
 ---
 
 ## Cấu hình

@@ -56,6 +56,7 @@ export const ACTION_LABELS = {
   kb_upload: 'Tải tài liệu lên kho tri thức',
   kb_delete: 'Xoá tài liệu khỏi kho tri thức',
   insight_summary: 'Nhờ AI tóm tắt chủ đề nhóm',
+  second_brain_note: 'Thêm ghi chú vào Second brain',
 };
 
 const REASONS = {

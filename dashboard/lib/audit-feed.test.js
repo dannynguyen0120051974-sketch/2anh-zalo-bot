@@ -97,3 +97,10 @@ test('giai đoạn 7A: mọi thao tác mới đều có nhãn tiếng Việt', (
     'dashboard_reminder_remove', 'cron_pause', 'cron_resume', 'cron_remove', 'kb_upload', 'kb_delete', 'insight_summary'];
   for (const a of actions) assert.match(ACTION_LABELS[a] || '', /[À-ỹ]/, a);
 });
+
+test('giai đoạn 7A: mọi hành động mới đều có nhãn tiếng Việt trong Nhật ký', () => {
+  for (const action of ['dashboard_friend_accept', 'dashboard_friend_reject', 'dashboard_reminder_remove', 'people_update', 'people_delete',
+    'agent_memory_edit', 'agent_memory_delete', 'cron_pause', 'cron_resume', 'cron_remove', 'kb_upload', 'kb_delete', 'insight_summary', 'second_brain_note']) {
+    assert.ok(ACTION_LABELS[action], action);
+  }
+});
