@@ -255,22 +255,206 @@ class SandboxTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn("LOCALAPPDATA", sandbox.clean_env(self.dir, network=True))
 
     def test_systemd_command_isolates_user_home_network_and_resources(self):
+        hidden = ["/opt", "/srv/hermes", "/var/lib/zalo-studio"]
+        present = {"/opt/studio", "/opt/studio/.env", "/root/.cache/ms-playwright", "/usr/lib/node"}
         cmd = sandbox.systemd_command(["/opt/s/venv/bin/python", "tools/vi/giao_an.py", "xuat", "/var/lib/zalo-studio/j1/p"],
                                       Path("/var/lib/zalo-studio/j1"), {"PATH": "/usr/bin", "HOME": "/var/lib/zalo-studio/j1"},
-                                      network=False, timeout=300, read_only=[])
+                                      network=False, timeout=300, unit="zalo-studio-j1", hidden=hidden,
+                                      read_only=[Path("/opt/studio"), Path("/root/.cache/ms-playwright"), Path("/usr/lib/node"),
+                                                 Path("/root/khong-co")],
+                                      exists=lambda p: Path(p).as_posix() in present)
         self.assertEqual(cmd[:2], ["systemd-run", "--quiet"])
+        self.assertIn("--unit=zalo-studio-j1", cmd[:cmd.index("-p")])
         props = [cmd[i + 1] for i, part in enumerate(cmd) if part == "-p"]
-        for needed in ("User=nobody", "ProtectSystem=strict", "ProtectHome=tmpfs", "NoNewPrivileges=yes",
-                       "PrivateNetwork=yes", "CapabilityBoundingSet=", "RuntimeMaxSec=300",
-                       "ReadWritePaths=/var/lib/zalo-studio/j1"):
+        for needed in ("User=nobody", "Group=nogroup", "ProtectSystem=strict", "ProtectHome=tmpfs", "NoNewPrivileges=yes",
+                       "PrivateTmp=yes", "PrivateDevices=yes", "PrivateNetwork=yes", "CapabilityBoundingSet=",
+                       "RuntimeMaxSec=300", "MemoryMax=1536M", "CPUQuota=200%", "TasksMax=256",
+                       "ProtectProc=invisible", "RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX", "RestrictNamespaces=yes",
+                       "ProtectKernelLogs=yes", "ProtectKernelTunables=yes", "ProtectKernelModules=yes",
+                       "ProtectControlGroups=yes", "LockPersonality=yes", "RestrictSUIDSGID=yes",
+                       "WorkingDirectory=/var/lib/zalo-studio/j1",
+                       "BindPaths=/var/lib/zalo-studio/j1", "ReadWritePaths=/var/lib/zalo-studio/j1",
+                       "TemporaryFileSystem=/opt:ro", "TemporaryFileSystem=/srv/hermes:ro",
+                       "TemporaryFileSystem=/var/lib/zalo-studio:ro",
+                       "BindReadOnlyPaths=/opt/studio", "BindReadOnlyPaths=/root/.cache/ms-playwright",
+                       "InaccessiblePaths=/opt/studio/.env"):
             self.assertIn(needed, props)
+        self.assertNotIn("BindReadOnlyPaths=/usr/lib/node", props, "chỗ không bị che thì không cần gắn lại")
+        self.assertFalse(any("khong-co" in p for p in props), "thư mục không có trên máy: bỏ")
         self.assertEqual(cmd[cmd.index("--") + 1:], ["/opt/s/venv/bin/python", "tools/vi/giao_an.py", "xuat",
                                                      "/var/lib/zalo-studio/j1/p"])
         self.assertIn("HOME=/var/lib/zalo-studio/j1", cmd)
-        net = sandbox.systemd_command(["x"], Path("/w"), {}, network=True, timeout=10)
+        net = sandbox.systemd_command(["x"], Path("/w"), {"P": "50%"}, network=True, timeout=10, hidden=[],
+                                      own_addresses=["203.0.113.7/32", "2001:db8::7/128"])
         net_props = [net[i + 1] for i, part in enumerate(net) if part == "-p"]
         self.assertNotIn("PrivateNetwork=yes", net_props)
-        self.assertTrue(any(p.startswith("IPAddressDeny=localhost") for p in net_props))
+        deny = next(p for p in net_props if p.startswith("IPAddressDeny="))
+        for item in ("localhost", "link-local", "10.0.0.0/8", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7", "fe80::/10",
+                     "203.0.113.7/32", "2001:db8::7/128"):
+            self.assertIn(item, deny.split("=", 1)[1].split())
+        self.assertIn("P=50%%", net, "% của systemd được thoát")
+
+    def test_systemd_paths_with_spaces_or_specials_are_rejected_clearly(self):
+        for job, read_only, hidden in ((Path("/var/lib/zalo studio/j1"), [], []),
+                                       (Path("/w"), [Path("/root/My Studio")], []),
+                                       (Path("/w"), [Path("/root/a:b")], []),
+                                       (Path("/w"), [], ["/opt/x%i"])):
+            with self.assertRaises(sandbox.SandboxConfigError, msg=(job, read_only, hidden)):
+                sandbox.systemd_command(["x"], job, {}, network=False, timeout=10, read_only=read_only, hidden=hidden,
+                                        exists=lambda p: True)
+        self.assertEqual(sandbox.unit_name(Path("/w/20261008-101010-ab12cd")), "zalo-studio-20261008-101010-ab12cd")
+        self.assertEqual(sandbox.unit_name(Path("/w/a b;c")), "zalo-studio-a-b-c")
+
+    def test_prepare_job_dir_removes_links_and_special_files_then_fails(self):
+        job = self.dir / "job"
+        sandbox.prepare_job_dir(job)
+        self.assertTrue((job / "tmp").is_dir())
+        (job / "p").mkdir()
+        (job / "p" / "a.txt").write_text("x", encoding="utf-8")
+        sandbox.prepare_job_dir(job)                          # sạch: không ném
+        os.link(job / "p" / "a.txt", job / "p" / "hard.txt")  # liên kết cứng (trỏ được tới tệp ngoài)
+        with self.assertRaises(sandbox.UnsafeJobDir):
+            sandbox.prepare_job_dir(job)
+        self.assertFalse((job / "p" / "hard.txt").exists())
+        self.assertFalse((job / "p" / "a.txt").exists(), "cả hai đầu liên kết cứng đều bị gỡ")
+        outside = self.dir / "ngoai.txt"
+        outside.write_text("bí mật", encoding="utf-8")
+        try:
+            os.symlink(outside, job / "p" / "link.txt")
+            os.symlink(self.dir, job / "p" / "linkdir", target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("máy không cho tạo liên kết tượng trưng")
+        with self.assertRaises(sandbox.UnsafeJobDir):
+            sandbox.prepare_job_dir(job)
+        self.assertFalse(os.path.lexists(job / "p" / "link.txt"))
+        self.assertFalse(os.path.lexists(job / "p" / "linkdir"))
+        self.assertEqual(outside.read_text(encoding="utf-8"), "bí mật")
+        sandbox.prepare_job_dir(job)
+
+    def test_parent_reads_and_writes_stay_inside_the_job_dir_and_never_follow_links(self):
+        job = self.dir / "job"
+        sandbox.prepare_job_dir(job)
+        path = sandbox.write_file(job, job / "p" / "anh" / "a.png", b"abc")
+        self.assertEqual(sandbox.read_file(job, path), b"abc")
+        sandbox.write_file(job, path, b"de")
+        self.assertEqual(path.read_bytes(), b"de")
+        with self.assertRaises(sandbox.UnsafeJobDir):
+            sandbox.read_file(job, path, limit=1)
+        for bad in (self.dir / "ngoai.txt", job / ".." / "ngoai.txt", job / "p" / ".." / ".." / "x"):
+            with self.assertRaises(sandbox.UnsafeJobDir, msg=bad):
+                sandbox.write_file(job, bad, b"x")
+            with self.assertRaises(sandbox.UnsafeJobDir, msg=bad):
+                sandbox.read_file(job, bad)
+        outside = self.dir / "ngoai"
+        outside.mkdir()
+        (outside / "s.txt").write_text("bí mật", encoding="utf-8")
+        try:
+            os.symlink(outside, job / "p" / "vao", target_is_directory=True)
+            os.symlink(outside / "s.txt", job / "p" / "s.txt")
+        except (OSError, NotImplementedError):
+            self.skipTest("máy không cho tạo liên kết tượng trưng")
+        for bad in (job / "p" / "vao" / "s.txt", job / "p" / "s.txt", job / "p" / "vao" / "moi.txt"):
+            with self.assertRaises(sandbox.UnsafeJobDir, msg=bad):
+                sandbox.write_file(job, bad, b"ghi de")
+            with self.assertRaises(sandbox.UnsafeJobDir, msg=bad):
+                sandbox.read_file(job, bad)
+        self.assertEqual((outside / "s.txt").read_text(encoding="utf-8"), "bí mật")
+        self.assertFalse((outside / "moi.txt").exists())
+
+    def test_link_checks_also_run_where_symlinks_cannot_be_created(self):
+        """Máy Windows không quyền tạo liên kết: giả ``islink``/``lstat`` để vẫn thử đúng nhánh từ chối."""
+        import stat as stat_mod
+        job = self.dir / "job"
+        sandbox.prepare_job_dir(job)
+        link = job / "p" / "vao"
+        real_islink = os.path.islink
+        with patch.object(sandbox.os.path, "islink", lambda p: Path(os.path.abspath(p)) == link or real_islink(p)):
+            for bad in (link, link / "s.txt"):
+                with self.assertRaises(sandbox.UnsafeJobDir, msg=bad):
+                    sandbox.contained(job, bad)
+                with self.assertRaises(sandbox.UnsafeJobDir, msg=bad):
+                    sandbox.write_file(job, bad, b"x")
+        (job / "p").mkdir(exist_ok=True)
+        planted = job / "p" / "planted"
+        planted.write_text("x", encoding="utf-8")
+        real_lstat = os.lstat
+
+        def fake_lstat(path, *a, **k):
+            st = real_lstat(path, *a, **k)
+            if Path(path) == planted:
+                return os.stat_result((stat_mod.S_IFLNK | 0o777, *tuple(st)[1:10]))
+            return st
+
+        with patch.object(sandbox.os, "lstat", fake_lstat), self.assertRaises(sandbox.UnsafeJobDir):
+            sandbox.prepare_job_dir(job)
+        self.assertFalse(planted.exists())
+
+    def test_posix_children_get_their_own_process_group_and_the_whole_group_is_killed(self):
+        self.assertEqual(sandbox._spawn_kwargs("posix"), {"start_new_session": True})
+        self.assertEqual(sandbox._spawn_kwargs("nt"), {"creationflags": 0x08000000})
+
+    async def test_kill_tree_on_posix_kills_the_process_group(self):
+        killed = []
+
+        class Proc:
+            pid, returncode = 4242, None
+
+            async def wait(self):
+                return -9
+
+            def kill(self):
+                killed.append("kill")
+
+        with patch.object(sandbox.os, "killpg", lambda pid, sig: killed.append((pid, sig)), create=True), \
+                patch.object(sandbox.signal, "SIGKILL", 9, create=True):
+            await sandbox.kill_tree(Proc(), name="posix")
+        self.assertEqual(killed, [(4242, 9)])
+
+    async def test_systemd_timeout_stops_the_unit_not_just_the_client(self):
+        stopped = []
+
+        async def fake_stop(unit):
+            stopped.append(unit)
+
+        job = self.dir / "20261008-101010-ab12cd"
+        job.mkdir()
+        with patch.object(sandbox, "mode", lambda: "systemd"), \
+                patch.object(sandbox, "systemd_command", lambda *a, **k: [sys.executable, "-c", "import time; time.sleep(30)"]), \
+                patch.object(sandbox, "stop_unit", fake_stop):
+            slow = await sandbox.run(["x"], job, timeout=-29)
+        self.assertTrue(slow.timed_out)
+        self.assertEqual(stopped, ["zalo-studio-20261008-101010-ab12cd"])
+
+    async def test_cancelled_systemd_job_stops_the_unit(self):
+        stopped = []
+
+        async def fake_stop(unit):
+            stopped.append(unit)
+
+        with patch.object(sandbox, "mode", lambda: "systemd"), \
+                patch.object(sandbox, "systemd_command", lambda *a, **k: [sys.executable, "-c", "import time; time.sleep(30)"]), \
+                patch.object(sandbox, "stop_unit", fake_stop):
+            task = asyncio.ensure_future(sandbox.run(["x"], self.dir, timeout=300))
+            await asyncio.sleep(0.5)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertEqual(stopped, [sandbox.unit_name(self.dir)])
+
+    async def test_stop_unit_calls_systemctl_stop(self):
+        calls = []
+
+        class Proc:
+            async def wait(self):
+                return 0
+
+        async def fake_exec(*args, **kwargs):
+            calls.append(args)
+            return Proc()
+
+        with patch.object(sandbox.asyncio, "create_subprocess_exec", fake_exec):
+            await sandbox.stop_unit("zalo-studio-j1")
+        self.assertEqual(calls, [("systemctl", "stop", "zalo-studio-j1")])
 
     def test_mode_is_plain_off_linux_root_and_can_be_forced_off(self):
         with patch.dict(os.environ, {"ZALO_STUDIO_SANDBOX": "none"}):

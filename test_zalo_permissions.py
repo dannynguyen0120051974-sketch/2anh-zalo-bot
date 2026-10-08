@@ -639,13 +639,53 @@ class AdapterDmTest(PermissionsFile, AdapterHarness, unittest.IsolatedAsyncioTes
         self.assertEqual(sent[0]["actorUid"], STRANGER)
 
 
+REAL_SANDBOX_MODE = gp.sandbox_mode
+
+
 class StudioPermissionsTest(PermissionsFile, unittest.TestCase):
     """Xưởng tạo sản phẩm (spec §17): thiếu khoá/lỗi = tắt; hạn mức người ← nhóm ← mặc định ← 3."""
 
     def setUp(self):
         super().setUp()
-        # Máy chạy test có thể là Windows: chính sách "video tắt trên Windows" được thử riêng bên dưới.
+        # Máy chạy test có thể là Windows (và không có systemd): chính sách "video tắt khi không có hộp cát"
+        # được thử riêng bên dưới.
         self.enterContext(patch.object(gp, "VIDEO_BLOCKED", False))
+        self.enterContext(patch.object(gp, "sandbox_mode", lambda: "systemd"))
+
+    def test_linux_without_systemd_sandbox_forces_video_off_with_its_own_note(self):
+        self.write({"version": 1, "defaults": {"features": {"studioVideo": True, "studioSlides": True}},
+                    "dm": {"features": {"studioVideo": True}}})
+        self.assertTrue(gp.studio_settings(MEMBER, GROUP_A, True)["features"]["studioVideo"])
+        self.assertEqual(gp.video_policy(), {"videoBlocked": False, "note": ""})
+        with patch.object(gp, "sandbox_mode", lambda: "plain"):
+            for thread, is_group in ((GROUP_A, True), (MEMBER, False)):
+                rules = gp.studio_settings(MEMBER, thread, is_group)["features"]
+                self.assertFalse(rules["studioVideo"])
+                self.assertEqual(rules["studioSlides"], is_group)
+            self.assertEqual(gp.video_policy(), {"videoBlocked": True, "note": gp.PLAIN_VIDEO_NOTE})
+        # Đường thật, không giả: ZALO_STUDIO_SANDBOX=none → sandbox.mode() là plain trên mọi máy.
+        with patch.object(gp, "sandbox_mode", REAL_SANDBOX_MODE), patch.dict(os.environ, {"ZALO_STUDIO_SANDBOX": "none"}):
+            self.assertEqual(gp.sandbox_mode(), "plain")
+            self.assertFalse(gp.studio_settings(MEMBER, GROUP_A, True)["features"]["studioVideo"])
+        with patch.object(gp, "VIDEO_BLOCKED", True):
+            self.assertEqual(gp.video_policy(), {"videoBlocked": True, "note": gp.WINDOWS_VIDEO_NOTE})
+
+    def test_video_policy_is_published_next_to_permissions_for_the_dashboard(self):
+        with patch.object(gp, "sandbox_mode", lambda: "plain"):
+            data = gp.publish_video_policy()
+        self.assertEqual(gp.video_policy_path(), gp.permissions_path().parent / "studio-policy.json")
+        with open(gp.video_policy_path(), encoding="utf-8") as fh:
+            self.assertEqual(json.load(fh), data)
+        self.assertEqual(data, {"version": 1, "videoBlocked": True, "note": gp.PLAIN_VIDEO_NOTE, "sandbox": "plain"})
+
+    def test_unreadable_permissions_file_keeps_every_studio_switch_off(self):
+        self.write({"version": 1, "defaults": {"features": {f: True for f in gp.STUDIO_FEATURES}},
+                    "dm": {"who": "everyone", "features": {f: True for f in gp.STUDIO_FEATURES}}})
+        with patch.object(gp.Path, "read_text", side_effect=PermissionError(13, "Permission denied")), \
+                self.assertLogs(gp.logger, level="ERROR"):
+            for thread, is_group in ((GROUP_A, True), (MEMBER, False)):
+                self.assertEqual(gp.studio_settings(MEMBER, thread, is_group)["features"],
+                                 {f: False for f in gp.STUDIO_FEATURES})
 
     def test_windows_policy_forces_video_off_whatever_the_file_says(self):
         self.write({"version": 1, "defaults": {"features": {"studioVideo": True, "studioSlides": True}},

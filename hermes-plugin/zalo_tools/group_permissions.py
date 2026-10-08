@@ -73,8 +73,12 @@ STUDIO_LABELS: Dict[str, str] = {
 # Công cụ của xưởng: một công cụ, nút nào áp tuỳ ``kind`` (xem studio/recipes.py).
 STUDIO_TOOLS = frozenset({"zalo_studio"})
 # Chính sách cài đặt (spec §17.6): máy Windows không có hộp cát của hệ điều hành → video (bộ dựng nặng nhất, có
-# mạng) luôn tắt ở đây, bất kể tệp quyền nói gì. Dashboard cùng máy hiện ghi chú và khoá nút.
+# mạng) luôn tắt ở đây, bất kể tệp quyền nói gì. Linux chạy không hộp cát cũng vậy — xem video_policy().
+# Dashboard cùng máy hiện ghi chú và khoá nút.
 VIDEO_BLOCKED = sys.platform == "win32"
+WINDOWS_VIDEO_NOTE = "Máy chủ Windows không có hộp cát — video tắt"
+PLAIN_VIDEO_NOTE = ("Máy chủ chưa dùng được hộp cát systemd (cần Linux, gateway chạy bằng root, có systemd-run, "
+                    "không đặt ZALO_STUDIO_SANDBOX=none) — video tắt")
 DEFAULT_STUDIO_QUOTA = 3
 MAX_STUDIO_QUOTA = 50
 
@@ -260,6 +264,46 @@ def dm_disabled_features(uid: str) -> List[str]:
     return [feature for feature in DM_FEATURES if not features[feature]]
 
 
+def sandbox_mode() -> str:
+    """``studio.sandbox.mode()``; lỗi bất kỳ → ``plain`` (đóng)."""
+    try:
+        from .studio import sandbox
+        return sandbox.mode()
+    except Exception:
+        return "plain"
+
+
+def video_policy() -> Dict[str, Any]:
+    """Video (bộ dựng nặng nhất, có bước ra mạng) chỉ mở khi có hộp cát systemd. Windows, hoặc Linux chạy không
+    hộp cát (không root, không systemd-run, ``ZALO_STUDIO_SANDBOX=none``) → ``videoBlocked`` + câu ghi chú (dashboard
+    hiện đúng câu này, đọc từ ``studio-policy.json`` — xem ``publish_video_policy``)."""
+    if VIDEO_BLOCKED:
+        return {"videoBlocked": True, "note": WINDOWS_VIDEO_NOTE}
+    if sandbox_mode() != "systemd":
+        return {"videoBlocked": True, "note": PLAIN_VIDEO_NOTE}
+    return {"videoBlocked": False, "note": ""}
+
+
+def video_policy_path() -> Path:
+    """``studio-policy.json`` cạnh ``permissions.json`` (dashboard đọc để khoá nút video và hiện ghi chú)."""
+    return permissions_path().parent / "studio-policy.json"
+
+
+def publish_video_policy(path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    """Ghi ``{"version": 1, "videoBlocked", "note", "sandbox"}`` (ghi nguyên tử). Cố hết sức: lỗi → None, ghi log."""
+    target = Path(path) if path else video_policy_path()
+    data = {"version": 1, **video_policy(), "sandbox": sandbox_mode()}
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(target.name + ".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, target)
+    except OSError as exc:
+        logger.warning("[zalo] không ghi được %s: %s", target, exc)
+        return None
+    return data
+
+
 def studio_settings(uid: str, thread_id: str, is_group: bool) -> Dict[str, Any]:
     """Quyền xưởng của một người KHÔNG phải chủ nhân trong hội thoại này (bên gọi tự miễn trừ chủ nhân).
 
@@ -281,7 +325,7 @@ def studio_settings(uid: str, thread_id: str, is_group: bool) -> Dict[str, Any]:
         features.update(dm.get("studio") or {})
         if person:
             features.update(person.get("studio") or {})
-    if VIDEO_BLOCKED:
+    if video_policy()["videoBlocked"]:
         features["studioVideo"] = False
     studio = data.get("studio") or {}
     own = (studio.get("people") or {}).get(str(uid or ""))
