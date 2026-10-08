@@ -57,6 +57,12 @@ class RecipesTest(unittest.TestCase):
             self.assertEqual([p.name for p in recipes.guide_paths(video, where, {"kieu": "viet-tay"})], ["video-viet-tay.md"])
             self.assertEqual([p.name for p in recipes.guide_paths(game, where, {"loai": "matching"})], ["matching.md"])
             self.assertEqual([p.name for p in recipes.guide_paths(game, where, {"loai": "timer"})], ["flashcard-timer.md"])
+            # Giá trị lựa chọn ngoài danh sách không bao giờ được ghép vào đường dẫn.
+            for recipe, options in ((game, {"loai": "../../../.hermes/.env"}), (game, {"loai": "matching/../../x"}),
+                                    (video, {"kieu": "khac"}), (recipes.RECIPES["slide"], {"loai": "/etc/passwd"})):
+                with self.assertRaises(ValueError, msg=options):
+                    recipes.guide_paths(recipe, where, options)
+            self.assertEqual(recipes.guide_paths(recipes.RECIPES["slide"], where, {}), (), "thiếu lựa chọn: bỏ ứng viên")
 
     def test_node_engine_picks_generator_by_document_type(self):
         r = recipes.RECIPES["van_ban"]
@@ -99,10 +105,26 @@ class ValidateTest(unittest.TestCase):
         with self.assertRaises(validate.SourceError):
             validate.clean_text("x" * 61_000)
 
+    def test_control_characters_are_stripped_and_an_empty_result_is_a_content_error(self):
+        self.assertEqual(validate.clean_text("a\x07b\x1b[31mc\x7f\td\r\ne\x0b"), "ab[31mc\td\ne\n")
+        with self.assertRaises(validate.SourceError):
+            validate.clean_text("\x01\x02\x1f")
+        quiz = validate.check_quiz(json.dumps({"title": "Ôn\x08 tập", "questions": [
+            {"question": "H\x00ỏi\x1b?", "options": ["A\x07", "B"], "correct": 0}]}))
+        self.assertEqual((quiz["title"], quiz["questions"][0]["question"], quiz["questions"][0]["options"][0]),
+                         ("Ôn tập", "Hỏi?", "A"))
+        with self.assertRaises(validate.SourceError):
+            validate.check_quiz(json.dumps({"title": "x", "questions": [{"question": "q", "options": ["\x01\x02", "b"], "correct": 0}]}))
+        doan = validate.check_doan_json(json.dumps({
+            "loai": "ke_hoach", "don_vi_cap_tren": "A\x07\x0b", "dia_danh": "x", "ngay": "1", "thang": "1", "nam": "2026",
+            "trich_yeu": "t", "noi_nhan": ["a"], "noi_dung": [{"doan": "x\x01y"}]}))
+        self.assertEqual((doan["don_vi_cap_tren"], doan["noi_dung"]), ("A", [{"doan": "xy"}]))
+
     def test_thi_nghiem_accepts_only_library_models(self):
         ok = "---\ntieu-de: Con lắc\nmon: Vật lí\nlop: 10\nmau: li-con-lac-don\n---\n"
         self.assertIn("mau: li-con-lac-don", validate.check_thi_nghiem(ok, LIB))
-        for bad in (ok.replace("li-con-lac-don", "moi"), ok.replace("li-con-lac-don", "khong-co"), "mau: moi\n"):
+        for bad in (ok.replace("li-con-lac-don", "moi"), ok.replace("li-con-lac-don", "khong-co"), "mau: moi\n",
+                    ok.replace("mau: li-con-lac-don", "mau: moi\nmau: li-con-lac-don")):   # khoá lặp
             with self.assertRaises(validate.SourceError, msg=bad):
                 validate.check_thi_nghiem(bad, LIB)
 
@@ -112,30 +134,55 @@ class ValidateTest(unittest.TestCase):
         self.assertIn("do-phan-giai: 720", out)
         self.assertNotIn("1080", out)
         self.assertIn("## Cảnh 1", out)
-        vox = base.replace("lop: 10", "lop: 10\nphong-cach: vox\nnhan-vat: ve: cô giáo trẻ áo dài") + "nen: ve: lớp học buổi sáng\nanh: tim: mitochondria\n"
-        self.assertIn("phong-cach: vox", validate.check_video(vox, LIB))
+        # Ngữ pháp Vox thật (tools/vi/video_ma_parts/parse.py + vox.doc_nhip của 2Anh Studio): ảnh nằm trong nhịp
+        # `nhip: <cụm trong lời> | anh: <ve:|tim:|tên tệp> | <ô> | <tuỳ chọn>`, nền cảnh `nen: <mô tả>|ve: <mô tả>`.
+        vox = ("---\ntieu-de: Ti thể\nphong-cach: vox\nthoi-luong: 60\n---\n\n"
+               "## Cảnh 1\nbo-cuc: hai-ben\nnen: ve: lớp học buổi sáng\n"
+               "nhip: Ti thể | anh: tim: mitochondria | trai\n"
+               "nhip: nhà máy | anh: ve: nhà máy điện tí hon | phai | khung\n"
+               "nhip: năng lượng | chu: Năng lượng\n"
+               "loi: Ti thể là nhà máy năng lượng của tế bào.\n")
+        self.assertIn("nhip: Ti thể | anh: tim: mitochondria | trai", validate.check_video(vox, LIB))
         self.assertIn("phong-cach: cat-dan", validate.check_video(base.replace("lop: 10", "lop: 10\nphong-cach: cat-dan"), LIB))
         self.assertIn("thoi-luong: 180", validate.check_video(base.replace("thoi-luong: 60", "thoi-luong: 180"), LIB))
+        self.assertIn("nhan-vat: ve:", validate.check_video(base.replace("lop: 10", "lop: 10\nnhan-vat: ve: cô giáo trẻ"), LIB))
+        nhip = "nhip: Ti thể | anh: tim: mitochondria | trai"
+        long_narration = "loi: " + "Ti thể là nhà máy năng lượng. " * 120 + "\n"   # ~3.600 ký tự > 180 giây
         bad_cases = [
             base.replace("thoi-luong: 60", "thoi-luong: 181"),
             base.replace("lop: 10", "lop: 10\nnhac-nen: a.mp3"),
             base.replace("lop: 10", "lop: 10\nphong-cach: khac"),
             base + "anh: tim: cat\n",                                    # ảnh chỉ với vox
-            vox.replace("anh: tim: mitochondria", "anh: ../../.env"),       # không phải lời xin
-            vox.replace("anh: tim: mitochondria", "anh: tim: https://evil.vn/x.png"),
-            vox.replace("anh: tim: mitochondria", "anh: ve: C:\\Hermes\\.env"),
-            vox.replace("nhan-vat: ve: cô giáo trẻ áo dài", "nhan-vat: anh-co-san.png"),
+            base + "nhip: Chào | anh: tim: cat\n",                       # nhịp chỉ với vox
+            base.replace("lop: 10", "lop: 10\nnhan-vat: anh-co-san.png"),
+            base.replace("lop: 10", "lop: 10\nnhan-vat: ve: ../../.env"),
+            base.replace("loi: Chào.", "hinh: ../../../root/.hermes/x\nloi: Chào."),
             base + "\n## Cảnh 2\nloai: thi-nghiem\nmau: moi\nloi: x\n",
+            # Nhịp Vox: tên tệp, đường dẫn, vượt thư mục, địa chỉ → chặn (2Anh Studio nhận cả tên tệp trong anh/).
+            vox.replace(nhip, "nhip: Ti thể | anh: ../../../../root/.hermes/.env | trai"),
+            vox.replace(nhip, "nhip: Ti thể | anh: /etc/passwd.png"),
+            vox.replace(nhip, "nhip: Ti thể | anh: C:\\Hermes\\.env.png"),
+            vox.replace(nhip, "nhip: Ti thể | anh: anh-co-san.png | trai"),
+            vox.replace(nhip, "nhip: Ti thể | anh: tim: https://evil.vn/x.png"),
+            vox.replace(nhip, "nhip: Ti thể | anh: tim: ../x"),
+            vox.replace(nhip, "nhip: Ti thể | anh: ve: file:///etc/passwd"),
+            vox.replace(nhip, "nhip: Ti thể | anh: ve: ..\\..\\x"),
+            vox.replace("nen: ve: lớp học buổi sáng", "nen: ve: ../../../x.png"),
+            # Thời lượng: lời đọc dài quá 180 giây dù `thoi-luong` hợp lệ; quá nhiều cảnh.
+            vox.replace("loi: Ti thể là nhà máy năng lượng của tế bào.\n", long_narration),
+            base + "".join(f"\n## Cảnh {i}\nloai: tieu-de\nchu: C{i}\nloi: Một.\n" for i in range(2, 43)),
         ]
         for bad in bad_cases:
             with self.assertRaises(validate.SourceError, msg=bad):
                 validate.check_video(bad, LIB)
 
-    def test_svg_allows_shapes_inline_images_and_local_refs_only(self):
+    def test_svg_allows_shapes_and_local_refs_only(self):
         ok = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" data-pptx-page-role="cover">'
-              '<defs><linearGradient id="g"/></defs><rect fill="url(#g)" width="10" height="10"/>'
-              '<use href="#g"/><image href="data:image/png;base64,iVBORw0KGgo=" width="1" height="1"/>'
-              '<text x="1" y="2">Xin chào</text></svg>')
+              '<defs><linearGradient id="g"/><filter id="shadow"><feGaussianBlur stdDeviation="2"/></filter></defs>'
+              '<g id="card-1" transform="translate(10 20) rotate(45)" data-pptx-bounds="0 0 10 10">'
+              '<rect fill="url(#g)" filter="url( \'#shadow\' )" width="10" height="10" style="fill:rgb(1,2,3);stroke:#FFF"/>'
+              '<use href="#g"/><use data-icon="chunk-filled/bolt" x="1" y="1" width="4" height="4"/></g>'
+              '<text x="1" y="2" font-family="Segoe UI, Arial">Xin chào f(x) = \\frac{1}{2} url(https://x)</text></svg>')
         self.assertEqual(validate.check_svg(ok).strip(), ok)
         bad_cases = [
             '<!DOCTYPE svg [<!ENTITY x SYSTEM "file:///etc/passwd">]><svg viewBox="0 0 1 1">&x;</svg>',
@@ -150,10 +197,63 @@ class ValidateTest(unittest.TestCase):
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><foreignObject/></svg>',
             '<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>',
             '<svg viewBox="0 0 1 1"><rect',
+            '<svg viewBox="0 0 1 1"><rect/></svg>',                                   # thiếu không gian tên SVG
         ]
         for bad in bad_cases:
             with self.assertRaises(validate.SourceError, msg=bad):
                 validate.check_svg(bad)
+
+    def test_svg_rejects_every_reviewed_bypass(self):
+        """Mỗi dạng lách đã tìm thấy khi rà soát (probe_validate.py) — đều phải bị chặn."""
+        ns = 'xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 10 10"'
+        cases = {
+            # Lối thoát ký tự CSS
+            "css escape url": f'<svg {ns}><style>rect{{fill:u\\72l(https://evil.example/x)}}</style></svg>',
+            "css escape import": f'<svg {ns}><style>@\\69mport "https://evil.example/x.css";</style></svg>',
+            "attr escape url": f'<svg {ns}><rect fill="u\\72l(https://evil.example/x#a)"/></svg>',
+            "style attr escape": f'<svg {ns}><rect style="fill:u\\rl(https://evil.example/x)"/></svg>',
+            # <style>: cấm hẳn (cả phần chữ sau thẻ con, sau chú thích)
+            "plain style": f'<svg {ns}><style>rect{{fill:red}}</style></svg>',
+            "style tail after child": f'<svg {ns}><style>a{{}}<g/>@import url(https://evil.example/x.css);</style></svg>',
+            "style text after comment": f'<svg {ns}><style>a{{}}<!-- c -->@import url(https://evil.example/x.css);</style></svg>',
+            "font-face src local": f'<svg {ns}><style>@font-face{{font-family:x;src:local("Arial")}}</style></svg>',
+            # Hàm CSS ngoài danh sách
+            "image-set no url(": f'<svg {ns}><rect style="fill:red;background-image:image-set(\'https://evil.example/x.png\' 1x)"/></svg>',
+            "image(": f'<svg {ns}><rect style="background:image(\'https://evil.example/x.png\')"/></svg>',
+            "src(": f'<svg {ns}><rect style="background:src(\'https://evil.example/x.png\')"/></svg>',
+            "element(": f'<svg {ns}><rect style="background:element(#a)"/></svg>',
+            "var(": f'<svg {ns}><rect style="fill:var(--x)"/></svg>',
+            "comment split url": f'<svg {ns}><rect style="fill:u/**/rl(https://evil.example/x)"/></svg>',
+            "url to file": f'<svg {ns}><rect fill="url(file:///etc/passwd#a)"/></svg>',
+            "url relative": f'<svg {ns}><rect filter="url(other.svg#f)"/></svg>',
+            "url img id": f'<svg {ns}><rect fill="url(img:w1)"/></svg>',
+            "mask url ext": f'<svg {ns}><rect mask="url(https://evil.example/m.svg#m)"/></svg>',
+            "cursor": f'<svg {ns}><rect cursor="url(https://evil.example/c.png), auto"/></svg>',
+            # SMIL đổi href lúc hiển thị
+            "animate href": f'<svg {ns}><image href="#a"><animate attributeName="href" to="https://evil.example/x.png" dur="1s"/></image></svg>',
+            "set xlink:href file": f'<svg {ns}><image xlink:href="#a"><set attributeName="xlink:href" to="file:///etc/passwd"/></image></svg>',
+            "animate values": f'<svg {ns}><image href="#a"><animate attributeName="href" values="https://evil.example/a.png;https://evil.example/b.png" dur="1s"/></image></svg>',
+            "tab javascript in to": f'<svg {ns}><set attributeName="href" to="java&#9;script:alert(1)"/></svg>',
+            "animateMotion": f'<svg {ns}><rect><animateMotion path="M0 0"><mpath href="#p"/></animateMotion></rect></svg>',
+            "animateTransform": f'<svg {ns}><rect><animateTransform attributeName="transform" type="rotate"/></rect></svg>',
+            # Ảnh: không data:, chỉ img:<mã> đã tải hoặc #id
+            "data png": f'<svg {ns}><image href="data:image/png;base64,iVBORw0KGgo="/></svg>',
+            "svg data uri": f'<svg {ns}><image href="data:image/svg+xml;base64,PHN2Zz4="/></svg>',
+            "feImage ext": f'<svg {ns}><filter id="f"><feImage href="https://evil.example/x"/></filter></svg>',
+            "use external": f'<svg {ns}><use href="other.svg#x"/></svg>',
+            "data-icon traversal": f'<svg {ns}><use data-icon="../../../root/.env"/></svg>',
+            # Thẻ/không gian tên ngoài SVG
+            "iframe ns trick": f'<svg {ns}><h:iframe xmlns:h="http://www.w3.org/1999/xhtml" src="https://evil.example"/></svg>',
+            "html img in other ns": f'<svg {ns}><h:img xmlns:h="http://www.w3.org/1999/xhtml" src="https://evil.example/x.png"/></svg>',
+            "html link stylesheet": f'<svg {ns}><h:link xmlns:h="http://www.w3.org/1999/xhtml" rel="stylesheet" href="https://evil.example/x.css"/></svg>',
+            "html style ns": f'<svg {ns}><h:style xmlns:h="http://www.w3.org/1999/xhtml">@import "https://evil.example/x.css";</h:style></svg>',
+            "foreign attr ns": f'<svg {ns}><rect xmlns:e="urn:x" e:href="https://evil.example"/></svg>',
+            "billion laughs (no doctype)": f'<svg {ns}>&lol;</svg>',
+            "PI stylesheet": f'<?xml-stylesheet href="https://evil.example/x.css"?><svg {ns}/>',
+        }
+        for name, svg in cases.items():
+            with self.assertRaises(validate.SourceError, msg=name):
+                validate.check_svg(svg, {"w1": "../images/w1.jpg"})
 
     def test_svg_image_refs_only_for_downloaded_ids_and_rewritten_to_local_paths(self):
         page = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720"><image href="img:w1" width="1" height="1"/>'
@@ -167,6 +267,10 @@ class ValidateTest(unittest.TestCase):
                 validate.check_svg(page, refs)
         with self.assertRaises(validate.SourceError):
             validate.check_svg('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><image href="img:../x"/></svg>', {"x": "a"})
+        # Đường dẫn có "\" (Windows) được thay nguyên văn, không bị hiểu là mẫu thay thế của re.sub.
+        out = validate.check_svg('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><image href="img:w1"/></svg>',
+                                 {"w1": r"..\images\w1.jpg"})
+        self.assertIn(r'href="..\images\w1.jpg"', out)
 
     def test_engine_json_checks_type_and_drops_output_path(self):
         data = validate.check_engine_json(json.dumps({"loai_van_ban": "thong_bao", "noi_dung": "A",

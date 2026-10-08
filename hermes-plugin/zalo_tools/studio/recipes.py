@@ -188,16 +188,26 @@ def missing(recipe: Recipe, where: Places) -> Optional[str]:
 
 
 def guide_paths(recipe: Recipe, where: Places, options: Dict[str, str]) -> Tuple[Path, ...]:
-    """Tệp hướng dẫn có thật trên máy, theo thứ tự trong công thức (ứng viên đầu tiên có mặt thắng)."""
+    """Tệp hướng dẫn có thật trên máy, theo thứ tự trong công thức (ứng viên đầu tiên có mặt thắng).
+
+    Giá trị lựa chọn phải nằm trong danh sách của công thức (``ValueError`` nếu không) — chỉ chúng được ghép vào
+    đường dẫn, nên không có ``../`` nào từ lời gọi công cụ lọt vào đây. Khoá lạ bị bỏ qua."""
+    for key, value in options.items():
+        if key in recipe.options and value not in recipe.options[key]:
+            raise ValueError(f"lựa chọn {key}={value!r} không có trong danh sách của {recipe.kind}")
+    safe = {key: value for key, value in options.items() if key in recipe.options}
     found = []
     first = next(iter(recipe.options), None)
-    extra = recipe.extra_guides.get(options.get(first, ""), ()) if first else ()
+    extra = recipe.extra_guides.get(safe.get(first, ""), ()) if first else ()
     for base_key, candidates in (*recipe.guides, *extra):
         base = where.studio if base_key == "studio" else where.skills
         if base is None:
             continue
         for rel in candidates:
-            path = base / rel.format(**options)
+            try:
+                path = base / rel.format(**safe)
+            except (KeyError, IndexError):
+                continue
             if path.is_file():
                 found.append(path)
                 break

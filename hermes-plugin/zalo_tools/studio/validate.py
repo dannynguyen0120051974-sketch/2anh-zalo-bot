@@ -3,10 +3,13 @@
 Mỗi hàm chặn đúng lối mà bộ dựng tương ứng có thể chạy mã, đọc tệp hay ra mạng:
 
 - thí nghiệm ảo ``mau: moi`` → thi_nghiem.py chạy ``mo-hinh.js`` bằng Node: chỉ nhận mẫu có sẵn;
-- video: ảnh chỉ ở dạng XIN (``ve:`` mô tả / ``tim:`` từ khoá) — không tên tệp, không địa chỉ; nhạc nền tải về
-  tắt; thời lượng ≤ 180 giây, độ phân giải ép 720;
-- SVG của slide: không DOCTYPE/ENTITY, không script/foreignObject/a, không ``on*=``; ``href`` chỉ được ``#id``,
-  ảnh ``data:`` nhúng sẵn, hoặc ``img:<mã>`` của ảnh plugin đã tải về thư mục việc (đổi thành đường dẫn tương đối);
+- video: ảnh chỉ ở dạng XIN (``ve:`` mô tả / ``tim:`` từ khoá) — kể cả trong nhịp Vox ``nhip: <cụm> | anh: …`` —
+  không tên tệp, không địa chỉ; nhạc nền tải về tắt; ``thoi-luong`` ≤ 180 giây VÀ lời đọc ≤ 180 giây × 18 ký tự/giây
+  (thời lượng thật đo theo lời đọc, ``thoi-luong`` chỉ là đích); độ phân giải ép 720;
+- SVG của slide: chỉ thẻ trong không gian tên SVG; không DOCTYPE/ENTITY, không script/foreignObject/a/style, không
+  hoạt hình SMIL (animate, set…), không ``on*=``; không dấu ``\\`` trong thuộc tính (chặn lối thoát ký tự CSS); hàm CSS
+  chỉ trong danh sách cho phép, ``url()`` chỉ ``#id``; ``href`` chỉ được ``#id`` hoặc ``img:<mã>`` của ảnh plugin đã
+  tải về thư mục việc (đổi thành đường dẫn tương đối) — không ảnh ``data:``;
 - JSON văn bản (NĐ30, Đảng, Đoàn): đúng kiểu, đúng loại văn bản, bỏ khoá chọn nơi ghi tệp;
 - trò chơi: 6 khuôn cố định, lược đồ đóng, chữ thuần (bản HTML hiển thị bằng textContent).
 
@@ -23,9 +26,11 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 MAX_SOURCE_CHARS = 60_000
 MAX_SVG_CHARS = 120_000
-MAX_SVG_DATA_CHARS = 1_500_000
 MAX_PAGES = 12
 MAX_VIDEO_SECONDS = 180
+# Giọng đọc tiếng Việt ~15–18 ký tự/giây: trần lời đọc giữ video ≤ 180 giây dù ``thoi-luong`` chỉ là đích.
+VIDEO_CHARS_PER_SECOND = 18
+MAX_VIDEO_SCENES = 40
 MAX_QUIZ_QUESTIONS = 30
 
 
@@ -34,19 +39,21 @@ class SourceError(ValueError):
 
 
 _FENCE = re.compile(r"^\s*```[a-zA-Z0-9_-]*\s*\n(.*?)\n```\s*$", re.S)
+# Ký tự điều khiển C0 (trừ \t, \n) và DEL: bỏ đi, không để lọt vào tệp Word/HTML/lệnh bộ dựng.
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
 
 def clean_text(text: Any, limit: int = MAX_SOURCE_CHARS) -> str:
-    """Bỏ khung ``` mô hình hay bọc, chặn ký tự NUL và độ dài."""
+    """Bỏ khung ``` mô hình hay bọc, chặn ký tự NUL, bỏ ký tự điều khiển khác, chặn độ dài."""
     value = str(text or "")
     match = _FENCE.match(value)
     if match:
         value = match.group(1)
-    value = value.replace("\r\n", "\n").strip()
-    if not value:
-        raise SourceError("nội dung rỗng")
     if "\x00" in value:
         raise SourceError("nội dung có ký tự lạ")
+    value = _CONTROL.sub("", value.replace("\r\n", "\n")).strip()
+    if not value:
+        raise SourceError("nội dung rỗng")
     if len(value) > limit:
         raise SourceError(f"nội dung dài quá {limit} ký tự")
     return value + "\n"
@@ -66,6 +73,8 @@ def front_matter(text: str) -> Tuple[Dict[str, str], List[str], List[str]]:
             for line in lines[1:end]:
                 match = _KEY_LINE.match(line.strip())
                 if match:
+                    if match.group(1) in meta:   # 2Anh Studio cũng từ chối khoá lặp — không để hai bên đọc khác nhau
+                        raise SourceError(f"khoá `{match.group(1)}` bị lặp trong khối thông tin đầu")
                     meta[match.group(1)] = match.group(2).strip()
             return meta, lines[1:end], lines[end + 1:]
     raise SourceError("khối thông tin đầu chưa đóng bằng ---")
@@ -98,6 +107,18 @@ def _image_request(key: str, value: str) -> None:
         raise SourceError(f"`{key}:` chỉ được `ve: <mô tả>` hoặc `tim: <từ khoá tiếng Anh>` — không tên tệp, không địa chỉ")
 
 
+_NHIP_THING = re.compile(r"^([a-z-]+):\s*(.*)$")
+
+
+def _nhip(value: str) -> None:
+    """Nhịp Vox ``<cụm> | <vật>: <nội dung> | <ô> | <tuỳ chọn>`` (tách như ``vox.doc_nhip`` của 2Anh Studio: ở
+    `` | ``). Vật ``anh`` ngoài ``ve:``/``tim:`` là TÊN TỆP trong ``anh/`` → chặn, cùng mọi đường dẫn/địa chỉ."""
+    parts = [p.strip() for p in value.split(" | ")]
+    thing = _NHIP_THING.match(parts[1]) if len(parts) > 1 else None
+    if thing and thing.group(1) == "anh":
+        _image_request("nhip … anh", thing.group(2).strip())
+
+
 def check_video(text: str, library: Set[str], max_seconds: int = MAX_VIDEO_SECONDS) -> str:
     """Video viết tay / cắt dán / Vox; ảnh chỉ ở dạng xin; trả bản đã ép ``do-phan-giai: 720``."""
     text = clean_text(text)
@@ -113,35 +134,71 @@ def check_video(text: str, library: Set[str], max_seconds: int = MAX_VIDEO_SECON
     seconds = meta.get("thoi-luong")
     if seconds is not None and not (seconds.isascii() and seconds.isdigit() and 15 <= int(seconds) <= max_seconds):
         raise SourceError(f"`thoi-luong` là số giây từ 15 đến {max_seconds}")
+    narration, scenes = 0, 0
     for line in body:
+        if line.strip().startswith("##"):
+            scenes += 1
         match = _KEY_LINE.match(line.strip())
         if not match:
             continue
         key, value = match.group(1), match.group(2).strip()
+        if key in ("loi", "loi-giai"):
+            narration += len(value)
         if key in ("anh", "nen"):
             if style != "vox":
                 raise SourceError(f"`{key}:` (ảnh) chỉ dùng với `phong-cach: vox`")
             if key == "anh" or value.startswith(("ve:", "tim:")):
                 _image_request(key, value)
+        if key == "nhip":
+            if style != "vox":
+                raise SourceError("`nhip:` chỉ dùng với `phong-cach: vox`")
+            _nhip(value)
+        if key == "hinh" and _PATHISH.search(value):
+            raise SourceError("`hinh:` là tên biểu tượng, không phải đường dẫn")
         if key == "nen-canh" and value not in ("ve", "khong"):
             raise SourceError("`nen-canh` chỉ được `ve` hoặc `khong`")
         if key == "mau" and (value == "moi" or value not in library):
             raise SourceError("cảnh thí nghiệm chỉ dùng mẫu có sẵn")
+    if scenes > MAX_VIDEO_SCENES:
+        raise SourceError(f"video tối đa {MAX_VIDEO_SCENES} cảnh")
+    if narration > max_seconds * VIDEO_CHARS_PER_SECOND:
+        raise SourceError(f"lời đọc dài {narration} ký tự — video tối đa {max_seconds} giây "
+                          f"(khoảng {max_seconds * VIDEO_CHARS_PER_SECOND} ký tự lời đọc); rút gọn lời")
     head = [line for line in head if not line.strip().startswith("do-phan-giai")] + ["do-phan-giai: 720"]
     return "\n".join(["---", *head, "---", *body]).rstrip("\n") + "\n"
 
 
-_SVG_BANNED_TAGS = {"script", "foreignobject", "iframe", "object", "embed", "a", "audio", "video", "handler", "listener"}
-_DATA_IMAGE = re.compile(r"^data:image/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=\s]+$")
-_URL = re.compile(r"url\(\s*(['\"]?)(.*?)\1\s*\)", re.I)
+SVG_NS = "http://www.w3.org/2000/svg"
+_XLINK_NS = "http://www.w3.org/1999/xlink"
+_XML_NS = "http://www.w3.org/XML/1998/namespace"
+# Cấm hẳn: chạy mã, nhúng nội dung ngoài, liên kết, và hoạt hình SMIL (animate/set đổi được href sang tệp/mạng
+# lúc hiển thị). <style> cấm luôn — hợp đồng SVG của ppt-master cũng cấm stylesheet nhúng; kiểu chữ/màu đi bằng
+# thuộc tính hoặc ``style=`` từng thẻ.
+_SVG_BANNED_TAGS = {"script", "foreignobject", "iframe", "object", "embed", "a", "audio", "video", "handler", "listener",
+                    "animate", "set", "animatemotion", "animatetransform", "animatecolor", "mpath", "discard",
+                    "style", "cursor", "font-face", "font-face-uri", "font-face-src", "tref"}
+# Hàm CSS/biến đổi được phép trong giá trị thuộc tính; ``url`` chỉ với ``#id`` (kiểm riêng). Không có image-set,
+# image, src, element, cross-fade, attr, var, env, expression…
+_CSS_FUNCTIONS = {"url", "rgb", "rgba", "hsl", "hsla", "matrix", "translate", "translatex", "translatey", "scale",
+                  "scalex", "scaley", "rotate", "skewx", "skewy"}
+_FUNCTION = re.compile(r"([A-Za-z_-][A-Za-z0-9_-]*)\s*\(")
+_URL = re.compile(r"url\(\s*(['\"]?)([^'\")]*)\1\s*\)", re.I)
+_FRAGMENT = re.compile(r"^#[A-Za-z_][A-Za-z0-9_.:-]*$")
+_DATA_ICON = re.compile(r"^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9_-]*$")
 
 
 def _check_css(value: str) -> None:
+    """Giá trị thuộc tính (cả ``style=``): chỉ hàm trong danh sách, ``url()`` chỉ trỏ ``#id`` trong trang."""
     low = value.lower()
-    if "@import" in low or "javascript:" in low or "expression(" in low:
+    if "@" in low or "/*" in low or "javascript:" in low:
         raise SourceError("SVG có CSS trỏ ra ngoài")
+    for name in _FUNCTION.findall(value):
+        if name.lower() not in _CSS_FUNCTIONS:
+            raise SourceError(f"SVG không được dùng hàm CSS `{name}(`")
+    if low.count("url(") != len(_URL.findall(value)):
+        raise SourceError("SVG có url() viết lạ")
     for _q, target in _URL.findall(value):
-        if not target.strip().startswith("#"):
+        if not _FRAGMENT.match(target.strip()):
             raise SourceError("SVG chỉ được url(#id), không trỏ ra tệp hay mạng")
 
 
@@ -152,54 +209,62 @@ def check_svg(text: str, images: Optional[Dict[str, str]] = None) -> str:
     """Kiểm một trang SVG. ``images``: mã → tên tệp (``../images/w1.jpg``) của ảnh plugin đã tải; ``href="img:w1"``
     được đổi thành đường dẫn đó, mọi tham chiếu khác ra ngoài trang bị từ chối. Ngoài phép đổi ấy, trả nguyên văn."""
     images = images or {}
-    text = clean_text(text, MAX_SVG_CHARS + MAX_SVG_DATA_CHARS)
+    text = clean_text(text, MAX_SVG_CHARS)
     if re.search(r"<!DOCTYPE|<!ENTITY|<\?xml-stylesheet", text, re.I):
         raise SourceError("SVG không được có DOCTYPE/ENTITY")
     try:
         root = ET.fromstring(text)
     except ET.ParseError as exc:
         raise SourceError(f"SVG hỏng: {exc}") from None
-    if root.tag.split("}")[-1] != "svg" or not root.get("viewBox"):
-        raise SourceError("trang phải là một thẻ <svg> có viewBox")
-    data_chars = 0
+    if root.tag != f"{{{SVG_NS}}}svg" or not root.get("viewBox"):
+        raise SourceError('trang phải là một thẻ <svg xmlns="http://www.w3.org/2000/svg"> có viewBox')
     for el in root.iter():
-        tag = str(el.tag).split("}")[-1].lower()
+        if not isinstance(el.tag, str) or not el.tag.startswith(f"{{{SVG_NS}}}"):
+            raise SourceError("SVG chỉ được có thẻ SVG (không thẻ HTML hay không gian tên lạ)")
+        tag = el.tag.split("}")[-1].lower()
         if tag in _SVG_BANNED_TAGS:
             raise SourceError(f"SVG không được có thẻ <{tag}>")
-        if tag == "style" and el.text:
-            _check_css(el.text)
         for name, value in el.attrib.items():
+            if name.startswith("{") and name.split("}")[0][1:] not in (_XLINK_NS, _XML_NS):
+                raise SourceError("SVG có thuộc tính thuộc không gian tên lạ")
             local = name.split("}")[-1].lower()
             if local.startswith("on"):
                 raise SourceError("SVG không được có thuộc tính sự kiện (on…)")
+            if "\\" in value:
+                raise SourceError("SVG không được có dấu \\ trong thuộc tính")
             if "javascript:" in value.lower():
                 raise SourceError("SVG không được có javascript:")
-            if local == "href":
+            if local == "data-icon":
+                if not _DATA_ICON.match(value.strip()):
+                    raise SourceError("data-icon chỉ là <thư-viện>/<tên-biểu-tượng>")
+                continue
+            if local.startswith(("data-", "aria-")):
+                continue
+            if local in ("href", "src"):
                 ref = value.strip()
-                if ref.startswith("#"):
-                    continue
-                if tag == "image" and _DATA_IMAGE.match(ref):
-                    data_chars += len(ref)
+                if local == "href" and _FRAGMENT.match(ref):
                     continue
                 found = _IMG_REF.match(ref)
-                if tag == "image" and found and found.group(1) in images:
+                if local == "href" and tag == "image" and found and found.group(1) in images:
                     continue
-                raise SourceError("SVG chỉ được dùng ảnh img:<mã> đã có trong danh sách, ảnh data: hoặc #id trong trang")
-            if local == "style" or "url(" in value.lower():
-                _check_css(value)
-    if len(text) - data_chars > MAX_SVG_CHARS or data_chars > MAX_SVG_DATA_CHARS:
-        raise SourceError("trang SVG quá lớn")
+                raise SourceError("SVG chỉ được dùng ảnh img:<mã> đã có trong danh sách hoặc #id trong trang")
+            _check_css(value)
     for ref, path in images.items():
-        text = re.sub(rf'(href\s*=\s*["\'])img:{ref}(["\'])', rf"\g<1>{path}\g<2>", text)
+        text = re.sub(rf'(href\s*=\s*["\'])img:{re.escape(ref)}(["\'])',
+                      lambda m, p=path: m.group(1) + p + m.group(2), text)
     return text
 
 
 def _plain(value: Any, limit: int, what: str) -> str:
-    if not isinstance(value, str) or not value.strip():
+    """Chữ thuần một trường: bỏ ký tự điều khiển (trừ \\t, \\n); rỗng sau khi bỏ = thiếu (lỗi nội dung, vẫn tính lượt)."""
+    if not isinstance(value, str):
+        raise SourceError(f"thiếu {what}")
+    value = _CONTROL.sub("", value).strip()
+    if not value:
         raise SourceError(f"thiếu {what}")
     if len(value) > limit:
         raise SourceError(f"{what} dài quá {limit} ký tự")
-    return value.strip()
+    return value
 
 
 def check_engine_json(text: str, allowed: Iterable[str]) -> Dict[str, Any]:
