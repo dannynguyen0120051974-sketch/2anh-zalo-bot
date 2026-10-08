@@ -903,3 +903,13 @@ test('Cấu hình: chữ nhập thành giá trị đúng kiểu; chỉ gửi m�
   const list = [{ id: 'a', value: 6 }, { id: 'b', value: ['1'] }, { id: 'c', value: true }];
   assert.deepEqual(changedValues(list, { a: 6, b: ['1', '2'], c: false }), { b: ['1', '2'], c: false });
 });
+
+test('Kho tri thức tự học: nhãn nhóm/người (có chủ nhân), tên mục dịch sang tiếng Việt', async () => {
+  const { scopeLabel, entryLabel } = await import('./views/learned-memory.js');
+  assert.equal(scopeLabel({ kind: 'group', id: '2054797107487294899', name: 'Tổ Hoá', owner: false }), 'Tổ Hoá');
+  assert.equal(scopeLabel({ kind: 'dm', id: '1234567890123456789', name: '', owner: true }), 'Người …6789 (chủ nhân)');
+  assert.equal(entryLabel('viking://user/zalo-g-1/memories/preferences'), 'Sở thích, cách xưng hô');
+  assert.equal(entryLabel('viking://user/zalo-g-1/memories/events/mem_ab12.md'), 'mem_ab12');
+  const { intervalText } = await import('./views/learned-memory.js');
+  assert.deepEqual([intervalText(120), intervalText(45), intervalText(1440)], ['120 phút (2 giờ)', '45 phút', '1440 phút (24 giờ)']);
+});

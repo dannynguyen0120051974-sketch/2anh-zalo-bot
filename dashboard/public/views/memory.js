@@ -2,6 +2,7 @@
 import { useEffect, useState } from '../vendor/hooks.mjs';
 import { api } from '../api.js';
 import { html, fmtTime, Icon, Live, PageHead, Spinner } from '../ui.js';
+import { LearnedMemory } from './learned-memory.js';
 
 /** Bản nháp sửa hồ sơ: luôn có ít nhất một dòng "thông tin thêm" trống để gõ tiếp. */
 export function personDraft(p) {
@@ -124,5 +125,6 @@ export function Memory({ me }) {
   return html`<${PageHead} title="Trí nhớ" sub="Những gì bot nhớ về mọi người và về chủ nhân." />
     <${People} />
     ${me?.role === 'admin' ? html`<${AgentMemory} />` : null}
+    <${LearnedMemory} />
     <p class="muted small"><${Icon} name="info" size=${14} /> Tài liệu dài để bot tra cứu nằm ở Kho tri thức.</p>`;
 }
