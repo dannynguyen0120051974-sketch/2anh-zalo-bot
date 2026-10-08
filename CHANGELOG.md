@@ -2,6 +2,12 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [1.25.1] — 2026-10-08
+
+### Sửa
+
+- Phiên chat: link Google Drive/Docs/Forms… mà Zalo gửi dưới dạng "chat.recommended" không còn hiện nhầm là "[Danh thiếp] Mở danh thiếp" — giờ hiện đúng tên trang ("[Google Drive]") kèm đường dẫn rút gọn bấm được. Chỉ danh thiếp thật mới ghi "Danh thiếp".
+
 ## [1.25.0] — 2026-10-08
 
 ### Thêm

@@ -45,6 +45,16 @@ test('tin nhắn: ảnh/tệp hiện nhãn + link https; chữ giữ nguyên, kh
   for (const text of ['javascript:alert(1)', 'http://evil.vn', 'data:text/html,x', 'https://a.vn có chữ']) {
     assert.equal(messageView({ msgType: 'webchat', text }).link, null, text);
   }
+  // Zalo gửi link Drive/Docs dưới loại chat.recommended (như danh thiếp): phải hiện là link, đúng tên trang.
+  const drive = 'https://drive.google.com/file/d/1cn7ZXYy/view?usp=drivesdk';
+  assert.deepEqual(messageView({ msgType: 'chat.recommended', text: drive }), { label: 'Google Drive', text: '', link: drive, media: null });
+  assert.equal(messageView({ msgType: 'chat.recommended', text: 'https://forms.gle/abc' }).label, 'Google Forms');
+  assert.equal(messageView({ msgType: 'chat.recommended', text: 'https://vi.wikipedia.org/x' }).label, 'Liên kết');
+  assert.equal(messageView({ msgType: 'chat.recommended', text: '{"contactUid":"1"}' }).label, 'Danh thiếp');
+  const { shortUrl, siteName } = await import('./views/chats.js');
+  assert.equal(shortUrl(drive), 'drive.google.com/file/d/1cn7ZXYy/view');
+  assert.equal(siteName('https://evil.com/drive.google.com'), null);
+  assert.equal(siteName('https://notdrive.google.com.evil.vn/'), null);
   assert.deepEqual(mergeMessages([{ id: 2, ts: 5 }, { id: 1, ts: 5 }], [{ id: 2, ts: 5 }, { id: 3, ts: 4 }]).map((m) => m.id), [3, 1, 2]);
   assert.equal(preview({ lastMsgType: 'chat.photo', lastText: 'https://x.zdn.vn/a.jpg', lastIsSelf: true }), 'Bot: [Ảnh]');
   assert.equal(preview({ lastMsgType: 'webchat', lastText: 'Chào', lastIsSelf: false }), 'Chào');

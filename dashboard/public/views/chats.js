@@ -20,6 +20,27 @@ const TYPE_LABELS = {
   'chat.gif': 'Ảnh động', 'chat.location.new': 'Vị trí', 'chat.link': 'Liên kết',
 };
 
+// Zalo gửi link chia sẻ (Drive, Docs…) cũng dưới loại chat.recommended như danh thiếp — gọi đúng tên theo trang.
+const SITE_NAMES = [
+  ['drive.google.com', 'Google Drive'], ['docs.google.com', 'Google Docs'], ['forms.gle', 'Google Forms'],
+  ['forms.google.com', 'Google Forms'], ['youtube.com', 'YouTube'], ['youtu.be', 'YouTube'],
+  ['facebook.com', 'Facebook'], ['fb.watch', 'Facebook'], ['tiktok.com', 'TikTok'], ['zalo.me', 'Zalo'],
+];
+
+export function siteName(url) {
+  let host = '';
+  try { host = new URL(url).hostname.toLowerCase().replace(/^www\./, ''); } catch { return null; }
+  const hit = SITE_NAMES.find(([h]) => host === h || host.endsWith(`.${h}`));
+  return hit ? hit[1] : null;
+}
+
+/** Link rút gọn để hiện: tên máy + đường dẫn, cắt bớt nếu dài. */
+export function shortUrl(url, max = 48) {
+  let s = url;
+  try { const u = new URL(url); s = u.hostname.replace(/^www\./, '') + (u.pathname === '/' ? '' : u.pathname); } catch { /* giữ nguyên */ }
+  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+}
+
 const keyOf = (c) => `${c.threadType}:${c.threadId}`;
 
 export function messageView(m) {
@@ -29,7 +50,10 @@ export function messageView(m) {
   const media = classifyMedia(m.msgType, raw);
   if (media) return { label, text: media.kind === 'file' ? '' : media.caption, link: null, media };
   const trimmed = raw.trim();
-  if (/^https:\/\/\S+$/.test(trimmed)) return { label: label || 'Liên kết', text: '', link: trimmed, media: null };
+  if (/^https:\/\/\S+$/.test(trimmed)) {
+    const linkLabel = siteName(trimmed) || (m.msgType === 'chat.recommended' ? 'Liên kết' : label) || 'Liên kết';
+    return { label: linkLabel, text: '', link: trimmed, media: null };
+  }
   // Bot lưu sẵn "[Nhãn dán]"… cho tin không có chữ — nhãn đã nói đủ, không lặp lại.
   return { label, text: label && /^\[[^\]]*\]$/.test(trimmed) ? '' : raw, link: null, media: null };
 }
@@ -81,7 +105,7 @@ function Bubble({ m, group, focus, onOpenPhoto }) {
       ${md?.kind === 'file' ? html`<${FileCard} name=${md.name} url=${md.url} ext=${md.ext} />` : null}
       ${md?.kind === 'video' ? html`<${VideoCard} url=${md.url} />` : null}
       ${!md && v.label ? html`<span class="msg-kind">[${v.label}]</span> ` : null}
-      ${v.link ? html`<a href=${v.link} target="_blank" rel="noopener noreferrer">Mở ${v.label ? v.label.toLowerCase() : 'liên kết'}</a>` : null}
+      ${v.link ? html`<a href=${v.link} target="_blank" rel="noopener noreferrer" title=${v.link}>${shortUrl(v.link)}</a>` : null}
       ${v.text ? html`<span class="msg-text">${v.text}</span>` : null}
     </div>
     <time class="msg-time" datetime=${new Date(m.ts).toISOString()}>${m.isSelf ? 'Bot · ' : ''}${fmtTime(m.ts)}</time>
