@@ -10,6 +10,8 @@ export const EDITABLE_KEYS = new Set(['ZALO_ALLOWED_USERS']);
 export const READ_ONLY_KEYS = new Set([
   'ZALO_PEOPLE_FILE', 'ZALO_KB_DIR', 'ZALO_KB_PUBLIC_DIRS',
   'ZALO_SECOND_BRAIN_URL', 'OPENVIKING_ACCOUNT', 'OPENVIKING_USER', 'OPENVIKING_API_KEY',
+  // Giai đoạn 7B: danh sách model chọn nhanh của lệnh /model, công cụ MCP mở cho thành viên.
+  'ZALO_MODEL_CHOICES', 'ZALO_MODEL_DEFAULT', 'ZALO_PUBLIC_MCP',
 ]);
 
 function allowed(key, { write = false } = {}) {

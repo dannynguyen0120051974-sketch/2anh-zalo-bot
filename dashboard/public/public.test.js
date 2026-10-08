@@ -864,3 +864,10 @@ test('dải chờ khởi động lại: gộp lý do; có cờ kết nối Zalo 
   assert.equal(restartText({ assistant: { reasons: ['Đổi model'] }, sidecar: null }), 'Đã đổi: Đổi model. Cần khởi động lại trợ lý để áp dụng (bot im khoảng 1–3 phút).');
   assert.match(restartText({ assistant: null, sidecar: { reasons: ['Cấu hình: kết bạn'] } }), /trợ lý và kết nối Zalo/);
 });
+
+test('Agent: danh sách model — đang dùng đầu, chọn nhanh, phần còn lại lọc theo chữ, không trùng', async () => {
+  const { modelOptions, REASONING_LABELS } = await import('./views/agent.js');
+  assert.deepEqual(modelOptions({ current: 'hermes', choices: ['hermes', 'b'], all: ['a', 'b', 'gemini-x'], q: 'gem' }), ['hermes', 'b', 'gemini-x']);
+  assert.deepEqual(modelOptions({ current: '', choices: [], all: ['a'], q: '' }), ['a']);
+  assert.equal(REASONING_LABELS.medium, 'Vừa (mặc định)');
+});
