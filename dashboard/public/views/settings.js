@@ -1,0 +1,84 @@
+// Cấu hình (spec §18.6, chỉ Quản trị): cài đặt an toàn trong danh sách cố định + lời chào thành viên mới theo nhóm.
+import { useEffect, useState } from '../vendor/hooks.mjs';
+import { api } from '../api.js';
+import { html, Live, PageHead, SaveBar, Spinner, Toggle } from '../ui.js';
+import { RestartBanner } from './restart-banner.js';
+
+/** Chữ trong ô nhập → giá trị gửi lên theo kiểu của mục. */
+export function parseInput(s, text) {
+  if (s.type === 'int') return /^\d+$/.test(text.trim()) ? Number(text.trim()) : NaN;
+  if (['ids', 'names', 'patterns'].includes(s.type)) return text.split(',').map((x) => x.trim()).filter(Boolean);
+  return text;
+}
+
+/** Mục đã sửa so với giá trị đã lưu: { id: value }. */
+export function changedValues(list, draft) {
+  return Object.fromEntries(list.filter((s) => JSON.stringify(draft[s.id]) !== JSON.stringify(s.value)).map((s) => [s.id, draft[s.id]]));
+}
+
+export const SOURCE_LABELS = { env: 'Cài đặt của trợ lý (.env)', config: 'config.yaml', default: 'Mặc định' };
+
+function Field({ s, value, onChange }) {
+  const id = `set-${s.id}`;
+  const note = html`<small class="muted">${s.hint ? `${s.hint} ` : ''}Đang lấy từ: ${SOURCE_LABELS[s.source]} · đổi xong cần khởi động lại ${s.restart.includes('sidecar') ? (s.restart.includes('assistant') ? 'trợ lý và kết nối Zalo' : 'kết nối Zalo') : 'trợ lý'}.</small>`;
+  if (s.type === 'bool') return html`<${Toggle} id=${id} checked=${value} onChange=${onChange} label=${s.label} hint=${note} />`;
+  if (s.type === 'enum') return html`<div class="field"><label for=${id}>${s.label}</label>
+    <select id=${id} value=${value} onChange=${(e) => onChange(e.currentTarget.value)}>${s.options.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}</select>${note}</div>`;
+  const text = Array.isArray(value) ? value.join(', ') : Number.isNaN(value) ? '' : String(value);
+  return html`<div class="field"><label for=${id}>${s.label}${s.type === 'int' ? ` (${s.min}–${s.max})` : ''}</label>
+    <input id=${id} inputmode=${s.type === 'int' ? 'numeric' : undefined} value=${text} onChange=${(e) => onChange(parseInput(s, e.currentTarget.value))} />${note}</div>`;
+}
+
+function Welcome() {
+  const [groups, setGroups] = useState(null);
+  const [msg, setMsg] = useState({});
+  useEffect(() => { api('/api/admin/welcome').then((r) => setGroups(r.groups)).catch((e) => setMsg({ error: e.message })); }, []);
+  const set = (id, patch) => setGroups(groups.map((g) => (g.id === id ? { ...g, ...patch, dirty: true } : g)));
+  async function save(g) {
+    setMsg({});
+    try { await api(`/api/admin/welcome/${g.id}`, { method: 'PUT', body: { enabled: g.enabled, message: g.message, batchSize: g.batchSize, maxWaitMinutes: g.maxWaitMinutes, name: g.name } }); setGroups((cur) => cur.map((x) => (x.id === g.id ? { ...x, dirty: false } : x))); setMsg({ ok: `Đã lưu lời chào cho ${g.name}.` }); } catch (e) { setMsg({ error: e.message }); }
+  }
+  return html`<section class="card"><h2>Lời chào thành viên mới</h2>
+    <p class="muted small">Bot gom người mới vào nhóm rồi chào một lần (tag tất cả). Có hiệu lực ngay, không cần khởi động lại.</p>
+    <${Live} error=${msg.error} ok=${msg.ok} />
+    ${!groups && !msg.error ? html`<${Spinner} />` : null}
+    ${(groups || []).map((g) => html`<details key=${g.id} class="perm-box"><summary>${g.name} <span class=${`badge ${g.enabled ? 'badge-ok' : 'badge-idle'}`}>${g.enabled ? 'Đang chào' : 'Tắt'}</span></summary>
+      <${Toggle} id=${`wel-${g.id}`} checked=${g.enabled} onChange=${(v) => set(g.id, { enabled: v })} label="Chào thành viên mới" />
+      <div class="field"><label for=${`welm-${g.id}`}>Lời chào</label><textarea id=${`welm-${g.id}`} rows="3" maxlength="1500" value=${g.message} onInput=${(e) => set(g.id, { message: e.currentTarget.value })}></textarea></div>
+      <div class="grid grid-2">
+        <div class="field"><label for=${`welb-${g.id}`}>Gom đủ (người)</label><input id=${`welb-${g.id}`} type="number" min="1" max="20" value=${g.batchSize} onInput=${(e) => set(g.id, { batchSize: Number(e.currentTarget.value) })} /></div>
+        <div class="field"><label for=${`welw-${g.id}`}>Chờ tối đa (phút)</label><input id=${`welw-${g.id}`} type="number" min="1" max="1440" value=${g.maxWaitMinutes} onInput=${(e) => set(g.id, { maxWaitMinutes: Number(e.currentTarget.value) })} /></div>
+      </div>
+      <button type="button" class="btn btn-primary btn-sm" disabled=${!g.dirty} onClick=${() => save(g)}>Lưu lời chào</button>
+    </details>`)}
+  </section>`;
+}
+
+export function Settings() {
+  const [list, setList] = useState(null);
+  const [draft, setDraft] = useState({});
+  const [msg, setMsg] = useState({});
+  const [busy, setBusy] = useState(false);
+  const [version, setVersion] = useState(0);
+  const take = (r) => { setList(r.settings); setDraft(Object.fromEntries(r.settings.map((s) => [s.id, s.value]))); };
+  useEffect(() => { api('/api/admin/settings').then(take).catch((e) => setMsg({ error: e.message })); }, []);
+  const head = html`<${PageHead} title="Cấu hình" sub="Cài đặt chung của bot trong danh sách an toàn. Khoá bí mật và cài đặt khác chỉ sửa được trên máy chủ. Chỉ Quản trị." />`;
+  if (!list) return html`${head}<${Live} error=${msg.error} />${msg.error ? null : html`<${Spinner} />`}`;
+  const changes = changedValues(list, draft);
+  const count = Object.keys(changes).length;
+  async function save(e) {
+    e.preventDefault();
+    if (changes.publicMcp && !confirm('Mở kết nối MCP cho thành viên nghĩa là người ngoài dùng được tài nguyên của chủ bot qua kết nối đó. Tiếp tục?')) return;
+    setBusy(true); setMsg({});
+    try { take(await api('/api/admin/settings', { method: 'PUT', body: { values: changes } })); setVersion((v) => v + 1); setMsg({ ok: 'Đã lưu — bấm "Khởi động lại ngay" ở dải vàng để áp dụng.' }); } catch (err) { setMsg({ error: err.message }); } finally { setBusy(false); }
+  }
+  const groups = [...new Set(list.map((s) => s.group))];
+  return html`${head}<${RestartBanner} version=${version} />
+    <form class="card" onSubmit=${save} novalidate>
+      ${groups.map((g) => html`<fieldset key=${g} class="mem-block"><legend><h3>${g}</h3></legend>
+        ${list.filter((s) => s.group === g).map((s) => html`<${Field} key=${s.id} s=${s} value=${draft[s.id]} onChange=${(v) => setDraft({ ...draft, [s.id]: v })} />`)}
+      </fieldset>`)}
+      <${SaveBar} count=${count} busy=${busy} canSave=${count > 0} onUndo=${() => take({ settings: list })} msg=${msg} />
+    </form>
+    <${Welcome} />`;
+}

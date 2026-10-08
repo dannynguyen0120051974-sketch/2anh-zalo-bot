@@ -422,8 +422,8 @@ test('thanh điều hướng điện thoại: 4 mục chính + "Thêm" theo vai 
   const { navSplit } = await import('./views/shell.js');
   const admin = navSplit('admin', '/audit', { secondBrain: true });
   assert.deepEqual(admin.primary.map((i) => [i.path, i.short]), [['/', 'Tổng quan'], ['/chats', 'Phiên chat'], ['/zalo', 'Zalo'], ['/permissions', 'Phân quyền']]);
-  assert.deepEqual(admin.more.map((i) => i.path), ['/contacts', '/schedules', '/memory', '/kb', '/insight', '/second-brain',
-    '/audit', '/brand', '/health', '/users', '/owners', '/alerts', '/profile']);
+  assert.deepEqual(admin.more.map((i) => i.path), ['/contacts', '/schedules', '/memory', '/kb', '/insight', '/second-brain', '/mcp',
+    '/agent', '/tools', '/trace', '/audit', '/brand', '/health', '/settings', '/users', '/owners', '/alerts', '/profile']);
   assert.equal(admin.activeMore.text, 'Nhật ký');
   const owner = navSplit('owner', '/', { secondBrain: true });
   assert.equal(owner.primary.length, 4);
@@ -742,7 +742,8 @@ test('thanh bên: 5 nhóm theo mẫu; Second brain chỉ Quản trị và chỉ 
   const admin = visibleGroups('admin', { secondBrain: true });
   assert.deepEqual(admin.map((g) => g.label), ['Tổng quan', 'Hội thoại', 'Dữ liệu', 'Hệ thống', 'Quản trị']);
   assert.deepEqual(admin[1].items.map((i) => i.text), ['Phiên chat', 'Liên hệ', 'Phân quyền Bot', 'Lịch hẹn']);
-  assert.deepEqual(admin[2].items.map((i) => i.text), ['Trí nhớ', 'Kho tri thức', 'Insight nhóm', 'Second brain']);
+  assert.deepEqual(admin[2].items.map((i) => i.text), ['Trí nhớ', 'Kho tri thức', 'Insight nhóm', 'Second brain', 'Kết nối MCP']);
+  assert.deepEqual(admin[3].items.map((i) => i.text), ['Tài khoản Zalo', 'Agent', 'Công cụ', 'Theo dõi agent', 'Nhật ký', 'Thương hiệu', 'Sức khoẻ máy chủ', 'Cấu hình']);
   const owner = visibleGroups('owner', { secondBrain: true });
   assert.deepEqual(owner.map((g) => g.label), ['Tổng quan', 'Hội thoại', 'Dữ liệu', 'Hệ thống']);
   assert.ok(!owner.flatMap((g) => g.items).some((i) => i.admin), 'Chủ bot không thấy mục admin nào');
@@ -854,4 +855,51 @@ test('Second brain: tên ngắn của mục, lên một cấp không vượt kh�
   assert.equal(parentUri(root, root), null);
   assert.equal(parentUri(`${root}/knowledge/a`, root), `${root}/knowledge`);
   assert.equal(parentUri(`${root}/knowledge`, root), root);
+});
+
+// --- Giai đoạn 7B (spec §18.6): trang Hệ thống của Quản trị ---
+
+test('dải chờ khởi động lại: gộp lý do; có cờ kết nối Zalo thì nói cả hai; không có gì thì rỗng', async () => {
+  const { restartText } = await import('./views/restart-banner.js');
+  assert.equal(restartText({ assistant: null, sidecar: null }), '');
+  assert.equal(restartText({ assistant: { reasons: ['Đổi model'] }, sidecar: null }), 'Đã đổi: Đổi model. Cần khởi động lại trợ lý để áp dụng (bot im khoảng 1–3 phút).');
+  assert.match(restartText({ assistant: null, sidecar: { reasons: ['Cấu hình: kết bạn'] } }), /trợ lý và kết nối Zalo/);
+});
+
+test('Agent: danh sách model — đang dùng đầu, chọn nhanh, phần còn lại lọc theo chữ, không trùng', async () => {
+  const { modelOptions, REASONING_LABELS } = await import('./views/agent.js');
+  assert.deepEqual(modelOptions({ current: 'hermes', choices: ['hermes', 'b'], all: ['a', 'b', 'gemini-x'], q: 'gem' }), ['hermes', 'b', 'gemini-x']);
+  assert.deepEqual(modelOptions({ current: '', choices: [], all: ['a'], q: '' }), ['a']);
+  assert.equal(REASONING_LABELS.medium, 'Vừa (mặc định)');
+});
+
+test('Công cụ: nhóm theo mức quyền giữ thứ tự; đếm thay đổi hai chiều', async () => {
+  const { groupTools, offDiff } = await import('./views/tools.js');
+  assert.deepEqual(groupTools([{ level: 'Mọi người', name: 'a' }, { level: 'Chỉ chủ nhân', name: 'b' }, { level: 'Mọi người', name: 'c' }]).map((g) => [g.level, g.list.length]),
+    [['Mọi người', 2], ['Chỉ chủ nhân', 1]]);
+  assert.equal(offDiff(new Set(['a', 'b']), new Set(['b', 'c'])), 2);
+  assert.equal(offDiff(new Set(), new Set()), 0);
+});
+
+test('Theo dõi agent: thời gian dễ đọc', async () => {
+  const { fmtMs } = await import('./views/trace.js');
+  assert.equal(fmtMs(null), '—');
+  assert.equal(fmtMs(850), '850 ms');
+  assert.equal(fmtMs(2500), '2,5 giây');
+  assert.equal(fmtMs(65_000), '1 phút 5 giây');
+});
+
+test('Kết nối MCP: màu trạng thái', async () => {
+  const { mcpKind } = await import('./views/mcp.js');
+  assert.deepEqual(['Đang mở', 'Không phản hồi', 'Đã tắt', 'Máy ngoài — không kiểm'].map(mcpKind), ['ok', 'danger', 'idle', 'warn']);
+  assert.equal(mcpKind('Chạy cùng trợ lý — không kiểm được từ dashboard'), 'idle');
+});
+
+test('Cấu hình: chữ nhập thành giá trị đúng kiểu; chỉ gửi mục đã đổi', async () => {
+  const { parseInput, changedValues } = await import('./views/settings.js');
+  assert.equal(parseInput({ type: 'int' }, ' 12 '), 12);
+  assert.ok(Number.isNaN(parseInput({ type: 'int' }, '12a')));
+  assert.deepEqual(parseInput({ type: 'ids' }, '111, 222,,'), ['111', '222']);
+  const list = [{ id: 'a', value: 6 }, { id: 'b', value: ['1'] }, { id: 'c', value: true }];
+  assert.deepEqual(changedValues(list, { a: 6, b: ['1', '2'], c: false }), { b: ['1', '2'], c: false });
 });

@@ -614,6 +614,45 @@ Biến tuỳ chọn trong `.env` của Hermes:
 - [ ] Insight: chọn nhóm đông → số liệu khớp cảm nhận; Tóm tắt chủ đề → có kết quả trong 1–2 phút; gửi 11 lần/ngày → câu "hết lượt".
 - [ ] Second brain: Lăng Tiêu (Windows) — dù đặt `ZALO_SECOND_BRAIN_URL` vẫn không có mục ở thanh bên, `#/second-brain` ghi "Second brain chỉ bật trên máy chủ VPS". Uyển Nhi (VPS) — chưa đặt biến: ẩn; `npm run install:hermes` in gợi ý; đặt biến + khởi động lại dashboard → mục hiện, tìm "dashboard" ra kết quả, thêm ghi chú → thấy dưới `so-tay-dashboard`; `npm run doctor` có dòng `second-brain - bật — http://127.0.0.1:1933`.
 
+### Dashboard giai đoạn 7B — trang Hệ thống của Quản trị (1.27.0)
+
+Năm trang mới, **chỉ Quản trị** thấy (Chủ bot không thấy ở thanh bên; gõ thẳng đường dẫn thì "Không có quyền", gọi API thì 403):
+
+| Trang | Ở nhóm | Làm được gì |
+|---|---|---|
+| Agent | Hệ thống | Đổi model (chỉ tên có trong danh sách của cổng AI), mức suy nghĩ, tính cách SOUL.md (lịch sử 30 bản + bản gốc, khôi phục một chạm). |
+| Công cụ | Hệ thống | Mọi công cụ Zalo, ai dùng được, nút nào ở Phân quyền Bot điều khiển; tắt riêng từng công cụ công khai với người ngoài (`tools.off` trong `permissions.json`). Chủ nhân luôn dùng được. |
+| Theo dõi agent | Hệ thống | Phiên của trợ lý (Zalo / việc hẹn giờ / tất cả): từng lượt, công cụ đã gọi, xong/lỗi, thời gian, token, model. Chỉ đọc `state.db`; tham số công cụ chỉ hiện tên, không hiện giá trị; không hiện kết quả công cụ và lời nhắc hệ thống. |
+| Kết nối MCP | Dữ liệu | Máy chủ MCP trong `config.yaml`: tên, kiểu, máy:cổng hoặc tên lệnh, có mở cho thành viên không, trạng thái; bật/tắt. Chỉ dò máy chủ loopback; máy chủ stdio ghi "không kiểm được từ dashboard". Thêm mới: `hermes mcp install <tên>` trên máy chủ. |
+| Cấu hình | Hệ thống | Danh sách cố định các cài đặt bên dưới + lời chào thành viên mới theo từng nhóm. |
+
+Danh sách **Cấu hình** (13 mục; không mục nào là khoá bí mật, không sửa được khoá khác):
+
+- Trả lời: trong nhóm chỉ trả lời khi được tag (`ZALO_GROUP_REPLY_ONLY_TAGGED`), nhắn riêng khi chưa chọn ở Phân quyền Bot (`ZALO_DM_POLICY`), báo đã xem (`ZALO_ACK_GESTURES`), thả cảm xúc tự động (`ZALO_AUTO_REACT`), nhóm chỉ chủ nhân gọi được bot (`ZALO_OWNER_ONLY_GROUPS`).
+- Chống nhắn dồn: số tin tối đa (`ZALO_FLOOD_THRESHOLD`, 2–50), khoảng tính (`ZALO_FLOOD_WINDOW_S`, 5–600 giây), thời gian bỏ qua (`ZALO_FLOOD_MUTE_S`, 10–3600 giây).
+- Kết bạn và an toàn: công cụ kết bạn (`ZALO_FRIEND_TOOLS`), mã xác nhận trước thao tác nguy hiểm (`ZALO_CONFIRM_DANGEROUS`).
+- Tài liệu và MCP: thư mục kho tài liệu mở cho mọi người (`ZALO_KB_PUBLIC_DIRS`), kết nối MCP thành viên được dùng (`ZALO_PUBLIC_MCP` — hỏi lại trước khi lưu).
+- Lưu trữ: số ngày giữ lịch sử trò chuyện (`ZALO_HISTORY_RETENTION_DAYS`, 30–3650).
+
+Mỗi mục ghi vào **đúng nơi đang có hiệu lực**: khoá đang nằm trong `config.yaml` (`platforms.zalo.extra`) thì sửa `config.yaml`, còn lại sửa `.env` của Hermes. Cả hai đều giữ `.bak`, ghi tệp tạm rồi đổi tên; `config.yaml` bị trợ lý ghi chen (vd. lệnh `/model`) thì báo "tải lại trang" (409).
+
+**Đổi model có hiệu lực ngay** (như `/model`). Mọi thay đổi khác (mức suy nghĩ, SOUL.md, bật/tắt MCP, Cấu hình) cần khởi động lại: dải vàng hiện lý do, bấm **Khởi động lại ngay** (bot im 1–3 phút). "Công cụ" và "Lời chào" có hiệu lực ngay.
+
+**Cập nhật lên 1.27.0**: plugin Hermes (`zalo_tools/group_permissions.py`, `zalo_tools/tools.py`, hai `plugin.yaml`) và dashboard (`dashboard/`) cập nhật **cùng lúc** (dashboard cũ ghi `permissions.json` sẽ làm rơi `tools.off`), rồi khởi động lại gateway và `zalo-dashboard`. Kết nối Zalo không đổi. Sau khi cập nhật trên VPS, kiểm bộ sửa `config.yaml` với tệp thật (chỉ sửa trong bộ nhớ, không ghi):
+
+```bash
+HERMES_HOME=/root/.hermes node --test dashboard/lib/config-yaml.test.js
+```
+
+### Kiểm tay sau khi cài (Giai đoạn 7B)
+
+- [ ] Chủ bot: không thấy mục 7B nào; gõ `#/agent` → "Không có quyền"; gọi `/api/admin/settings` → 403.
+- [ ] Agent: đổi model → nhắn bot `/model` thấy model mới (không khởi động lại); sửa SOUL.md → dải vàng → Khởi động lại ngay → bot xưng hô theo tính cách mới ở phiên mới; khôi phục "bản gốc".
+- [ ] Công cụ: tắt `zalo_web_search` → thành viên nhờ tra web trong nhóm → bot nói chưa làm được; chủ nhân vẫn tra được; lưu Phân quyền nhóm → vẫn tắt.
+- [ ] Theo dõi agent: mở phiên nhóm vừa chat → thấy lượt, công cụ, tham số chỉ có tên khoá; "Xem phiên cũ hơn" không lặp phiên.
+- [ ] Kết nối MCP (VPS): `rag` "Đang mở"; tắt → khởi động lại → công cụ rag biến mất; bật lại.
+- [ ] Cấu hình: đổi "Số tin tối đa" → `.env` có dòng mới, `.env.bak` có bản cũ; đổi "Nhóm chỉ chủ nhân" trên VPS → sửa `config.yaml` (đang ở `extra`), có `config.yaml.bak`; Nhật ký ghi "cũ → mới"; lời chào nhóm thử với tài khoản phụ vào nhóm.
+
 ---
 
 ## Cấu hình

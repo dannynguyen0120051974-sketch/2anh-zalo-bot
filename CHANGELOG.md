@@ -2,6 +2,26 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [1.27.0] — 2026-10-09
+
+### Thêm (chỉ Quản trị)
+
+- **Agent**: đổi model (chỉ tên có trong danh sách của cổng AI, hiệu lực ngay như lệnh `/model`), mức suy nghĩ, tính cách SOUL.md — lịch sử 30 bản + bản gốc, khôi phục một chạm.
+- **Công cụ**: mọi công cụ Zalo, ai dùng được, nút nào ở Phân quyền Bot điều khiển; tắt riêng từng công cụ công khai với người ngoài (`permissions.json` mục `tools.off`, hiệu lực ngay, chủ nhân luôn được dùng). Plugin ghi `zalo/tools-manifest.json` lúc nạp để dashboard đọc.
+- **Theo dõi agent**: phiên của trợ lý (Zalo, việc hẹn giờ, tất cả) đọc từ `state.db` của Hermes — từng lượt, công cụ đã gọi (chỉ tên tham số và loại/độ dài, không giá trị), xong/lỗi, thời gian, token và model theo phiên; 50 phiên mỗi trang, nút "Xem phiên cũ hơn".
+- **Kết nối MCP**: danh sách máy chủ MCP trong `config.yaml` (tên, kiểu, máy:cổng hoặc tên lệnh), có mở cho thành viên không (`ZALO_PUBLIC_MCP`), trạng thái, bật/tắt. Thêm mới vẫn làm trên máy chủ (`hermes mcp install`).
+- **Cấu hình**: 13 cài đặt trong danh sách cố định (tag trong nhóm, nhắn riêng, báo đã xem, thả cảm xúc, nhóm chỉ chủ nhân, chống nhắn dồn ×3, kết bạn, mã xác nhận, thư mục kho tài liệu công khai, MCP cho thành viên, số ngày giữ lịch sử) — ghi vào đúng nơi đang có hiệu lực (`config.yaml` mục `platforms.zalo.extra` hoặc `.env` của Hermes); lời chào thành viên mới theo từng nhóm (`data/welcome.json`, hiệu lực ngay).
+- Dải vàng "cần khởi động lại" dùng chung cho Agent, Kết nối MCP, Cấu hình + nút khởi động lại kèm lý do trong Nhật ký. Nhật ký có nhãn tiếng Việt cho mọi hành động mới.
+- Thanh bên: "Kết nối MCP" ở nhóm Dữ liệu; "Agent", "Công cụ", "Theo dõi agent", "Cấu hình" ở nhóm Hệ thống. Chủ bot không thấy mục nào trong số này.
+
+### An toàn
+
+- Mọi đường dẫn mới chỉ Quản trị (kiểm ở máy chủ, Chủ bot nhận 403).
+- `config.yaml` sửa theo dòng, phân tích lại cả tệp và từ chối nếu khoá khác bị đổi; `.bak`; ghi tệp tạm rồi đổi tên; trợ lý vừa ghi chen thì 409. `.env` chỉ khoá trong danh sách, giá trị không chứa nháy/`\`/xuống dòng/`#`/`=` nên không chèn được dòng khác; `.bak`.
+- `state.db` mở chỉ đọc (`query_only`, chờ tối đa 1,5 giây); không đọc lời nhắc hệ thống, không hiện kết quả công cụ; câu hỏi/câu trả lời chỉ đoạn đầu, chuỗi trông như khoá bí mật bị che.
+- Kết nối MCP: không bao giờ trả `env`, `headers`, `args`, đường dẫn/truy vấn của URL; chỉ dò TCP tới địa chỉ loopback (1,5 giây), máy ngoài không dò, máy chủ stdio không chạy để dò ("không kiểm được từ dashboard"); không có đường thêm máy chủ MCP.
+- Cấu hình không bao giờ hiện hay sửa khoá ngoài danh sách; Nhật ký ghi theo từng mục "cũ → mới".
+
 ## [1.26.0] — 2026-10-08
 
 ### Thêm

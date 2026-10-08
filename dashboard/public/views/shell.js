@@ -18,6 +18,11 @@ import { Memory } from './memory.js';
 import { Kb } from './kb.js';
 import { Insight } from './insight.js';
 import { SecondBrain } from './second-brain.js';
+import { Agent } from './agent.js';
+import { Tools } from './tools.js';
+import { Trace } from './trace.js';
+import { Mcp } from './mcp.js';
+import { Settings } from './settings.js';
 
 const STATUS_MS = 3000;
 
@@ -39,6 +44,11 @@ const ROUTES = {
   '/kb': { view: Kb },
   '/insight': { view: Insight },
   '/second-brain': { view: SecondBrain, admin: true },
+  '/mcp': { view: Mcp, admin: true },
+  '/agent': { view: Agent, admin: true },
+  '/tools': { view: Tools, admin: true },
+  '/trace': { view: Trace, admin: true },
+  '/settings': { view: Settings, admin: true },
 };
 
 // Thanh bên theo dashboard mẫu (spec §18.3): mục `admin: true` chỉ Quản trị thấy, nhóm rỗng thì ẩn.
@@ -55,12 +65,17 @@ export const GROUPS = [
     { path: '/kb', text: 'Kho tri thức', icon: 'file' },
     { path: '/insight', text: 'Insight nhóm', icon: 'chart' },
     { path: '/second-brain', text: 'Second brain', icon: 'search', admin: true, feature: 'secondBrain' },
+    { path: '/mcp', text: 'Kết nối MCP', icon: 'plug', admin: true },
   ] },
   { label: 'Hệ thống', items: [
     { path: '/zalo', text: 'Tài khoản Zalo', icon: 'phone' },
+    { path: '/agent', text: 'Agent', icon: 'bot', admin: true },
+    { path: '/tools', text: 'Công cụ', icon: 'tool', admin: true },
+    { path: '/trace', text: 'Theo dõi agent', icon: 'eye', admin: true },
     { path: '/audit', text: 'Nhật ký', icon: 'list' },
     { path: '/brand', text: 'Thương hiệu', icon: 'image' },
     { path: '/health', text: 'Sức khoẻ máy chủ', icon: 'activity' },
+    { path: '/settings', text: 'Cấu hình', icon: 'settings', admin: true },
   ] },
   { label: 'Quản trị', admin: true, items: [
     { path: '/users', text: 'Người dùng', icon: 'users' },
@@ -127,7 +142,7 @@ function StatusStrip({ status, error, path }) {
 
 // Thanh điều hướng điện thoại: 4 mục chính luôn hiện, còn lại trong "Thêm ▾".
 export const MOBILE_PRIMARY = ['/', '/chats', '/zalo', '/permissions'];
-const SHORT = { '/zalo': 'Zalo', '/permissions': 'Phân quyền', '/health': 'Sức khoẻ', '/alerts': 'Cảnh báo', '/owners': 'Chủ nhân', '/profile': 'Tài khoản' };
+const SHORT = { '/trace': 'Theo dõi', '/second-brain': 'Second brain', '/mcp': 'MCP', '/zalo': 'Zalo', '/permissions': 'Phân quyền', '/health': 'Sức khoẻ', '/alerts': 'Cảnh báo', '/owners': 'Chủ nhân', '/profile': 'Tài khoản' };
 
 /**
  * Nhóm thanh bên vai trò này thấy: bỏ nhóm/mục `admin` với Chủ bot, bỏ mục có `feature` đang tắt

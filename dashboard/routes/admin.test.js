@@ -149,3 +149,22 @@ test('danh sách người dùng có "đăng nhập gần nhất": đăng nhập 
   list = (await call('/api/admin/users', { cookie: admin })).json.users;
   assert.ok(list.find((u) => u.username === 'khach').lastLoginAt >= before);
 });
+
+test('cờ chờ khởi động lại (giai đoạn 7B): Chủ bot 403; khởi động lại trợ lý xoá cờ, cờ kết nối Zalo thì khởi động lại cả kết nối Zalo', async (t) => {
+  const order = [];
+  const deps = makeDeps(t, { restartAssistant: async () => { order.push('assistant'); }, restartSidecar: async () => { order.push('sidecar'); } });
+  const { call } = await startApp(t, deps);
+  const owner = await loginAs(t, deps, call, { username: 'khach', role: 'owner' });
+  assert.equal((await call('/api/admin/restart-flags', { cookie: owner })).status, 403);
+  const admin = await loginAs(t, deps, call);
+  deps.restartFlags.mark('assistant', 'Đổi model');
+  deps.restartFlags.mark('sidecar', 'Cấu hình: kết bạn');
+  const before = await call('/api/admin/restart-flags', { cookie: admin });
+  assert.deepEqual(before.json.assistant.reasons, ['Đổi model']);
+  assert.equal((await call('/api/admin/restart-assistant', { method: 'POST', cookie: admin })).status, 200);
+  assert.deepEqual(order, ['sidecar', 'assistant']);
+  const after = await call('/api/admin/restart-flags', { cookie: admin });
+  assert.equal(after.json.assistant, null);
+  assert.equal(after.json.sidecar, null);
+  assert.match(deps.activity.list().find((e) => e.action === 'restart_assistant').detail, /Đổi model, Cấu hình: kết bạn/);
+});

@@ -23,14 +23,19 @@ import { createPermissionsStore, makeDmEnv, makeGlobalReplyOnlyTagged } from './
 import { createWatchdog } from './lib/watchdog.js';
 import { makeRestartSidecar } from './lib/restart.js';
 import { makeRestartAssistant } from './lib/restart-assistant.js';
+import { createRestartFlags } from './lib/restart-flags.js';
 import { createBrandStore } from './lib/brand.js';
-import { readEnvKey } from './lib/env-file.js';
+import { readEnvKey, SETTINGS_ENV_KEYS } from './lib/env-file.js';
 import { createSecondBrain } from './lib/second-brain.js';
 import { createPeopleStore } from './lib/people-store.js';
 import { createHermesMemory } from './lib/hermes-memory.js';
 import { createSchedules, hermesBin } from './lib/schedules.js';
 import { createKbStore } from './lib/kb-store.js';
 import { createInsightAi } from './lib/insight-ai.js';
+import { createAgentConfig, createSoul } from './lib/agent-config.js';
+import { createAgentTrace } from './lib/agent-trace.js';
+import { createMcpServers } from './lib/mcp-servers.js';
+import { createSettings } from './lib/settings.js';
 import { createOwnersStore } from './lib/owners.js';
 import { createServiceChecker } from './lib/services.js';
 import { createHealthMonitor } from './lib/health-monitor.js';
@@ -44,7 +49,7 @@ const here = dirname(fileURLToPath(import.meta.url));
  *   nạp .env của sidecar — .env của sidecar không phải nơi bot đọc cờ này.
  * @param {string} [opts.inheritedOwners] ZALO_ALLOWED_USERS trong môi trường dịch vụ, chụp trước khi nạp bất kỳ .env nào.
  */
-export function buildDeps({ env = process.env, sidecarRoot = join(here, '..'), inheritedReplyOnlyTagged, inheritedOwners, inheritedDm = {} } = {}) {
+export function buildDeps({ env = process.env, sidecarRoot = join(here, '..'), inheritedReplyOnlyTagged, inheritedOwners, inheritedDm = {}, inheritedSettings = {} } = {}) {
   if (!env.ZALO_BRIDGE_TOKEN) throw new Error('Thiếu ZALO_BRIDGE_TOKEN trong .env của sidecar — chạy lại "npm run install:hermes".');
   const paths = resolveDashboardPaths({ env, sidecarRoot });
   const config = loadDashboardConfig(env);
@@ -88,6 +93,7 @@ export function buildDeps({ env = process.env, sidecarRoot = join(here, '..'), i
     }),
     restartAssistant: makeRestartAssistant({ cmd: config.assistantRestartCmd, hermesHome: paths.hermesHome }),
     restartSidecar,
+    restartFlags: createRestartFlags({ file: paths.restartFlagsFile }),
     owners: createOwnersStore({ envFile: paths.hermesEnvFile, sidecarEnvFile: paths.sidecarEnvFile, pendingFile: paths.pendingRestartFile, inheritedValue: inheritedOwners }),
     brand: createBrandStore({ file: paths.brandFile, logoFile: paths.brandLogoFile }),
     // Cùng tệp plugin đọc: ZALO_PEOPLE_FILE trong .env của Hermes (nếu đặt) thắng đường mặc định.
@@ -97,6 +103,15 @@ export function buildDeps({ env = process.env, sidecarRoot = join(here, '..'), i
     // Đọc lại .env mỗi lần: người cài đặt đổi ZALO_KB_DIR thì không cần khởi động lại dashboard.
     kb: createKbStore({ kbDir: () => readEnvKey(paths.hermesEnvFile, 'ZALO_KB_DIR'), publicDirs: () => readEnvKey(paths.hermesEnvFile, 'ZALO_KB_PUBLIC_DIRS') }),
     insightAi: createInsightAi({ dir: paths.insightDir }),
+    agentConfig: createAgentConfig({ configFile: paths.hermesConfigFile, envValue: (k) => readEnvKey(paths.hermesEnvFile, k) }),
+    soul: createSoul({ hermesHome: paths.hermesHome, historyDir: paths.soulHistoryDir }),
+    toolsManifestFile: paths.toolsManifestFile,
+    agentTrace: createAgentTrace({ dbPath: paths.hermesStateDb }),
+    mcpServers: createMcpServers({ configFile: paths.hermesConfigFile, publicMcp: () => readEnvKey(paths.hermesEnvFile, 'ZALO_PUBLIC_MCP') }),
+    settings: createSettings({ envFile: paths.hermesEnvFile, configFile: paths.hermesConfigFile, inherited: inheritedSettings }),
+    // Lời chào thành viên mới: cùng tệp kết nối Zalo đọc (zalo-welcome.js); ZALO_WELCOME_FILE của kết nối Zalo thắng.
+    welcomeFile: env.ZALO_WELCOME_FILE || join(paths.sidecarRoot, 'data', 'welcome.json'),
+    publicMcp: () => readEnvKey(paths.hermesEnvFile, 'ZALO_PUBLIC_MCP'),
     // Second brain: chỉ bật khi .env Hermes có ZALO_SECOND_BRAIN_URL (loopback), luôn tắt trên Windows; đọc lại .env mỗi lần.
     secondBrain: createSecondBrain({ settings: () => ({
       url: readEnvKey(paths.hermesEnvFile, 'ZALO_SECOND_BRAIN_URL'), account: readEnvKey(paths.hermesEnvFile, 'OPENVIKING_ACCOUNT'),
@@ -113,9 +128,10 @@ async function main() {
   const inheritedReplyOnlyTagged = process.env.ZALO_GROUP_REPLY_ONLY_TAGGED;
   const inheritedOwners = process.env.ZALO_ALLOWED_USERS; // trước khi nạp .env nào
   const inheritedDm = Object.fromEntries(['ZALO_DM_POLICY', 'ZALO_ALLOW_ALL_USERS', 'GATEWAY_ALLOW_ALL_USERS'].map((k) => [k, process.env[k]]));
+  const inheritedSettings = Object.fromEntries(SETTINGS_ENV_KEYS.map((k) => [k, process.env[k]]));
   if (existsSync(join(sidecarRoot, '.env'))) loadRepoEnv(join(sidecarRoot, '.env'));
   loadHermesEnv();
-  const deps = buildDeps({ sidecarRoot, inheritedReplyOnlyTagged, inheritedOwners, inheritedDm });
+  const deps = buildDeps({ sidecarRoot, inheritedReplyOnlyTagged, inheritedOwners, inheritedDm, inheritedSettings });
   // Chủ nhân đọc từ tệp .env, không từ môi trường: tiến trình con khởi động lại sẽ thừa hưởng bản cũ và không bao giờ áp dụng danh sách mới.
   delete process.env.ZALO_ALLOWED_USERS;
   const app = createDashboardApp(deps);

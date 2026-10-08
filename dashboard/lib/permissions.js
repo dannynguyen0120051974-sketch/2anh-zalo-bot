@@ -188,7 +188,19 @@ export function normalize(raw) {
   // Mục `dm` (giai đoạn 5) và `studio` (giai đoạn 6) phải sống qua mọi lần lưu nhóm/mặc định.
   const dm = normalizeDm(raw.dm);
   const studio = normalizeStudio(raw.studio);
-  return { version: 1, defaults: layer(raw.defaults), groups, ...(dm ? { dm } : {}), ...(studio ? { studio } : {}) };
+  // Mục `tools` (giai đoạn 7B, spec §18.6): công cụ tắt riêng với người không phải chủ nhân — cũng phải sống qua mọi lần lưu.
+  const tools = normalizeTools(raw.tools);
+  return { version: 1, defaults: layer(raw.defaults), groups, ...(dm ? { dm } : {}), ...(studio ? { studio } : {}), ...(tools ? { tools } : {}) };
+}
+
+export const TOOL_NAME = /^[a-z0-9_]{1,64}$/;
+export const MAX_TOOLS_OFF = 200;
+
+/** Như `_tools_off` bên Python: `{ off: [tên công cụ hợp lệ, không trùng] }`; không phải object → null. */
+export function normalizeTools(raw) {
+  if (!isObj(raw)) return null;
+  const off = Array.isArray(raw.off) ? [...new Set(raw.off.filter((n) => typeof n === 'string' && TOOL_NAME.test(n)))].slice(0, MAX_TOOLS_OFF) : [];
+  return { off };
 }
 
 /** 4 nút xưởng gửi lên: thiếu → undefined (giữ như cũ — bản giao diện cũ không gửi); có thì phải đủ và đúng kiểu. */
@@ -354,7 +366,7 @@ export function createPermissionsStore({ file, globalReplyOnlyTagged = true, dmE
     const groups = Object.fromEntries(Object.entries(data.groups).map(([id, g]) => [id, {
       name: g.name || '', custom: true, ...merge(defaults, g), studioQuota: g.studioQuota ?? null,
     }]));
-    return { exists, corrupt, defaults, groups, dm: dmView(data.dm), studio: studioView(data.studio) };
+    return { exists, corrupt, defaults, groups, dm: dmView(data.dm), studio: studioView(data.studio), toolsOff: data.tools?.off || [] };
   };
 
   return {
@@ -416,6 +428,13 @@ export function createPermissionsStore({ file, globalReplyOnlyTagged = true, dmE
         people[p.uid] = { ...(p.name ? { name: p.name } : {}), ...(Object.keys(diff).length ? { features: diff } : {}) };
       }
       data.dm = { who: settings.who, features: { ...settings.features, ...onlyOn(studio) }, people };
+      write(data);
+      return view({ data, exists: true, corrupt: false });
+    },
+    /** Lưu danh sách công cụ tắt với người không phải chủ nhân (trang Công cụ, chỉ Quản trị). `names` đã kiểm ở route. */
+    setToolsOff(names) {
+      const { data } = read();
+      data.tools = { off: [...new Set(names)].sort() };
       write(data);
       return view({ data, exists: true, corrupt: false });
     },

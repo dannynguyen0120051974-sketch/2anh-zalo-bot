@@ -17,6 +17,7 @@ là "theo cờ toàn cục" ``ZALO_GROUP_REPLY_ONLY_TAGGED`` của adapter.
 import json
 import logging
 import os
+import re
 import sys
 import threading
 from pathlib import Path
@@ -172,6 +173,16 @@ def _dm(raw: Any) -> Dict[str, Any]:
     return out
 
 
+_TOOL_NAME = re.compile(r"^[a-z0-9_]{1,64}$")
+
+
+def _tools_off(raw: Any) -> frozenset:
+    """Mục ``tools.off`` (giai đoạn 7B, spec §18.6): công cụ chủ bot tắt với người không phải chủ nhân."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("off"), list):
+        return frozenset()
+    return frozenset(str(n) for n in raw["off"][:200] if isinstance(n, str) and _TOOL_NAME.match(n))
+
+
 def _parse(text: str) -> Dict[str, Any]:
     data = json.loads(text)
     if not isinstance(data, dict) or data.get("version") != 1:
@@ -182,6 +193,7 @@ def _parse(text: str) -> Dict[str, Any]:
         "groups": {str(gid): _layer(entry) for gid, entry in groups.items()},
         "dm": _dm(data.get("dm")),
         "studio": _studio_section(data.get("studio")),
+        "tools_off": _tools_off(data.get("tools")),
     }
 
 
@@ -226,6 +238,11 @@ def group_settings(group_id: str) -> Dict[str, Any]:
     active = entry.get("active", defaults.get("active", True))
     reply = entry.get("replyOnlyTagged", defaults.get("replyOnlyTagged"))
     return {"active": active, "reply_only_tagged": reply, "features": features}
+
+
+def tool_off(tool_name: str) -> bool:
+    """Chủ bot đã tắt riêng công cụ này với thành viên/người nhắn riêng chưa (chồng lên các nút tính năng)."""
+    return str(tool_name or "") in (_load().get("tools_off") or frozenset())
 
 
 def disabled_features(group_id: str) -> List[str]:

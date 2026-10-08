@@ -3,7 +3,7 @@ import { requireAuth, requireRole } from '../lib/http-guards.js';
 import { ZALO_UID, validatePassword, validateZaloUid } from '../lib/users.js';
 import { parseOwners } from '../lib/owners.js';
 
-export function adminRoutes({ users, sessions, activity, restartAssistant, restartSidecar, owners, store }) {
+export function adminRoutes({ users, sessions, activity, restartAssistant, restartSidecar, owners, store, restartFlags = null }) {
   const r = express.Router();
   const guard = [requireAuth, requireRole('admin')];
   // Cùng quy ước với routes/zalo.js: chỉ lộ err.message khi lỗi có statusCode 4xx rõ ràng.
@@ -86,14 +86,20 @@ export function adminRoutes({ users, sessions, activity, restartAssistant, resta
     } catch (err) { fail(res, err, 'Chưa lưu được danh sách chủ nhân — thử lại, nếu vẫn lỗi hãy báo người cài đặt.'); }
   });
 
+  // Cờ chờ khởi động lại của Agent / Kết nối MCP / Cấu hình (spec §18.6) — dải vàng trên trang Quản trị.
+  r.get('/admin/restart-flags', ...guard, (req, res) => {
+    try { res.json({ ok: true, ...(restartFlags ? restartFlags.get() : { assistant: null, sidecar: null }), owners: Boolean(owners?.pending()) }); } catch (err) { fail(res, err, 'Chưa đọc được trạng thái — tải lại trang.'); }
+  });
+
   // Khởi động lại trợ lý. Có thay đổi chủ nhân đang chờ thì khởi động lại cả kết nối Zalo trước —
   // nó cũng chỉ đọc ZALO_ALLOWED_USERS lúc khởi động (quyền lệnh chủ nhân, ai được nhận tin báo lỗi).
   r.post('/admin/restart-assistant', ...guard, async (req, res) => {
     try {
       const pendingAtStart = owners?.pending();
+      const flags = restartFlags ? restartFlags.get() : { assistant: null, sidecar: null };
       // Kết nối Zalo lỗi không được chặn việc khởi động lại trợ lý: vẫn khởi động trợ lý, giữ cờ chờ, báo thành công một phần.
       let sidecarFailed = false;
-      if (pendingAtStart) {
+      if (pendingAtStart || flags.sidecar) {
         try { await restartSidecar(); } catch (err) {
           sidecarFailed = true;
           console.error('[dashboard] khởi động lại kết nối Zalo lỗi:', err?.message || err);
@@ -103,7 +109,10 @@ export function adminRoutes({ users, sessions, activity, restartAssistant, resta
       const applied = Boolean(pendingAtStart) && !sidecarFailed;
       // Chỉ xoá cờ nếu kết nối Zalo đã khởi động lại và không có thay đổi mới chen vào (thay đổi đó chưa được áp dụng).
       if (applied && owners.pending()?.since === pendingAtStart.since) owners.clearPending();
-      activity.append({ actor: req.user.username, action: 'restart_assistant', detail: sidecarFailed ? 'kết nối Zalo chưa khởi động lại được' : applied ? 'áp dụng danh sách chủ nhân mới' : '' });
+      if (flags.sidecar && !sidecarFailed) restartFlags.clear('sidecar', flags.sidecar.rev);
+      if (flags.assistant) restartFlags.clear('assistant', flags.assistant.rev);
+      const reasons = [...(flags.assistant?.reasons || []), ...(flags.sidecar?.reasons || [])];
+      activity.append({ actor: req.user.username, action: 'restart_assistant', detail: [sidecarFailed ? 'kết nối Zalo chưa khởi động lại được' : applied ? 'áp dụng danh sách chủ nhân mới' : '', reasons.join(', ')].filter(Boolean).join(' · ') });
       res.json({
         ok: true, appliedOwners: applied, sidecarFailed,
         ...(sidecarFailed ? { warning: 'Đã khởi động lại trợ lý, nhưng chưa khởi động lại được kết nối Zalo — chạy lại trình cài đặt hoặc đặt ZALO_SIDECAR_RESTART_CMD.' } : {}),

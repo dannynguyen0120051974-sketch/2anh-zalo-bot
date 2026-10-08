@@ -796,5 +796,58 @@ class AdapterStudioNoteTest(PermissionsFile, AdapterHarness, unittest.IsolatedAs
         self.assertNotIn("Xưởng tạo sản phẩm", self.handled[-1].channel_context or "")
 
 
+class ToolsOffTest(PermissionsFile, unittest.TestCase):
+    """Giai đoạn 7B (spec §18.6): trang Công cụ tắt riêng từng công cụ với người không phải chủ nhân."""
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(zalo_tools.bind_turn, None)
+
+    def turn(self, *, owner=False, group=True):
+        zalo_tools.bind_turn({"sender_uid": OWNER if owner else MEMBER, "thread_id": GROUP_A if group else MEMBER,
+                              "is_group": group, "is_owner": owner, "text": ""})
+
+    def test_tool_off_blocks_members_in_groups_and_dm_but_never_owner(self):
+        self.write({"version": 1, "defaults": {}, "groups": {}, "tools": {"off": ["zalo_pdf", "BAD NAME", 5]}})
+        self.assertTrue(gp.tool_off("zalo_pdf"))
+        self.assertFalse(gp.tool_off("zalo_make_file"), "cùng nút 'files' nhưng không bị tắt")
+        for group in (True, False):
+            self.turn(group=group)
+            verdict = zalo_tools.guard_member_tool_call("zalo_pdf", {})
+            self.assertEqual(verdict["action"], "block")
+            self.assertIn("Chủ bot đã tắt công cụ zalo_pdf", verdict["message"])
+            self.assertIsNone(zalo_tools.guard_member_tool_call("zalo_make_file", {}))
+        self.turn(owner=True)
+        self.assertIsNone(zalo_tools.guard_member_tool_call("zalo_pdf", {}))
+
+    def test_missing_or_broken_tools_section_changes_nothing(self):
+        for data in ({"version": 1}, {"version": 1, "tools": "x"}, {"version": 1, "tools": {"off": "zalo_pdf"}}):
+            self.write(data)
+            self.turn()
+            self.assertIsNone(zalo_tools.guard_member_tool_call("zalo_pdf", {}), data)
+        self.write("{hỏng")
+        self.assertFalse(gp.tool_off("zalo_pdf"))
+
+    def test_tool_off_lookup_error_blocks_nothing_extra(self):
+        """Đọc danh sách công cụ tắt lỗi bất ngờ → không chặn thêm (hành vi trước 7B)."""
+        self.turn()
+        with patch.object(gp, "tool_off", side_effect=RuntimeError("hỏng")):
+            self.assertIsNone(zalo_tools.guard_member_tool_call("zalo_pdf", {}))
+
+    def test_manifest_lists_every_tool_with_its_switch(self):
+        path = os.path.join(self.dir, "tools-manifest.json")
+        zalo_tools.write_tools_manifest(friend_tools=False, path=path)
+        with open(path, encoding="utf-8") as fh:
+            manifest = json.load(fh)
+        rows = {t["name"]: t for t in manifest["tools"]}
+        self.assertEqual(len(rows), len(zalo_tools.TOOLS))
+        self.assertEqual(rows["zalo_web_search"]["feature"], "web")
+        self.assertEqual(rows["zalo_web_search"]["toolset"], zalo_tools.TOOLSET_PUBLIC)
+        self.assertEqual(rows["zalo_send_sticker"]["feature"], "always")
+        self.assertEqual(rows["zalo_studio"]["feature"], "studio")
+        self.assertFalse(rows["zalo_send_friend_request"]["registered"])
+        self.assertTrue(all(r["description"] for r in manifest["tools"]))
+
+
 if __name__ == "__main__":
     unittest.main()

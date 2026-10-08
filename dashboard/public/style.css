@@ -185,6 +185,16 @@ input:focus-visible, select:focus-visible { outline: none; border-color: var(--b
 .sb-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 60vh; overflow-y: auto; font-size: 14px; background: #f8fafc; padding: 12px; border-radius: 8px; }
 .link-btn { background: none; border: 0; padding: 0; color: var(--brand-dark); font: inherit; font-weight: 600; text-align: left; cursor: pointer; text-decoration: underline; }
 .link-btn:focus-visible { outline: none; box-shadow: var(--focus); }
+/* Giai đoạn 7B: dải chờ khởi động lại, Agent, Theo dõi agent */
+.restart-banner { margin-bottom: 16px; }
+.restart-banner p { margin: 0 0 8px; }
+.soul-edit { width: 100%; min-height: 280px; font-size: 13.5px; line-height: 1.5; }
+.trace-box { flex: 1 1 100%; margin-top: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
+.trace-turns { list-style: none; margin: 0; padding: 0; }
+.trace-turn + .trace-turn { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.trace-turn p { margin: 2px 0; overflow-wrap: anywhere; }
+.trace-tools { margin: 4px 0; padding-left: 18px; }
+.trace-tools li { margin: 2px 0; overflow-wrap: anywhere; }
 /* Trí nhớ */
 .mem-editor { flex: 1 1 100%; margin-top: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
 .mem-field { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 8px; margin-bottom: 6px; }

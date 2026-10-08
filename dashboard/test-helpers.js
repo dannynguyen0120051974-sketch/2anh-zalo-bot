@@ -18,6 +18,7 @@ import { createPeopleStore } from './lib/people-store.js';
 import { createHermesMemory } from './lib/hermes-memory.js';
 import { createOwnersStore } from './lib/owners.js';
 import { createInsightAi } from './lib/insight-ai.js';
+import { createRestartFlags } from './lib/restart-flags.js';
 
 const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
   let c = n;
@@ -120,6 +121,7 @@ export function makeDeps(t, overrides = {}) {
     threadNames: createThreadNames({ loadGroups: () => sidecar.groups() }),
     restartAssistant: async () => {},
     restartSidecar: async () => {},
+    restartFlags: createRestartFlags({ file: join(dir, 'restart-flags.json') }),
     owners: createOwnersStore({ envFile: join(dir, 'hermes.env'), sidecarEnvFile: join(dir, 'sidecar.env'), pendingFile: join(dir, 'pending-restart.json') }),
     brand: createBrandStore({ file: join(dir, 'brand.json'), logoFile: join(dir, 'brand', 'logo.png') }),
     health: fakeHealth(),

@@ -18,6 +18,10 @@ export function resolveDashboardPaths({ env = process.env, sidecarRoot }) {
     brandFile: join(dataDir, 'brand.json'),
     brandLogoFile: join(dataDir, 'brand', 'logo.png'),
     pendingRestartFile: join(dataDir, 'pending-restart.json'),
+    restartFlagsFile: join(dataDir, 'restart-flags.json'),
+    soulHistoryDir: join(dataDir, 'soul-history'),
+    // Plugin ghi lúc nạp (zalo_tools/tools.py write_tools_manifest) — dashboard chỉ đọc.
+    toolsManifestFile: join(hermesHome, 'zalo', 'tools-manifest.json'),
     healthHistoryFile: join(dataDir, 'health-history.json'),
     aiUsageFile: join(dataDir, 'ai-usage.json'),
     // Sổ lượt Xưởng tạo sản phẩm: plugin ghi, dashboard chỉ đọc (spec §17). studio-policy.json: plugin ghi chính sách video.
