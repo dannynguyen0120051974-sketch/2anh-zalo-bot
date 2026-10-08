@@ -742,7 +742,8 @@ async def zalo_studio(args: Dict[str, Any], **_kw) -> str:
     try:
         position = studio.submit(job)
     except jobs.Busy as exc:
-        studio.ledger.finish(job.id, "refunded", error=str(exc))
+        # Việc chưa chạy (hàng đầy ngay lúc nhận): trả lượt, không tính vào trần trả lượt trong ngày.
+        studio.ledger.finish(job.id, "refunded", error=str(exc), capped=False)
         return _err(str(exc))
     minutes = {"video": "10–30", "slide": "5–15"}.get(kind, "2–5")
     return _ok({"status": "queued", "job_id": job.id, "position": position, "quota_left": left,

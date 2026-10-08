@@ -965,6 +965,68 @@ class LedgerTest(unittest.TestCase):
         self.assertEqual(ledger.vn_day(1_759_856_399), "2025-10-07")  # 16:59:59 UTC = 23:59:59 giờ VN
         self.assertEqual(ledger.vn_day(1_759_856_400), "2025-10-08")  # 17:00:00 UTC = 0 giờ ngày mới
 
+    def test_refunds_per_person_per_day_are_capped_at_the_quota(self):
+        statuses = []
+        for i in range(4):
+            self.take(f"j{i}", quota=2)
+            self.book.finish(f"j{i}", "running")
+            statuses.append(self.book.finish(f"j{i}", "refunded", error="máy hỏng"))
+        self.assertEqual(statuses, ["refunded", "refunded", "failed", "failed"], "quá trần trả lượt → tính lượt")
+        self.assertEqual(self.book.used_today(MEMBER), 2)
+        self.assertEqual(self.take("j9", quota=2), -1, "hết lượt: không lấy việc miễn phí vô hạn bằng lỗi cố ý")
+        data = json.loads(self.book.path.read_text(encoding="utf-8"))
+        self.assertTrue(data["jobs"][2]["refund_denied"])
+        self.assertEqual(data["days"][ledger.vn_day()][MEMBER]["refunded"], 2)
+
+    def test_queue_full_refund_is_not_counted_against_the_daily_refund_cap(self):
+        for i in range(3):
+            self.take(f"j{i}", quota=1)
+            self.assertEqual(self.book.finish(f"j{i}", "refunded", error="hàng đầy", capped=False), "refunded")
+        self.assertEqual(self.book.used_today(MEMBER), 0)
+
+    def test_windows_file_lock_on_replace_is_retried_and_never_loses_the_ok_state(self):
+        self.take("j1")
+        real = os.replace
+        failures = {"n": 3}
+
+        def flaky(src, dst):
+            if failures["n"]:
+                failures["n"] -= 1
+                raise PermissionError(32, "The process cannot access the file because it is being used by another process")
+            return real(src, dst)
+
+        with patch.object(ledger.os, "replace", side_effect=flaky), patch.object(ledger, "REPLACE_SLEEP", 0):
+            self.assertEqual(self.book.finish("j1", "ok", input_tokens=7), "ok")
+        self.assertEqual(json.loads(self.book.path.read_text(encoding="utf-8"))["jobs"][-1]["status"], "ok")
+        with patch.object(ledger.os, "replace", side_effect=PermissionError(32, "locked")), \
+                patch.object(ledger, "REPLACE_SLEEP", 0), self.assertLogs(ledger.logger, level="ERROR"):
+            self.assertEqual(self.take("j2"), -1, "khoá mãi không nhả → từ chối (không nhận việc mà không trừ được lượt)")
+        self.assertEqual([p.name for p in self.dir.iterdir()], ["studio-usage.json"], "không sót tệp tạm")
+
+    def test_a_locked_read_never_sets_the_book_aside(self):
+        self.take("j1")
+        with patch.object(Path, "read_text", side_effect=PermissionError(32, "locked")), \
+                patch.object(ledger, "REPLACE_SLEEP", 0), self.assertLogs(ledger.logger, level="ERROR"):
+            self.assertEqual(self.take("j2"), -1)
+        self.assertEqual([p.name for p in self.dir.iterdir()], ["studio-usage.json"], "sổ không bị cất sang .hong")
+        self.assertEqual(self.book.used_today(MEMBER), 1)
+
+    def test_concurrent_takes_from_many_ledger_objects_never_exceed_the_quota(self):
+        import threading
+
+        results = []
+        books = [ledger.Ledger(self.book.path) for _ in range(20)]   # tools.py tạo Ledger mới mỗi lần
+        threads = [threading.Thread(target=lambda b=b, i=i: results.append(
+            b.take(job_id=f"j{i}", uid=MEMBER, name="Lan", kind="giao_an", thread_id=GROUP, is_group=True, quota=3)))
+            for i, b in enumerate(books)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(sorted(r for r in results if r != -1), [0, 1, 2])
+        self.assertEqual(self.book.used_today(MEMBER), 3)
+        self.assertEqual(len(json.loads(self.book.path.read_text(encoding="utf-8"))["jobs"]), 3)
+
 
 def fake_places(tmp: Path) -> recipes.Places:
     studio = tmp / "studio"
