@@ -33,7 +33,7 @@
 3. **Bộ nhớ trợ lý sửa bằng Node** (không gọi `MemoryStore` qua Python): đúng định dạng `"\n§\n"`, kiểm `old` + mtime → 409. Lý do ở spec §18.5.1.
 4. **Kho tri thức không có phạm vi theo nhóm** (plugin không hỗ trợ); chỉ xoá tệp trong `tai-len-dashboard`.
 5. **Tóm tắt AI qua hàng đợi tệp**, trần lượt/ngày giữ ở plugin (`ZALO_INSIGHT_DAILY`, mặc định 10); dashboard chỉ cho một yêu cầu chờ mỗi lúc.
-6. **Second brain chỉ loopback + 3 gốc đọc + ghi mới dưới `so-tay-dashboard/`.**
+6. **Second brain là tính năng bật bằng cấu hình** (người dùng chốt 08/10): chỉ khi `.env` Hermes có `ZALO_SECOND_BRAIN_URL` (loopback), **luôn tắt trên Windows** ("Second brain chỉ bật trên máy chủ VPS"), chỉ Quản trị, ẩn khỏi thanh bên khi tắt (`/api/features`). Bộ cài chỉ in gợi ý khi thấy OpenViking trên Linux, không tự đặt biến; doctor có dòng `second-brain`. Khi bật: 3 gốc đọc + chỉ ghi mới dưới `so-tay-dashboard/`.
 7. **Lời nhắc Zalo xem theo từng hội thoại** (zca-js không có API "mọi lời nhắc của bot"); danh sách hội thoại lấy từ Phiên chat.
 
 ## Review Focus
@@ -41,7 +41,7 @@
 1. **Bot ghi people.json / MEMORY.md đúng lúc Quản trị bấm Lưu** → dashboard trả 409 "tải lại rồi sửa lại", không đè mất dữ liệu bot vừa ghi. (Task 3 `bot ghi chen giữa lúc đọc và lúc ghi → 409…`, Task 5 `trợ lý vừa thêm mục khác vào chỗ đó → 409`.)
 2. **Tên tệp tải lên lạ (`../../.env.md`, `C:\fakepath\…`, đuôi giả, PDF giả)** → tệp an toàn trong `tai-len-dashboard` hoặc 400; xoá ngoài thư mục đó → 403. (Task 7 `tên tệp: bỏ đường dẫn…`, `tải lên vào thư mục riêng…`.)
 3. **Hermes chưa cập nhật / gateway tắt khi bấm Tóm tắt** → sau 3 phút trang báo "Trợ lý chưa trả lời", yêu cầu bỏ rơi được dọn để lần sau gửi được; plugin lỗi AI → kết quả `ok:false` có câu dễ hiểu. (Task 9 `kết quả: done khi plugin ghi; quá 3 phút…`, `test_failures_never_raise`.)
-4. **OPENVIKING_ENDPOINT trỏ ra ngoài máy hoặc URI chứa `..`/`privacy`** → 409/400 trước khi gọi mạng; lỗi OpenViking không lộ chi tiết. (Task 10 `chỉ địa chỉ loopback…`, `địa chỉ không phải loopback → 409…`.)
+4. **Máy Windows có đặt `ZALO_SECOND_BRAIN_URL`, hoặc địa chỉ trỏ ra ngoài máy, hoặc URI chứa `..`/`privacy`** → tắt/404/400 trước khi gọi mạng, thanh bên ẩn mục; lỗi OpenViking không lộ chi tiết. (Task 10 `bật/tắt theo cấu hình…`, `máy Windows: đã đặt ZALO_SECOND_BRAIN_URL vẫn tắt…`.)
 5. **Kết nối Zalo tắt khi mở Liên hệ** → vẫn thấy người đã nhắn riêng + hồ sơ, kèm câu "Kết nối Zalo đang tắt…". (Task 4 `liên hệ: gộp bạn bè + người nhắn riêng…`.)
 
 ---
@@ -75,13 +75,13 @@
 **Interfaces:**
 - Consumes: không.
 - Produces:
-  - `shell.js`: `export const GROUPS` (mục có thể có `admin: true`), `visibleGroups(role) → [{label, admin?, items}]`, `crumbsFor(path) → string[]`, `navSplit(role, path)` (mục có thêm `group`), `moreSections(more) → [{label, items}]`.
+  - `shell.js`: `export const GROUPS` (mục có thể có `admin: true` và `feature: 'secondBrain'`), `visibleGroups(role, features = {}) → [{label, admin?, items}]` (mục có `feature` chỉ hiện khi `features[feature] === true`), `crumbsFor(path) → string[]`, `navSplit(role, path, features = {})` (mục có thêm `group`), `moreSections(more) → [{label, items}]`; `useFeatures()` hỏi `GET /api/features` (Task 10 thêm route; trước đó 404 → `{}` → Second brain ẩn).
   - Route 7A: `/contacts`, `/schedules`, `/memory`, `/kb`, `/insight`, `/second-brain` (admin). View xuất `Contacts`, `Schedules`, `Memory`, `Kb`, `Insight`, `SecondBrain`.
   - `ui.js` biểu tượng mới: `brain`, `chart`, `tool`, `plug`, `settings` (7B dùng 3 cái cuối).
   - Lớp CSS dùng chung: `.row-list .row-item .row-main .row-tags` (mọi trang 7A).
   - `brand.get()` thêm `subtitle`; `parseBrand` nhận `subtitle` tuỳ chọn (thiếu/rỗng → "Không gian làm việc", ≤ 40 ký tự).
 
-- [ ] **Step 1: Viết test** — trong `dashboard/public/public.test.js`, sửa test `thanh điều hướng điện thoại: 4 mục chính + "Thêm" theo vai trò`:
+- [ ] **Step 1: Viết test** — trong `dashboard/public/public.test.js`, sửa test `thanh điều hướng điện thoại: 4 mục chính + "Thêm" theo vai trò`: hai lời gọi thành `navSplit('admin', '/audit', { secondBrain: true })` và `navSplit('owner', '/', { secondBrain: true })`, và
 
 ```js
   assert.deepEqual(admin.more.map((i) => i.path), ['/contacts', '/schedules', '/memory', '/kb', '/insight', '/second-brain',
@@ -99,15 +99,16 @@ Thêm vào **cuối** `dashboard/public/public.test.js`:
 
 ```js
 // --- Giai đoạn 7 (spec §18): thanh bên theo dashboard mẫu, đường dẫn vị trí, dòng phụ thương hiệu ---
-test('thanh bên: 5 nhóm theo mẫu; Second brain chỉ Quản trị; nhóm rỗng ẩn', async () => {
+test('thanh bên: 5 nhóm theo mẫu; Second brain chỉ Quản trị và chỉ khi máy chủ bật; nhóm rỗng ẩn', async () => {
   const { visibleGroups } = await import('./views/shell.js');
-  const admin = visibleGroups('admin');
+  const admin = visibleGroups('admin', { secondBrain: true });
   assert.deepEqual(admin.map((g) => g.label), ['Tổng quan', 'Hội thoại', 'Dữ liệu', 'Hệ thống', 'Quản trị']);
   assert.deepEqual(admin[1].items.map((i) => i.text), ['Phiên chat', 'Liên hệ', 'Phân quyền Bot', 'Lịch hẹn']);
   assert.deepEqual(admin[2].items.map((i) => i.text), ['Trí nhớ', 'Kho tri thức', 'Insight nhóm', 'Second brain']);
-  const owner = visibleGroups('owner');
+  const owner = visibleGroups('owner', { secondBrain: true });
   assert.deepEqual(owner.map((g) => g.label), ['Tổng quan', 'Hội thoại', 'Dữ liệu', 'Hệ thống']);
   assert.ok(!owner.flatMap((g) => g.items).some((i) => i.admin), 'Chủ bot không thấy mục admin nào');
+  assert.ok(!visibleGroups('admin', {}).flatMap((g) => g.items).some((i) => i.path === '/second-brain'), 'tính năng tắt (Windows / chưa đặt ZALO_SECOND_BRAIN_URL) → ẩn');
 });
 
 test('đường dẫn vị trí: "Nhóm / Trang"; Tổng quan và trang lạ không có; Tài khoản của tôi một cấp', async () => {
@@ -202,17 +203,31 @@ export const GROUPS = [
     { path: '/memory', text: 'Trí nhớ', icon: 'brain' },
     { path: '/kb', text: 'Kho tri thức', icon: 'file' },
     { path: '/insight', text: 'Insight nhóm', icon: 'chart' },
-    { path: '/second-brain', text: 'Second brain', icon: 'search', admin: true },
+    { path: '/second-brain', text: 'Second brain', icon: 'search', admin: true, feature: 'secondBrain' },
   ] },
 ```
 
-(nhóm "Hệ thống" và "Quản trị" giữ nguyên.) Thay hàm `navSplit` bằng:
+(nhóm "Hệ thống" và "Quản trị" giữ nguyên.) Thêm ngay trước `function useStatus() {`:
 
 ```js
-/** Nhóm thanh bên vai trò này thấy: bỏ nhóm/mục `admin` với Chủ bot, bỏ nhóm rỗng. */
-export function visibleGroups(role) {
+/** Tính năng bật theo cấu hình máy chủ (/api/features); lỗi → mọi tính năng tuỳ chọn ẩn. */
+function useFeatures() {
+  const [features, setFeatures] = useState({});
+  useEffect(() => { api('/api/features').then((r) => setFeatures(r)).catch(() => setFeatures({})); }, []);
+  return features;
+}
+```
+
+Trong `Shell`, sau `useStatus()`: `const features = useFeatures();` và truyền `features=${features}` cho `<${Sidebar}>`; `Sidebar({ me, brand, path, features })` truyền tiếp cho `<${MobileNav} … features=${features} />`; `MobileNav({ me, path, features })` gọi `navSplit(me.role, path, features)`. Thay hàm `navSplit` bằng:
+
+```js
+/**
+ * Nhóm thanh bên vai trò này thấy: bỏ nhóm/mục `admin` với Chủ bot, bỏ mục có `feature` đang tắt
+ * (`features` từ /api/features — vd. Second brain chỉ khi bật trên máy chủ Linux), bỏ nhóm rỗng.
+ */
+export function visibleGroups(role, features = {}) {
   return GROUPS.filter((g) => !g.admin || role === 'admin')
-    .map((g) => ({ ...g, items: g.items.filter((it) => !it.admin || role === 'admin') }))
+    .map((g) => ({ ...g, items: g.items.filter((it) => (!it.admin || role === 'admin') && (!it.feature || features[it.feature] === true)) }))
     .filter((g) => g.items.length);
 }
 
@@ -226,8 +241,8 @@ export function crumbsFor(path) {
   return [];
 }
 
-export function navSplit(role, path) {
-  const items = visibleGroups(role).flatMap((g) => g.items.map((it) => ({ ...it, group: g.label })));
+export function navSplit(role, path, features = {}) {
+  const items = visibleGroups(role, features).flatMap((g) => g.items.map((it) => ({ ...it, group: g.label })));
   const primary = MOBILE_PRIMARY.map((p) => items.find((it) => it.path === p)).filter(Boolean)
     .map((it) => ({ ...it, short: SHORT[it.path] || it.text }));
   const more = [...items.filter((it) => !MOBILE_PRIMARY.includes(it.path)), { path: '/profile', text: 'Tài khoản của tôi', icon: 'user', group: 'Tài khoản' }]
@@ -258,14 +273,14 @@ Trong `MobileNav`, thay khối `<div class="nav-more-menu">…</div>` bằng:
       </div>
 ```
 
-Trong `Sidebar`, thay dòng `side-brand` và dòng lọc nhóm:
+Trong `Sidebar`, thay dòng `side-brand` và dòng lọc nhóm (truyền `features`):
 
 ```js
     <div class="side-brand"><${BrandMark} brand=${brand} />
       <span class="side-brand-text"><span>${brand.name}</span><small>${brand.subtitle}</small></span></div>
     <${MobileNav} me=${me} path=${path} />
     <nav class="nav" aria-label="Điều hướng chính">
-      ${visibleGroups(me.role).map((g) => html`
+      ${visibleGroups(me.role, features).map((g) => html`
 ```
 
 Trong `Shell`: sau `const mainRef = useRef(null);` thêm `const crumbs = r ? crumbsFor(path) : [];` và thay `<main …>${body}</main>` bằng:
@@ -816,7 +831,7 @@ git commit -m "feat(zalo): /control bạn bè, lời mời kết bạn, lời nh
 **Interfaces:**
 - Consumes: `ZALO_UID` (users.js), `fold` (public/fold.js).
 - Produces:
-  - `env-file.js`: `READ_ONLY_KEYS` (`ZALO_PEOPLE_FILE`, `ZALO_KB_DIR`, `ZALO_KB_PUBLIC_DIRS`, `OPENVIKING_ENDPOINT|ACCOUNT|USER|API_KEY`) — `readEnvKey` đọc được, `writeEnvKey` không.
+  - `env-file.js`: `READ_ONLY_KEYS` (`ZALO_PEOPLE_FILE`, `ZALO_KB_DIR`, `ZALO_KB_PUBLIC_DIRS`, `ZALO_SECOND_BRAIN_URL`, `OPENVIKING_ACCOUNT|USER|API_KEY`) — `readEnvKey` đọc được, `writeEnvKey` không.
   - `json-store.js`: `writeFileAtomic(path, data, { …, tmpName })` — tên tệp tạm riêng trong cùng thư mục.
   - `people-store.js`: `LIMITS`, `parsePerson(body) → {name, note, fields: {k: v}}`, `createPeopleStore({ file, now? }) → { list(), put(uid, person, by), remove(uid) → bool }` (lỗi mang `statusCode` 400/409/503).
   - API: `GET /api/people?q=` → `{total, people:[{uid, name, note, fields:[{key,value}], updatedAt, updatedBy}], truncated}`; `PUT /api/people/:uid`; `DELETE /api/people/:uid`. Activity `people_update`, `people_delete`.
@@ -947,9 +962,9 @@ thêm vào **cuối** `dashboard/lib/env-file.test.js`:
 ```js
 test('khoá chỉ đọc (giai đoạn 7): đọc được, không bao giờ ghi được', (t) => {
   const f = join(tmp(t), '.env');
-  writeFileSync(f, 'ZALO_KB_DIR=D:/Kho tai lieu\nOPENVIKING_ENDPOINT=http://127.0.0.1:1933\n');
+  writeFileSync(f, 'ZALO_KB_DIR=D:/Kho tai lieu\nZALO_SECOND_BRAIN_URL=http://127.0.0.1:1933\n');
   assert.equal(readEnvKey(f, 'ZALO_KB_DIR'), 'D:/Kho tai lieu');
-  assert.equal(readEnvKey(f, 'OPENVIKING_ENDPOINT'), 'http://127.0.0.1:1933');
+  assert.equal(readEnvKey(f, 'ZALO_SECOND_BRAIN_URL'), 'http://127.0.0.1:1933');
   assert.equal(readEnvKey(f, 'ZALO_PEOPLE_FILE'), null);
   assert.throws(() => writeEnvKey(f, 'ZALO_KB_DIR', '1'), /không nằm trong danh sách/);
   assert.throws(() => readEnvKey(f, 'TELEGRAM_BOT_TOKEN'), /không nằm trong danh sách/);
@@ -969,7 +984,7 @@ export const EDITABLE_KEYS = new Set(['ZALO_ALLOWED_USERS']);
 // OPENVIKING_API_KEY là khoá bí mật — dashboard dùng để gọi OpenViking, KHÔNG BAO GIỜ trả ra trình duyệt.
 export const READ_ONLY_KEYS = new Set([
   'ZALO_PEOPLE_FILE', 'ZALO_KB_DIR', 'ZALO_KB_PUBLIC_DIRS',
-  'OPENVIKING_ENDPOINT', 'OPENVIKING_ACCOUNT', 'OPENVIKING_USER', 'OPENVIKING_API_KEY',
+  'ZALO_SECOND_BRAIN_URL', 'OPENVIKING_ACCOUNT', 'OPENVIKING_USER', 'OPENVIKING_API_KEY',
 ]);
 
 function allowed(key, { write = false } = {}) {
@@ -3786,22 +3801,26 @@ git commit -m "feat(insight): tóm tắt chủ đề nhóm bằng AI qua hàng �
 
 ---
 
-### Task 10: Second brain — cửa sổ vào OpenViking trên cùng máy (Quản trị)
+### Task 10: Second brain — tính năng bật bằng cấu hình, chỉ máy chủ Linux, chỉ Quản trị
 
 **Files:**
 - Create: `dashboard/lib/second-brain.js`, `dashboard/lib/second-brain.test.js`, `dashboard/routes/second-brain.js`, `dashboard/routes/second-brain.test.js`
-- Modify: `dashboard/app.js`, `dashboard/server.js`, `dashboard/public/views/second-brain.js` (thay khung), `dashboard/public/style.css`, `dashboard/public/public.test.js`
+- Modify: `dashboard/app.js`, `dashboard/server.js`, `dashboard/public/views/second-brain.js` (thay khung), `dashboard/public/style.css`, `scripts/hermes-install-lib.js`, `scripts/hermes-install-lib.test.js`, `scripts/install-hermes.js`
 
 **Interfaces:**
-- Consumes: `readEnvKey(…, 'OPENVIKING_*')` (Task 3).
-- Produces: `NOTE_ROOT`, `loopbackEndpoint(raw) → origin|null`, `allowedUri(uri, user)`, `noteUri(title, nowMs, rand?)`, `createSecondBrain({ settings: () => {endpoint, account, user, apiKey}, fetchImpl?, now? }) → { roots(), list(uri), read(uri), search(q), addNote({title, text}) → uri }`; API admin `GET /api/admin/second-brain/{roots,list?uri=,read?uri=,search?q=}`, `POST /api/admin/second-brain/notes`; activity `second_brain_note`. View: `entryName`, `parentUri`.
+- Consumes: `readEnvKey(…, 'ZALO_SECOND_BRAIN_URL' | 'OPENVIKING_ACCOUNT' | 'OPENVIKING_USER' | 'OPENVIKING_API_KEY')` (Task 3), `useFeatures`/`visibleGroups(role, features)` (Task 1).
+- Produces:
+  - `second-brain.js`: `SECOND_BRAIN_KEY = 'ZALO_SECOND_BRAIN_URL'`, `WINDOWS_NOTE = 'Second brain chỉ bật trên máy chủ VPS'`, `UNSET_NOTE`, `NOT_LOOPBACK_NOTE`, `NOTE_ROOT`, `loopbackEndpoint(raw) → origin|null` (trống → null), `secondBrainStatus({ url, platform }) → { enabled, reason: 'windows'|'unset'|'not-loopback'|'ok', note, base? }`, `allowedUri(uri, user)`, `noteUri(title, nowMs, rand?)`, `createSecondBrain({ settings: () => {url, account, user, apiKey}, platform?, fetchImpl?, now? }) → { status(), roots(), list(uri), read(uri), search(q), addNote({title, text}) → uri }` (tắt → lỗi 404 mang `note`).
+  - API: `GET /api/features` (`requireAuth`) → `{ secondBrain: role === 'admin' && đang bật }`; admin `GET /api/admin/second-brain/{status,roots,list?uri=,read?uri=,search?q=}`, `POST /api/admin/second-brain/notes`; activity `second_brain_note`.
+  - Bộ cài: `secondBrainCheck({ url, hostPlatform }) → { ok, detail }` (dòng doctor `second-brain`), `secondBrainHint({ hostPlatform, url, envFile, commandProbe }) → string|null`; `installHermes(…, hostPlatform)` trả thêm `secondBrain` (gợi ý in ra màn hình, không ghi biến).
+  - View: `entryName`, `parentUri`; trang tắt → hộp thông báo `note`.
 
 - [ ] **Step 1: Viết test** — tạo `dashboard/lib/second-brain.test.js`:
 
 ```js
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { allowedUri, createSecondBrain, loopbackEndpoint, noteUri } from './second-brain.js';
+import { WINDOWS_NOTE, allowedUri, createSecondBrain, loopbackEndpoint, noteUri, secondBrainStatus } from './second-brain.js';
 
 function fakeOv(reply = {}) {
   const calls = [];
@@ -3813,11 +3832,12 @@ function fakeOv(reply = {}) {
   };
   return { calls, fetchImpl };
 }
-const settings = (over = {}) => () => ({ endpoint: 'http://127.0.0.1:1933', account: '', user: '', apiKey: 'bi-mat', ...over });
+const settings = (over = {}) => () => ({ url: 'http://127.0.0.1:1933', account: '', user: '', apiKey: 'bi-mat', ...over });
+const linux = { platform: 'linux' };
 
 test('chỉ địa chỉ loopback; gốc đọc được giới hạn; tên ghi chú không dấu theo ngày VN', () => {
   assert.equal(loopbackEndpoint('http://127.0.0.1:1933/'), 'http://127.0.0.1:1933');
-  assert.equal(loopbackEndpoint(''), 'http://127.0.0.1:1933');
+  assert.equal(loopbackEndpoint(''), null, 'chưa đặt = tắt, không tự đoán địa chỉ');
   for (const bad of ['http://10.0.0.5:1933', 'https://api.vikingdb.com', 'file:///etc/passwd', 'http://u:p@127.0.0.1:1933', 'không phải url']) assert.equal(loopbackEndpoint(bad), null, bad);
   assert.equal(allowedUri('viking://user/default/memories/a.md', 'default'), true);
   assert.equal(allowedUri('viking://resources', 'default'), true);
@@ -3832,7 +3852,7 @@ test('tìm: gửi đúng tiêu đề tài khoản/khoá, bỏ kết quả ngoài
     memories: [{ uri: 'viking://user/default/memories/a.md', score: 0.5, abstract: 'A' }, { uri: 'viking://user/default/privacy/k', score: 0.9 }],
     resources: [{ uri: 'viking://resources/b.md', score: 0.7, abstract: 'B' }],
   } });
-  const sb = createSecondBrain({ settings: settings(), fetchImpl: ov.fetchImpl });
+  const sb = createSecondBrain({ settings: settings(), fetchImpl: ov.fetchImpl, ...linux });
   assert.deepEqual((await sb.search('dashboard')).map((h) => h.uri), ['viking://resources/b.md', 'viking://user/default/memories/a.md']);
   assert.equal(ov.calls[0].headers['X-OpenViking-Account'], 'default');
   assert.equal(ov.calls[0].headers['X-API-Key'], 'bi-mat');
@@ -3842,7 +3862,7 @@ test('tìm: gửi đúng tiêu đề tài khoản/khoá, bỏ kết quả ngoài
 
 test('liệt kê/đọc: URI ngoài gốc → 400 trước khi gọi; ghi chú chỉ tạo mới dưới so-tay-dashboard', async () => {
   const ov = fakeOv({ '/api/v1/fs/ls': [{ uri: 'viking://resources/x.md', isDir: false, size: 3 }, { uri: 'viking://user/default/privacy', isDir: true }], '/api/v1/content/read': 'nội dung' });
-  const sb = createSecondBrain({ settings: settings(), fetchImpl: ov.fetchImpl, now: () => Date.UTC(2026, 9, 7, 1) });
+  const sb = createSecondBrain({ settings: settings(), fetchImpl: ov.fetchImpl, now: () => Date.UTC(2026, 9, 7, 1), ...linux });
   assert.deepEqual((await sb.list('viking://resources')).map((e) => e.uri), ['viking://resources/x.md']);
   assert.equal(await sb.read('viking://resources/x.md'), 'nội dung');
   await assert.rejects(sb.read('viking://user/default/privacy/keys'), (e) => e.statusCode === 400);
@@ -3853,10 +3873,23 @@ test('liệt kê/đọc: URI ngoài gốc → 400 trước khi gọi; ghi chú c
   await assert.rejects(sb.addNote({ title: '', text: 'x' }), (e) => e.statusCode === 400);
 });
 
-test('địa chỉ không phải loopback → 409; dịch vụ tắt → 503; trả lỗi → 502 (không lộ chi tiết)', async () => {
-  await assert.rejects(createSecondBrain({ settings: settings({ endpoint: 'http://192.168.1.5:1933' }), fetchImpl: async () => { throw new Error('không được gọi'); } }).search('abc'), (e) => e.statusCode === 409);
-  await assert.rejects(createSecondBrain({ settings: settings(), fetchImpl: async () => { throw new Error('ECONNREFUSED'); } }).search('abc'), (e) => e.statusCode === 503);
-  await assert.rejects(createSecondBrain({ settings: settings(), fetchImpl: async () => ({ ok: false, json: async () => ({ status: 'error', error: { message: 'secret path' } }) }) }).search('abc'),
+test('bật/tắt theo cấu hình: Windows luôn tắt; chưa đặt hoặc không loopback → tắt, không gọi mạng', async () => {
+  assert.deepEqual(secondBrainStatus({ url: 'http://127.0.0.1:1933', platform: 'win32' }), { enabled: false, reason: 'windows', note: WINDOWS_NOTE });
+  assert.equal(WINDOWS_NOTE, 'Second brain chỉ bật trên máy chủ VPS');
+  assert.equal(secondBrainStatus({ url: '', platform: 'linux' }).reason, 'unset');
+  assert.equal(secondBrainStatus({ url: 'http://10.0.0.5:1933', platform: 'linux' }).reason, 'not-loopback');
+  assert.deepEqual(secondBrainStatus({ url: 'http://127.0.0.1:1933/', platform: 'linux' }), { enabled: true, reason: 'ok', note: '', base: 'http://127.0.0.1:1933' });
+  const never = async () => { throw new Error('không được gọi'); };
+  const win = createSecondBrain({ settings: settings(), platform: 'win32', fetchImpl: never });
+  assert.deepEqual(win.status(), { enabled: false, reason: 'windows', note: WINDOWS_NOTE });
+  await assert.rejects(win.search('abc'), (e) => e.statusCode === 404 && e.message === WINDOWS_NOTE);
+  await assert.rejects(createSecondBrain({ settings: settings({ url: '' }), fetchImpl: never, ...linux }).list('viking://resources'), (e) => e.statusCode === 404);
+});
+
+test('địa chỉ không phải loopback → tắt (404); dịch vụ tắt → 503; trả lỗi → 502 (không lộ chi tiết)', async () => {
+  await assert.rejects(createSecondBrain({ settings: settings({ url: 'http://192.168.1.5:1933' }), fetchImpl: async () => { throw new Error('không được gọi'); }, ...linux }).search('abc'), (e) => e.statusCode === 404);
+  await assert.rejects(createSecondBrain({ settings: settings(), fetchImpl: async () => { throw new Error('ECONNREFUSED'); }, ...linux }).search('abc'), (e) => e.statusCode === 503);
+  await assert.rejects(createSecondBrain({ settings: settings(), fetchImpl: async () => ({ ok: false, json: async () => ({ status: 'error', error: { message: 'secret path' } }) }), ...linux }).search('abc'),
     (e) => e.statusCode === 502 && !/secret/.test(e.message));
 });
 ```
@@ -3866,12 +3899,14 @@ tạo `dashboard/routes/second-brain.test.js`:
 ```js
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createSecondBrain, WINDOWS_NOTE } from '../lib/second-brain.js';
 import { loginAs, makeDeps, startApp } from '../test-helpers.js';
 
-function fakeBrain() {
+function fakeBrain({ enabled = true } = {}) {
   const calls = [];
   return {
     calls,
+    status: () => (enabled ? { enabled: true, reason: 'ok', note: '' } : { enabled: false, reason: 'unset', note: 'chưa bật' }),
     roots: () => ['viking://resources'],
     list: async (uri) => { calls.push(['list', uri]); return []; },
     read: async () => 'nội dung',
@@ -3884,7 +3919,7 @@ test('Second brain: chỉ Quản trị; tìm/đọc/ghi chú; ghi chú vào Nh�
   const deps = makeDeps(t, { secondBrain: fakeBrain() });
   const { call } = await startApp(t, deps);
   const owner = await loginAs(t, deps, call, { username: 'khach', role: 'owner' });
-  for (const p of ['/api/admin/second-brain/roots', '/api/admin/second-brain/search?q=ab']) assert.equal((await call(p, { cookie: owner })).status, 403, p);
+  for (const p of ['/api/admin/second-brain/roots', '/api/admin/second-brain/status', '/api/admin/second-brain/search?q=ab']) assert.equal((await call(p, { cookie: owner })).status, 403, p);
   assert.equal((await call('/api/admin/second-brain/notes', { method: 'POST', cookie: owner, body: { title: 'a', text: 'b' } })).status, 403);
   const admin = await loginAs(t, deps, call);
   assert.equal((await call('/api/admin/second-brain/search?q=dashboard', { cookie: admin })).json.hits[0].uri, 'viking://resources/a.md');
@@ -3892,6 +3927,28 @@ test('Second brain: chỉ Quản trị; tìm/đọc/ghi chú; ghi chú vào Nh�
   const note = await call('/api/admin/second-brain/notes', { method: 'POST', cookie: admin, body: { title: 'Ý tưởng', text: 'x' } });
   assert.equal(note.status, 200);
   assert.equal(deps.activity.list().find((e) => e.action === 'second_brain_note').detail, 'viking://resources/so-tay-dashboard/x.md');
+});
+
+test('/api/features: thanh bên chỉ hiện Second brain cho Quản trị khi tính năng bật', async (t) => {
+  const on = makeDeps(t, { secondBrain: fakeBrain() });
+  const a = await startApp(t, on);
+  assert.equal((await a.call('/api/features')).status, 401);
+  assert.equal((await a.call('/api/features', { cookie: await loginAs(t, on, a.call) })).json.secondBrain, true);
+  assert.equal((await a.call('/api/features', { cookie: await loginAs(t, on, a.call, { username: 'khach', role: 'owner' }) })).json.secondBrain, false);
+  const off = makeDeps(t, { secondBrain: fakeBrain({ enabled: false }) });
+  const b = await startApp(t, off);
+  assert.equal((await b.call('/api/features', { cookie: await loginAs(t, off, b.call) })).json.secondBrain, false);
+});
+
+test('máy Windows: đã đặt ZALO_SECOND_BRAIN_URL vẫn tắt, trang nhận câu "chỉ bật trên máy chủ VPS", không gọi OpenViking', async (t) => {
+  const deps = makeDeps(t, { secondBrain: createSecondBrain({ settings: () => ({ url: 'http://127.0.0.1:1933' }), platform: 'win32', fetchImpl: async () => { throw new Error('không được gọi'); } }) });
+  const { call } = await startApp(t, deps);
+  const admin = await loginAs(t, deps, call);
+  assert.deepEqual((await call('/api/admin/second-brain/status', { cookie: admin })).json, { ok: true, enabled: false, reason: 'windows', note: WINDOWS_NOTE });
+  assert.equal((await call('/api/features', { cookie: admin })).json.secondBrain, false);
+  const r = await call('/api/admin/second-brain/search?q=dashboard', { cookie: admin });
+  assert.equal(r.status, 404);
+  assert.equal(r.json.error, WINDOWS_NOTE);
 });
 ```
 
@@ -3909,17 +3966,59 @@ test('Second brain: tên ngắn của mục, lên một cấp không vượt kh�
 });
 ```
 
+thêm vào **cuối** `scripts/hermes-install-lib.test.js`:
+
+```js
+// --- Second brain (spec §18.5.4): chỉ Linux, bật bằng ZALO_SECOND_BRAIN_URL, bộ cài chỉ gợi ý ---
+test('Second brain: dòng doctor — Windows luôn tắt, chưa đặt thì hướng dẫn, không phải loopback thì hỏng', async () => {
+  const { secondBrainCheck } = await import('./hermes-install-lib.js');
+  assert.deepEqual(secondBrainCheck({ url: 'http://127.0.0.1:1933', hostPlatform: 'win32' }), { ok: true, detail: 'luôn tắt trên Windows (ZALO_SECOND_BRAIN_URL bị bỏ qua)' });
+  assert.match(secondBrainCheck({ url: '', hostPlatform: 'linux' }).detail, /^tắt — muốn bật trên VPS: thêm ZALO_SECOND_BRAIN_URL=/);
+  assert.equal(secondBrainCheck({ url: 'http://10.1.2.3:1933', hostPlatform: 'linux' }).ok, false);
+  assert.deepEqual(secondBrainCheck({ url: 'http://127.0.0.1:1933', hostPlatform: 'linux' }), { ok: true, detail: 'bật — http://127.0.0.1:1933' });
+});
+
+test('Second brain: bộ cài chỉ in gợi ý khi thấy OpenViking trên Linux và chưa đặt biến — không bao giờ tự đặt', async () => {
+  const { secondBrainHint } = await import('./hermes-install-lib.js');
+  const calls = [];
+  const probe = (active) => (cmd, args) => { calls.push([cmd, ...args]); return { status: args.at(-1) === active ? 0 : 3 }; };
+  const hint = secondBrainHint({ hostPlatform: 'linux', url: '', envFile: '/root/.hermes/.env', commandProbe: probe('hermes-openviking.service') });
+  assert.match(hint, /hermes-openviking\.service/);
+  assert.match(hint, /ZALO_SECOND_BRAIN_URL=http:\/\/127\.0\.0\.1:1933/);
+  assert.match(hint, /\/root\/\.hermes\/\.env/);
+  assert.deepEqual(calls[0], ['systemctl', 'is-active', '--quiet', 'hermes-openviking.service']);
+  assert.equal(secondBrainHint({ hostPlatform: 'linux', url: '', commandProbe: probe('khong-co') }), null);
+  assert.equal(secondBrainHint({ hostPlatform: 'linux', url: 'http://127.0.0.1:1933', commandProbe: probe('hermes-openviking.service') }), null, 'đã đặt');
+  assert.equal(secondBrainHint({ hostPlatform: 'win32', url: '', commandProbe: () => { throw new Error('không được gọi'); } }), null);
+});
+
+test('Second brain: doctor đọc ZALO_SECOND_BRAIN_URL trong .env của Hermes; cài đặt không ghi biến này', async (t) => {
+  const fx = fixture(t);
+  await installHermes({ sidecarRoot: fx.sidecar, hermesHome: fx.hermesHome, skipPython: true });
+  const envFile = join(fx.hermesHome, '.env');
+  assert.ok(!existsSync(envFile) || !/ZALO_SECOND_BRAIN_URL/.test(readFileSync(envFile, 'utf8')));
+  writeFileSync(envFile, 'ZALO_SECOND_BRAIN_URL="http://192.168.1.9:1933"\n');
+  const bad = doctorHermes({ sidecarRoot: fx.sidecar, hermesHome: fx.hermesHome, skipPython: true, noDashboard: true, hostPlatform: 'linux' });
+  assert.equal(bad.checks.find((c) => c.name === 'second-brain').ok, false);
+  writeFileSync(envFile, 'ZALO_SECOND_BRAIN_URL=http://127.0.0.1:1933\n');
+  const good = doctorHermes({ sidecarRoot: fx.sidecar, hermesHome: fx.hermesHome, skipPython: true, noDashboard: true, hostPlatform: 'linux' });
+  assert.equal(good.checks.find((c) => c.name === 'second-brain').detail, 'bật — http://127.0.0.1:1933');
+});
+```
+
 - [ ] **Step 2: Chạy test, thấy hỏng**
 
-Run: `node --test dashboard/lib/second-brain.test.js dashboard/routes/second-brain.test.js dashboard/public/public.test.js`
-Expected: FAIL — module chưa có.
+Run: `node --test dashboard/lib/second-brain.test.js dashboard/routes/second-brain.test.js dashboard/public/public.test.js scripts/hermes-install-lib.test.js`
+Expected: FAIL — module chưa có; `secondBrainCheck is not a function`.
 
 - [ ] **Step 3: Viết `dashboard/lib/second-brain.js`**
 
 ```js
 /**
- * Second brain (spec §18.5, chỉ Quản trị): kho ngữ cảnh OpenViking chạy trên CÙNG máy (`OPENVIKING_ENDPOINT` trong
- * .env Hermes, mặc định http://127.0.0.1:1933). Dashboard là cửa sổ xem + tìm + ghi chú vào kho đó:
+ * Second brain (spec §18.5.4, chỉ Quản trị, chỉ máy chủ Linux/VPS): kho ngữ cảnh OpenViking chạy trên CÙNG máy.
+ * Tính năng của sản phẩm, bật bằng cấu hình: chỉ bật khi `.env` của Hermes có `ZALO_SECOND_BRAIN_URL` (địa chỉ loopback);
+ * máy Windows LUÔN tắt dù có đặt — OpenViking ở máy nhà là bộ nhớ riêng của chủ máy, không được lộ qua dashboard.
+ * Tài khoản/người dùng: `OPENVIKING_ACCOUNT`, `OPENVIKING_USER` (mặc định "default"). Dashboard là cửa sổ xem + tìm + ghi chú:
  *  - chỉ địa chỉ loopback (không bao giờ thành cầu gọi ra mạng ngoài — SSRF);
  *  - chỉ đọc trong các gốc cho phép: viking://resources, viking://user/<user>/memories, viking://user/<user>/peers
  *    (không mở privacy/sessions/agent…);
@@ -3933,15 +4032,33 @@ const TIMEOUT_MS = 15_000;
 const MAX_NOTE = 8000;
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
 
+export const SECOND_BRAIN_KEY = 'ZALO_SECOND_BRAIN_URL';
+export const WINDOWS_NOTE = 'Second brain chỉ bật trên máy chủ VPS';
+export const UNSET_NOTE = 'Second brain chưa bật — người cài đặt đặt ZALO_SECOND_BRAIN_URL (OpenViking trên cùng máy) trong .env của Hermes.';
+export const NOT_LOOPBACK_NOTE = 'ZALO_SECOND_BRAIN_URL phải là địa chỉ trên cùng máy (127.0.0.1) — báo người cài đặt sửa lại.';
+
 const err = (statusCode, message) => Object.assign(new Error(message), { statusCode });
 
-/** Địa chỉ OpenViking hợp lệ để dùng: http(s) + loopback; ngược lại null. */
+/** Địa chỉ OpenViking hợp lệ để dùng: http(s) + loopback; trống hoặc ngược lại → null. */
 export function loopbackEndpoint(raw) {
+  if (!String(raw ?? '').trim()) return null;
   try {
-    const u = new URL(String(raw || 'http://127.0.0.1:1933'));
+    const u = new URL(String(raw).trim());
     if (!['http:', 'https:'].includes(u.protocol) || !LOOPBACK.has(u.hostname) || u.username || u.password) return null;
     return u.origin;
   } catch { return null; }
+}
+
+/**
+ * Tính năng có bật không — một chỗ quyết cho dashboard, bộ cài và doctor:
+ * Windows → luôn tắt; chưa đặt `ZALO_SECOND_BRAIN_URL` → tắt; không phải loopback → tắt; còn lại → bật.
+ */
+export function secondBrainStatus({ url, platform = process.platform }) {
+  if (platform === 'win32') return { enabled: false, reason: 'windows', note: WINDOWS_NOTE };
+  if (!String(url ?? '').trim()) return { enabled: false, reason: 'unset', note: UNSET_NOTE };
+  const base = loopbackEndpoint(url);
+  if (!base) return { enabled: false, reason: 'not-loopback', note: NOT_LOOPBACK_NOTE };
+  return { enabled: true, reason: 'ok', note: '', base };
 }
 
 /** URI được phép đọc: đúng gốc cho phép, không "..", không ký tự điều khiển. */
@@ -3961,13 +4078,14 @@ export function noteUri(title, nowMs, rand = randomBytes(3).toString('hex')) {
   return `${NOTE_ROOT}/${day}-${slug}-${rand}.md`;
 }
 
-/** `settings()` đọc lại mỗi lần: `{ endpoint, account, user, apiKey }` (chuỗi thô từ .env). */
-export function createSecondBrain({ settings, fetchImpl = fetch, now = Date.now }) {
+/** `settings()` đọc lại mỗi lần: `{ url, account, user, apiKey }` (chuỗi thô từ .env). */
+export function createSecondBrain({ settings, platform = process.platform, fetchImpl = fetch, now = Date.now }) {
+  const status = () => secondBrainStatus({ url: settings().url, platform });
   function conf() {
     const s = settings();
-    const base = loopbackEndpoint(s.endpoint);
-    if (!base) throw err(409, 'Bộ nhớ dài hạn phải chạy trên cùng máy với bot (127.0.0.1) — báo người cài đặt kiểm tra OPENVIKING_ENDPOINT.');
-    return { base, account: s.account || 'default', user: s.user || 'default', apiKey: s.apiKey || '' };
+    const st = secondBrainStatus({ url: s.url, platform });
+    if (!st.enabled) throw err(404, st.note);
+    return { base: st.base, account: s.account || 'default', user: s.user || 'default', apiKey: s.apiKey || '' };
   }
   async function call(path, { method = 'GET', query, body } = {}) {
     const c = conf();
@@ -3983,6 +4101,7 @@ export function createSecondBrain({ settings, fetchImpl = fetch, now = Date.now 
     return { result: json.result, user: c.user };
   }
   return {
+    status() { const { enabled, reason, note } = status(); return { enabled, reason, note }; },
     roots() { const { user } = conf(); return ['viking://resources', `viking://user/${user}/memories`, `viking://user/${user}/peers`]; },
     async list(uri) {
       const { user } = conf();
@@ -4022,7 +4141,8 @@ export function createSecondBrain({ settings, fetchImpl = fetch, now = Date.now 
 - [ ] **Step 4: Viết `dashboard/routes/second-brain.js`** và nối
 
 ```js
-// Second brain (spec §18.5) — chỉ Quản trị: xem/tìm kho OpenViking trên cùng máy, thêm ghi chú mới (ghi Nhật ký).
+// Second brain (spec §18.5.4) — chỉ Quản trị, chỉ khi bật bằng ZALO_SECOND_BRAIN_URL trên máy Linux: xem/tìm kho OpenViking
+// trên cùng máy, thêm ghi chú mới (ghi Nhật ký). `/api/features` cho thanh bên biết có hiện mục này không.
 import express from 'express';
 import { requireAuth, requireRole } from '../lib/http-guards.js';
 
@@ -4035,6 +4155,13 @@ export function secondBrainRoutes({ secondBrain, activity }) {
     console.error('[dashboard]', err);
     return res.status(500).json({ ok: false, error: 'Lỗi bên trong dashboard — xem nhật ký dịch vụ.' });
   };
+  // Tính năng bật theo cấu hình — mọi người đăng nhập hỏi được, nhưng chỉ Quản trị nhận `true`.
+  r.get('/features', requireAuth, (req, res) => {
+    let on = false;
+    try { on = req.user.role === 'admin' && secondBrain.status().enabled; } catch { /* lỗi đọc cấu hình = tắt */ }
+    res.json({ ok: true, secondBrain: on });
+  });
+  r.get('/admin/second-brain/status', ...guard, (req, res) => { try { res.json({ ok: true, ...secondBrain.status() }); } catch (err) { fail(res, err); } });
   r.get('/admin/second-brain/roots', ...guard, (req, res) => { try { res.json({ ok: true, roots: secondBrain.roots() }); } catch (err) { fail(res, err); } });
   r.get('/admin/second-brain/list', ...guard, async (req, res) => { try { res.json({ ok: true, entries: await secondBrain.list(String(req.query.uri ?? '')) }); } catch (err) { fail(res, err); } });
   r.get('/admin/second-brain/read', ...guard, async (req, res) => { try { res.json({ ok: true, text: await secondBrain.read(String(req.query.uri ?? '')) }); } catch (err) { fail(res, err); } });
@@ -4054,20 +4181,88 @@ export function secondBrainRoutes({ secondBrain, activity }) {
 `dashboard/server.js`: `import { createSecondBrain } from './lib/second-brain.js';` + trong `buildDeps`:
 
 ```js
-    // Second brain: OpenViking trên cùng máy; đọc lại .env mỗi lần (khoá chỉ dùng ở máy chủ).
+    // Second brain: chỉ bật khi .env Hermes có ZALO_SECOND_BRAIN_URL (loopback), luôn tắt trên Windows; đọc lại .env mỗi lần.
     secondBrain: createSecondBrain({ settings: () => ({
-      endpoint: readEnvKey(paths.hermesEnvFile, 'OPENVIKING_ENDPOINT'), account: readEnvKey(paths.hermesEnvFile, 'OPENVIKING_ACCOUNT'),
+      url: readEnvKey(paths.hermesEnvFile, 'ZALO_SECOND_BRAIN_URL'), account: readEnvKey(paths.hermesEnvFile, 'OPENVIKING_ACCOUNT'),
       user: readEnvKey(paths.hermesEnvFile, 'OPENVIKING_USER'), apiKey: readEnvKey(paths.hermesEnvFile, 'OPENVIKING_API_KEY'),
     }) }),
 ```
 
-- [ ] **Step 5: Trang Second brain** — thay cả `dashboard/public/views/second-brain.js`:
+- [ ] **Step 5: Bộ cài + doctor** — `scripts/hermes-install-lib.js`: thêm `import { SECOND_BRAIN_KEY, secondBrainStatus } from '../dashboard/lib/second-brain.js';` (cạnh các import `../dashboard/lib/…`); ngay trước `export function doctorHermes({`:
 
 ```js
-// Second brain (spec §18.5, chỉ Quản trị): tìm và xem kho OpenViking trên cùng máy, thêm ghi chú mới.
+/** Giá trị một khoá trong `.env` của Hermes (dòng sau cùng thắng, bỏ nháy); không có → ''. */
+function hermesEnvValue(home, key) {
+  const file = join(home, '.env');
+  if (!existsSync(file)) return '';
+  const lines = readFileSync(file, 'utf8').split(/\r?\n/).filter((l) => new RegExp(`^\\s*(?:export\\s+)?${key}\\s*=`).test(l));
+  if (!lines.length) return '';
+  return lines.at(-1).replace(/^[^=]*=/, '').trim().replace(/^(['"])(.*)\1$/, '$2');
+}
+
+/**
+ * Dòng doctor cho Second brain (spec §18.5.4): bật bằng ZALO_SECOND_BRAIN_URL, chỉ Linux, chỉ loopback.
+ * Chỉ đọc cấu hình — không gọi mạng. Chỉ hỏng khi đã đặt mà địa chỉ không phải loopback (trên Linux).
+ */
+export function secondBrainCheck({ url = '', hostPlatform = platform() } = {}) {
+  const st = secondBrainStatus({ url, platform: hostPlatform });
+  if (st.reason === 'windows') {
+    return { ok: true, detail: url ? 'luôn tắt trên Windows (ZALO_SECOND_BRAIN_URL bị bỏ qua)' : 'luôn tắt trên Windows' };
+  }
+  if (st.reason === 'unset') return { ok: true, detail: `tắt — muốn bật trên VPS: thêm ${SECOND_BRAIN_KEY}=http://127.0.0.1:1933 vào .env của Hermes` };
+  if (st.reason === 'not-loopback') return { ok: false, detail: `${SECOND_BRAIN_KEY} phải là địa chỉ 127.0.0.1/localhost — sửa lại trong .env của Hermes` };
+  return { ok: true, detail: `bật — ${st.base}` };
+}
+
+/**
+ * Bộ cài trên Linux: thấy dịch vụ OpenViking đang chạy mà chưa bật Second brain → in cách bật. KHÔNG tự đặt biến:
+ * kho này có thể chứa ghi nhớ riêng của chủ máy. Windows, đã đặt, hoặc không thấy dịch vụ → null.
+ */
+export function secondBrainHint({ hostPlatform = platform(), url = '', envFile = '.env của Hermes', commandProbe = spawnSync } = {}) {
+  if (hostPlatform !== 'linux' || String(url).trim()) return null;
+  for (const unit of ['hermes-openviking.service', 'openviking.service']) {
+    const probe = commandProbe('systemctl', ['is-active', '--quiet', unit], { encoding: 'utf8' });
+    if (probe?.status === 0) {
+      return `Thấy OpenViking (${unit}) trên máy này. Muốn bật trang Second brain (chỉ Quản trị) thì thêm dòng sau vào ${envFile} `
+        + `rồi khởi động lại dashboard:\n  ${SECOND_BRAIN_KEY}=http://127.0.0.1:1933\nBộ cài không tự bật — kho này có thể chứa ghi nhớ riêng.`;
+    }
+  }
+  return null;
+}
+```
+
+Trong `doctorHermes`, ngay trước `const configuredVieneu = …`:
+
+```js
+  const secondBrain = secondBrainCheck({ url: hermesEnvValue(layout.home, SECOND_BRAIN_KEY), hostPlatform });
+  add('second-brain', secondBrain.ok, secondBrain.detail);
+```
+
+`installHermes`: thêm tham số `hostPlatform = platform(),`, truyền `hostPlatform` vào lời gọi `doctorHermes({ … })`, và thay `return { ...diagnosis, dashboard, setupLink, caddy };` bằng:
+
+```js
+  const secondBrain = secondBrainHint({
+    hostPlatform, url: hermesEnvValue(layout.home, SECOND_BRAIN_KEY), envFile: join(layout.home, '.env'), commandProbe,
+  });
+  return { ...diagnosis, dashboard, setupLink, caddy, secondBrain };
+```
+
+`scripts/install-hermes.js`, sau dòng in khối Caddy:
+
+```js
+    // Second brain (spec §18.5.4): chỉ in cách bật khi thấy OpenViking trên Linux — không bao giờ tự đặt biến.
+    if (result.secondBrain) console.log(`\n${result.secondBrain}`);
+```
+
+(`scripts/doctor.js` đã in mọi `checks` — không phải sửa.)
+
+- [ ] **Step 6: Trang Second brain** — thay cả `dashboard/public/views/second-brain.js`:
+
+```js
+// Second brain (spec §18.5.4, chỉ Quản trị, chỉ máy chủ Linux bật ZALO_SECOND_BRAIN_URL): tìm, xem kho OpenViking, thêm ghi chú.
 import { useEffect, useState } from '../vendor/hooks.mjs';
 import { api } from '../api.js';
-import { html, fmtTime, Icon, Live, PageHead, Spinner } from '../ui.js';
+import { html, fmtTime, Icon, Live, Notice, PageHead, Spinner } from '../ui.js';
 
 /** Tên ngắn của một mục: phần cuối URI, bỏ ".md". */
 export function entryName(uri) {
@@ -4104,7 +4299,14 @@ export function SecondBrain() {
   const [open, setOpen] = useState('');
   const [note, setNote] = useState({ title: '', text: '' });
   const [msg, setMsg] = useState({});
-  useEffect(() => { api('/api/admin/second-brain/roots').then((r) => { setRoots(r.roots); setRoot(r.roots[0]); setCwd(r.roots[0]); }).catch((e) => setMsg({ error: e.message })); }, []);
+  const [st, setSt] = useState(null);
+  useEffect(() => {
+    api('/api/admin/second-brain/status').then((s) => {
+      setSt(s);
+      if (s.enabled) return api('/api/admin/second-brain/roots').then((r) => { setRoots(r.roots); setRoot(r.roots[0]); setCwd(r.roots[0]); });
+      return null;
+    }).catch((e) => setMsg({ error: e.message }));
+  }, []);
   useEffect(() => { if (cwd) { setEntries(null); api(`/api/admin/second-brain/list?${new URLSearchParams({ uri: cwd })}`).then((r) => setEntries(r.entries)).catch((e) => setMsg({ error: e.message })); } }, [cwd]);
   async function search(e) {
     e.preventDefault(); setMsg({});
@@ -4115,7 +4317,10 @@ export function SecondBrain() {
     try { const r = await api('/api/admin/second-brain/notes', { method: 'POST', body: note }); setNote({ title: '', text: '' }); setMsg({ ok: `Đã lưu ghi chú: ${r.uri}` }); } catch (err) { setMsg({ error: err.message }); }
   }
   const up = root ? parentUri(cwd, root) : null;
-  return html`<${PageHead} title="Second brain" sub="Kho ghi nhớ dài hạn (OpenViking) trên máy chủ: tìm, xem và thêm ghi chú. Chỉ Quản trị." />
+  const head = html`<${PageHead} title="Second brain" sub="Kho ghi nhớ dài hạn (OpenViking) trên máy chủ: tìm, xem và thêm ghi chú. Chỉ Quản trị." />`;
+  if (!st) return html`${head}<${Live} error=${msg.error} />${msg.error ? null : html`<${Spinner} />`}`;
+  if (!st.enabled) return html`${head}<${Notice} kind="info">${st.note}<//>`;
+  return html`${head}
     <${Live} error=${msg.error} ok=${msg.ok} />
     ${open ? html`<${Reader} uri=${open} onClose=${() => setOpen('')} />` : null}
     <section class="card">
@@ -4157,18 +4362,18 @@ export function SecondBrain() {
 .link-btn:focus-visible { outline: none; box-shadow: var(--focus); }
 ```
 
-- [ ] **Step 6: Chạy test, thấy xanh + thử thật (chỉ đọc) trên máy local**
+- [ ] **Step 7: Chạy test, thấy xanh**
 
-Run: `node --test dashboard/lib/second-brain.test.js dashboard/routes/second-brain.test.js dashboard/public/public.test.js`
+Run: `node --test dashboard/lib/second-brain.test.js dashboard/routes/second-brain.test.js dashboard/public/public.test.js scripts/hermes-install-lib.test.js`
 Expected: PASS.
-Run: `node --input-type=module -e "import { createSecondBrain } from './dashboard/lib/second-brain.js'; const sb = createSecondBrain({ settings: () => ({}) }); console.log((await sb.search('dashboard zalo')).length, (await sb.list('viking://user/default/memories')).length)"`
-Expected: hai số > 0 (OpenViking local đang chạy). Không gọi `addNote` khi thử.
+Run (Windows, chỉ đọc): `node --input-type=module -e "import { createSecondBrain } from './dashboard/lib/second-brain.js'; console.log(createSecondBrain({ settings: () => ({ url: 'http://127.0.0.1:1933' }) }).status())"`
+Expected: `{ enabled: false, reason: 'windows', note: 'Second brain chỉ bật trên máy chủ VPS' }` — OpenViking của máy nhà không bao giờ bị gọi.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add dashboard/lib/second-brain.js dashboard/lib/second-brain.test.js dashboard/routes/second-brain.js dashboard/routes/second-brain.test.js dashboard/app.js dashboard/server.js dashboard/public/views/second-brain.js dashboard/public/style.css dashboard/public/public.test.js
-git commit -m "feat(dashboard): trang Second brain — tìm, xem, ghi chú vào OpenViking cục bộ, chỉ Quản trị (giai đoạn 7A)"
+git add dashboard/lib/second-brain.js dashboard/lib/second-brain.test.js dashboard/routes/second-brain.js dashboard/routes/second-brain.test.js dashboard/app.js dashboard/server.js dashboard/public/views/second-brain.js dashboard/public/style.css scripts/hermes-install-lib.js scripts/hermes-install-lib.test.js scripts/install-hermes.js
+git commit -m "feat(dashboard): Second brain — bật bằng ZALO_SECOND_BRAIN_URL, chỉ máy chủ Linux, chỉ Quản trị; bộ cài gợi ý, doctor kiểm (giai đoạn 7A)"
 ```
 
 ---
@@ -4234,7 +4439,7 @@ Expected: FAIL — `dashboard_friend_accept`.
 - **Trí nhớ**: sửa/xoá hồ sơ trong sổ người quen; Quản trị sửa/xoá từng mục bộ nhớ của trợ lý.
 - **Kho tri thức**: danh sách tài liệu bot đọc được; tải lên .docx/.pdf/.md/.txt (≤ 10 MB) vào thư mục riêng; xoá tệp đã tải lên.
 - **Insight nhóm**: tin theo ngày, người nhắn nhiều, giờ sôi nổi, loại tin; nút **Tóm tắt chủ đề** bằng AI (giới hạn lượt/ngày, `ZALO_INSIGHT_DAILY`, mặc định 10).
-- **Second brain** (Quản trị): tìm, xem và thêm ghi chú vào bộ nhớ dài hạn OpenViking trên cùng máy.
+- **Second brain** (Quản trị, chỉ máy chủ Linux): tìm, xem và thêm ghi chú vào OpenViking trên cùng máy. Tắt mặc định; bật bằng `ZALO_SECOND_BRAIN_URL=http://127.0.0.1:1933` trong `.env` của Hermes. Máy Windows luôn tắt. Bộ cài gợi ý cách bật khi thấy OpenViking; `doctor` có dòng `second-brain`.
 - Kết nối Zalo: `/control/friends`, `/control/friend-requests[/answer]`, `/control/reminders[/remove]` — có audit_log.
 
 ### An toàn
@@ -4242,12 +4447,12 @@ Expected: FAIL — `dashboard_friend_accept`.
 - Ghi people.json, MEMORY.md/USER.md: tệp tạm riêng, `.bak`, từ chối khi bot vừa ghi (409). Tải lên kiểm nội dung khớp đuôi, chỉ xoá trong `tai-len-dashboard`. OpenViking chỉ địa chỉ loopback, chỉ đọc trong 3 gốc, chỉ ghi mới. Tóm tắt AI không công cụ, chỉ chạy khi bấm.
 ```
 
-  - `README.vi.md`: mục "Dashboard" thêm bảng 6 trang mới (ai thấy, làm được gì), biến tuỳ chọn `ZALO_INSIGHT_DAILY`, `ZALO_INSIGHT_AI=off`, `ZALO_HERMES_BIN`; danh sách kiểm tay ở Step 6. `README.md`: một đoạn tóm tắt tiếng Anh cùng nội dung.
+  - `README.vi.md`: mục "Dashboard" thêm bảng 6 trang mới (ai thấy, làm được gì), biến tuỳ chọn `ZALO_INSIGHT_DAILY`, `ZALO_INSIGHT_AI=off`, `ZALO_HERMES_BIN`, `ZALO_SECOND_BRAIN_URL` (chỉ Linux/VPS); danh sách kiểm tay ở Step 6. `README.md`: một đoạn tóm tắt tiếng Anh cùng nội dung.
 
 - [ ] **Step 5: Chạy toàn bộ test**
 
 Run: `HERMES_HOME=E:/Hermes npm test`
-Expected: JS PASS (≈ 692 test), Python "Tất cả test Python đều xanh" (≈ 425).
+Expected: JS PASS (≈ 698 test), Python "Tất cả test Python đều xanh" (≈ 425).
 
 - [ ] **Step 6: Kiểm tay (Lăng Tiêu local, rồi Uyển Nhi VPS sau triển khai)**
   1. Quản trị và Chủ bot đăng nhập: thanh bên đúng 5/4 nhóm, Chủ bot không thấy Second brain; đường dẫn vị trí đúng; điện thoại "Thêm" chia nhóm.
@@ -4257,7 +4462,7 @@ Expected: JS PASS (≈ 692 test), Python "Tất cả test Python đều xanh" (�
   5. Trí nhớ: sửa một hồ sơ → hỏi bot trong nhóm "bạn biết gì về tôi" thấy nội dung mới. Quản trị sửa một mục MEMORY.md → tệp còn đúng dấu § .
   6. Kho tri thức: tải một PDF → sau ≤ 5 phút bot tìm thấy bằng `zalo_kb_list`; xoá tệp đó.
   7. Insight: chọn nhóm đông → số liệu khớp cảm nhận; Tóm tắt chủ đề → có kết quả trong 1–2 phút; gửi 11 lần/ngày → câu "hết lượt".
-  8. Second brain: tìm "dashboard" ra kết quả; thêm ghi chú → thấy dưới `so-tay-dashboard`.
+  8. Second brain: Lăng Tiêu (Windows) — dù đặt `ZALO_SECOND_BRAIN_URL` vẫn không có mục ở thanh bên, `#/second-brain` ghi "Second brain chỉ bật trên máy chủ VPS". Uyển Nhi (VPS) — chưa đặt biến: ẩn; `npm run install:hermes` in gợi ý; đặt biến + khởi động lại dashboard → mục hiện, tìm "dashboard" ra kết quả, thêm ghi chú → thấy dưới `so-tay-dashboard`; `npm run doctor` có dòng `second-brain - bật — http://127.0.0.1:1933`.
 
 - [ ] **Step 7: Commit**
 
@@ -4270,5 +4475,6 @@ git commit -m "release: v1.26.0 — dashboard giai đoạn 7A: Liên hệ, Lịc
 
 - **Kết nối Zalo** (khởi động lại `zalo-bridge` / tiến trình Windows): `zalo-directory.js`, `control-api.js`, `hermes-bridge.js`, `server.js`.
 - **Plugin Hermes** (chép vào `<hermes-agent>/plugins/…`, khởi động lại gateway): `zalo_tools/insight_ai.py`, `zalo_tools/__init__.py`, hai `plugin.yaml`.
-- **Dashboard** (khởi động lại `zalo-dashboard`): `dashboard/` theo các task trên.
+- **Dashboard** (khởi động lại `zalo-dashboard`): `dashboard/` theo các task trên. **Bộ cài/doctor**: `scripts/hermes-install-lib.js`, `scripts/install-hermes.js`.
+- Second brain: Lăng Tiêu không đặt gì (Windows luôn tắt). Uyển Nhi: chỉ bật khi anh muốn — thêm `ZALO_SECOND_BRAIN_URL=http://127.0.0.1:1933` vào `/root/.hermes/.env`, khởi động lại `zalo-dashboard`.
 - Thứ tự: cả ba cùng lúc. VPS: kiểm `command -v hermes` trong môi trường dịch vụ `zalo-dashboard` (`/usr/local/bin/hermes`), không có thì đặt `ZALO_HERMES_BIN`.

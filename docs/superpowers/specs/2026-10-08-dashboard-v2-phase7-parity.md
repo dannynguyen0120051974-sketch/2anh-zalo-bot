@@ -1,7 +1,7 @@
 # Dashboard v2 — §18 Giai đoạn 7: Đủ trang như dashboard mẫu
 
 **Ngày:** 2026-10-08
-**Trạng thái:** Bản viết chờ duyệt — người dùng yêu cầu "làm đầy đủ"; các lựa chọn thiết kế bên dưới chờ duyệt, mục §18.11 là việc cần người dùng chốt
+**Trạng thái:** Người dùng đã chốt các câu hỏi ở §18.11 (08/10, lần hai); bản viết chờ duyệt
 **Dự án:** 2anh-zalo-bot (từ v1.25.1 → **v1.26.0** (7A) → **v1.27.0** (7B))
 **Bổ sung cho:** `2026-10-07-zalo-dashboard-v2-design.md` (§1–§15), `2026-10-07-dashboard-v2-phase5-addendum.md` (§16), `2026-10-07-dashboard-v2-phase6-studio.md` (§17). Tệp này là §18.
 **Thay đổi so với §3 (phi mục tiêu):** §3 từng loại Agent, Insight nhóm, Second brain, Theo dõi agent, Kết nối MCP, Lịch hẹn. Giai đoạn 7 đưa tất cả vào — mỗi trang có giới hạn an toàn riêng ở dưới.
@@ -51,12 +51,12 @@ Ràng buộc giữ nguyên từ các giai đoạn trước: không thêm gói np
 ```
 TỔNG QUAN   Tổng quan
 HỘI THOẠI   Phiên chat · Liên hệ · Phân quyền Bot · Lịch hẹn
-DỮ LIỆU     Trí nhớ · Kho tri thức · Insight nhóm · Second brain(QT) · Kết nối MCP(QT, 7B)
+DỮ LIỆU     Trí nhớ · Kho tri thức · Insight nhóm · Second brain(QT, chỉ khi bật) · Kết nối MCP(QT, 7B)
 HỆ THỐNG    Tài khoản Zalo · Agent(QT) · Công cụ(QT) · Theo dõi agent(QT) · Nhật ký · Thương hiệu · Sức khoẻ máy chủ · Cấu hình(QT)
 QUẢN TRỊ    Người dùng · Chủ nhân bot · Cảnh báo Telegram   (cả nhóm chỉ Quản trị)
 ```
 
-- Mục có thể gắn `admin: true` riêng (không chỉ cả nhóm); nhóm không còn mục nào với vai trò đó thì ẩn. Mọi mục `admin` đều có route `admin: true` (test ghim).
+- Mục có thể gắn `admin: true` riêng (không chỉ cả nhóm) và `feature` (hiện chỉ khi `/api/features` bật — Second brain); nhóm không còn mục nào thì ẩn. Mọi mục `admin` đều có route `admin: true` (test ghim).
 - **Đường dẫn vị trí** "Nhóm / Trang" trên đầu nội dung (`<nav aria-label="Vị trí trang"><ol>`), Tổng quan không có.
 - **Dòng phụ** dưới tên thương hiệu: trường mới `subtitle` của `brand.json` (≤ 40 ký tự, mặc định "Không gian làm việc"), sửa ở trang Thương hiệu, có trong xem trước.
 - Điện thoại: giữ 4 mục chính (`/`, `/chats`, `/zalo`, `/permissions`); menu "Thêm" chia theo nhóm (có nhãn nhóm), cuộn được.
@@ -71,7 +71,7 @@ QUẢN TRỊ    Người dùng · Chủ nhân bot · Cảnh báo Telegram   (c�
 | Trí nhớ — Bộ nhớ của trợ lý (MEMORY/USER.md) | ✅ | ❌ | Là một phần lời nhắc hệ thống — cùng loại với Agent |
 | Kho tri thức (xem, tải lên, xoá tệp đã tải lên) | ✅ | ✅ | Tài liệu của chủ bot |
 | Insight nhóm (+ tóm tắt AI) | ✅ | ✅ | Chỉ đọc lịch sử; AI có trần lượt/ngày |
-| Second brain | ✅ | ❌ | Kho cá nhân trên máy chủ |
+| Second brain | ✅ (chỉ khi bật trên máy chủ Linux) | ❌ | Kho cá nhân trên máy chủ; Windows luôn tắt (§18.5.4) |
 | Agent, Công cụ, Theo dõi agent, Kết nối MCP, Cấu hình | ✅ | ❌ | Đổi được hành vi/quyền của bot (7B) |
 
 ## 18.4 7A — Hội thoại: Liên hệ, Lịch hẹn
@@ -132,18 +132,23 @@ Dashboard chỉ tới Zalo qua `/control/*` (Bearer `ZALO_BRIDGE_TOKEN`, `timing
   - Trang hỏi `GET /api/insight/summary/:id` 3 giây/lần; quá 3 phút không có kết quả → "Trợ lý chưa trả lời — có thể đang tắt hoặc chưa cập nhật" (plugin cũ = hành vi cũ: không có tóm tắt). Kết quả giữ 7 ngày. Chữ AI hiển thị bằng htm (textContent).
   - Chi phí: trần lượt/ngày × ≤ 30.000 ký tự vào × 1.200 token ra; token mỗi lần nằm trong kết quả; tổng vẫn hiện ở Sức khoẻ máy chủ (state.db).
 
-### 18.5.4 Second brain (`#/second-brain`, chỉ Quản trị) — quyết định
+### 18.5.4 Second brain (`#/second-brain`, chỉ Quản trị, chỉ máy chủ Linux/VPS) — quyết định
 
-**Chọn: cửa sổ vào OpenViking trên cùng máy** — xem, tìm theo nghĩa, đọc, và **thêm ghi chú mới**. Lý do:
-1. Đây là kho tri thức cá nhân thật duy nhất có trên cả hai máy (local: bộ nhớ dài hạn của anh, có sẵn tìm theo nghĩa; VPS: dịch vụ đã chạy, sẵn sàng khi nối Hermes). "Second brain" đúng nghĩa là kho đó.
-2. Bộ nhớ có sẵn của Hermes chỉ ~3.500 ký tự và đã nằm ở Trí nhớ; Kho tri thức là tệp — không cần trang thứ hai.
-3. Không cần dịch vụ mới, không cần khoá mới; API HTTP cục bộ có sẵn.
+**Chọn: cửa sổ vào OpenViking trên cùng máy** — xem, tìm theo nghĩa, đọc, và **thêm ghi chú mới** — làm thành **tính năng của sản phẩm, bật bằng cấu hình**, để sau này cài được cho khách. Lý do chọn OpenViking: là kho tri thức cá nhân thật duy nhất đang có (VPS có `hermes-openviking.service`), có sẵn tìm theo nghĩa và API HTTP cục bộ; bộ nhớ có sẵn của Hermes chỉ ~3.500 ký tự (đã ở Trí nhớ), Kho tri thức là tệp.
 
-Giới hạn an toàn:
-- Địa chỉ `OPENVIKING_ENDPOINT` (.env Hermes, mặc định `http://127.0.0.1:1933`) **chỉ loopback**, không user/pass trong URL, `redirect: 'error'`, hạn 15 s — không thành cầu SSRF. Khoá `OPENVIKING_API_KEY` (nếu có) chỉ dùng ở máy chủ, không trả ra trình duyệt.
+**Bật/tắt (người dùng chốt 08/10):**
+- Chỉ bật khi `.env` của Hermes có **`ZALO_SECOND_BRAIN_URL`** = địa chỉ OpenViking **loopback** (`http://127.0.0.1:1933`). Không đặt → tắt; không phải loopback/có user:pass → tắt (doctor báo hỏng). Tài khoản/người dùng: `OPENVIKING_ACCOUNT`, `OPENVIKING_USER` (mặc định `default`), khoá `OPENVIKING_API_KEY` nếu có — chỉ dùng ở máy chủ.
+- **Máy Windows: luôn tắt, kể cả khi đã đặt biến** — ghi chú "Second brain chỉ bật trên máy chủ VPS". OpenViking ở máy nhà (Lăng Tiêu) là bộ nhớ Claude Code riêng của chủ máy; dashboard nhìn ra Internet không bao giờ được mở nó.
+- Một hàm quyết định duy nhất `secondBrainStatus({url, platform})` (`dashboard/lib/second-brain.js`) dùng chung cho dashboard, bộ cài và doctor.
+- **Thanh bên**: mục có `feature: 'secondBrain'`; giao diện hỏi `GET /api/features` (`requireAuth`, chỉ Quản trị nhận `secondBrain: true` khi đang bật) — tắt thì **ẩn mục**; mở thẳng `#/second-brain` thì thấy câu ghi chú, mọi route `/api/admin/second-brain/*` (trừ `status`) trả 404 kèm câu đó, không gọi OpenViking.
+- **Bộ cài** (`scripts/hermes-install-lib.js` → `secondBrainHint`): trên Linux, chưa đặt biến mà `systemctl is-active hermes-openviking.service` (hoặc `openviking.service`) chạy → **in** cách bật (dòng cần thêm vào `.env`); **không bao giờ tự đặt biến**.
+- **Doctor**: dòng `second-brain` — "luôn tắt trên Windows", "tắt — muốn bật trên VPS: thêm ZALO_SECOND_BRAIN_URL=…", "bật — http://127.0.0.1:1933", hoặc FAIL khi địa chỉ không phải loopback. Chỉ đọc cấu hình, không gọi mạng.
+
+**Giới hạn an toàn khi bật:**
+- Địa chỉ chỉ loopback, `redirect: 'error'`, hạn 15 s — không thành cầu SSRF.
 - Chỉ đọc trong 3 gốc: `viking://resources`, `viking://user/<user>/memories`, `viking://user/<user>/peers` (không `privacy/`, sessions, agent…); URI có `..` hoặc ký tự điều khiển → 400 trước khi gọi.
 - Chỉ **ghi mới** (`mode: "create"`) dưới `viking://resources/so-tay-dashboard/<ngày VN>-<chữ không dấu>-<6 hex>.md`; không sửa, không xoá gì có sẵn. Ghi chú ≤ 8.000 ký tự. Activity `second_brain_note` (URI).
-- Lưu ý: Hermes hiện **không** đọc OpenViking (không có `memory.provider`) → ghi chú chưa đến tay bot. Nối Hermes với OpenViking là việc riêng, cần người dùng chốt (§18.11).
+- Hermes hiện **không** đọc OpenViking (không có `memory.provider`) → ghi chú chưa đến tay bot (xem §18.13).
 
 ## 18.6 7B — Hệ thống (mọi trang chỉ Quản trị)
 
@@ -222,7 +227,7 @@ Danh sách **cố định** trong mã (`dashboard/lib/settings.js`); không kho�
 1. Vai trò kiểm ở máy chủ cho mọi route mới (bảng §18.3.2); mọi trang 7B `requireRole('admin')`.
 2. Không route nào trả khoá: `model.api_key`, `OPENVIKING_API_KEY`, `mcp_servers.*.headers/env/args`, `bridge_token`, token Telegram. Test ghim chữ khoá không xuất hiện trong JSON.
 3. Không chạy lệnh tuỳ ý: lệnh duy nhất mới là `hermes cron <pause|resume|remove> <id 6–32 hex>` qua `execFile` (không shell), id phải là việc Zalo đang có.
-4. Không SSRF: OpenViking chỉ loopback; dò MCP chỉ TCP loopback; cổng AI chỉ `model.base_url` của chính config.
+4. Không SSRF: OpenViking chỉ loopback và chỉ trên máy Linux có `ZALO_SECOND_BRAIN_URL`; dò MCP chỉ TCP loopback; cổng AI chỉ `model.base_url` của chính config.
 5. Đường dẫn: kho tài liệu resolve + kiểm tương đối + không symlink; URI OpenViking theo gốc cho phép; id bản SOUL, id yêu cầu Insight, id phiên theo regex.
 6. Chữ do AI/thành viên viết (tóm tắt, tên, ghi chú) chỉ hiển thị bằng htm — không HTML.
 7. Ghi tệp: nguyên tử, `.bak`, giữ quyền/chủ sở hữu, tệp tạm tên riêng khi tiến trình khác cũng ghi tệp đó; 409 khi tệp đổi giữa chừng.
@@ -233,8 +238,8 @@ Danh sách **cố định** trong mã (`dashboard/lib/settings.js`); không kho�
 **7A (v1.26.0)** — cập nhật cả ba phần cùng lúc:
 - *Kết nối Zalo* (khởi động lại `zalo-bridge` / tiến trình Windows): `zalo-directory.js` (mới), `control-api.js`, `hermes-bridge.js`, `server.js`.
 - *Plugin Hermes* (chép vào `<hermes-agent>/plugins/…`, khởi động lại gateway): `zalo_tools/insight_ai.py` (mới), `zalo_tools/__init__.py`, hai `plugin.yaml`.
-- *Dashboard* (khởi động lại `zalo-dashboard`): lib/routes/views mới và sửa theo kế hoạch 7A.
-- VPS: không cần đổi `.env`; tuỳ chọn `ZALO_INSIGHT_DAILY`. Kiểm `hermes` có trên PATH của dịch vụ `zalo-dashboard` (`/usr/local/bin/hermes`) hoặc đặt `ZALO_HERMES_BIN`.
+- *Dashboard* (khởi động lại `zalo-dashboard`): lib/routes/views mới và sửa theo kế hoạch 7A. *Bộ cài/doctor*: `scripts/hermes-install-lib.js`, `scripts/install-hermes.js`.
+- VPS: không cần đổi `.env`; tuỳ chọn `ZALO_INSIGHT_DAILY`; muốn bật Second brain thì thêm `ZALO_SECOND_BRAIN_URL=http://127.0.0.1:1933` (bộ cài in gợi ý khi thấy `hermes-openviking.service`). Lăng Tiêu: không đặt gì (Windows luôn tắt). Kiểm `hermes` có trên PATH của dịch vụ `zalo-dashboard` (`/usr/local/bin/hermes`) hoặc đặt `ZALO_HERMES_BIN`.
 
 **7B (v1.27.0)**:
 - *Plugin Hermes* (khởi động lại gateway — cũng để ghi `tools-manifest.json`): `zalo_tools/group_permissions.py`, `zalo_tools/tools.py`, hai `plugin.yaml`.
@@ -246,13 +251,13 @@ Danh sách **cố định** trong mã (`dashboard/lib/settings.js`); không kho�
 
 Node `node --test` (mọi lib/route mới có test; `public.test.js` cho hàm thuần của giao diện + quét CSP), Python `unittest` qua `scripts/run-python-tests.js` (`test_zalo_insight.py` mới; `ToolsOffTest` trong `test_zalo_permissions.py`). Kiểm tay trên Lăng Tiêu (local) và Uyển Nhi (VPS) theo danh sách trong README.vi.md.
 
-## 18.11 Còn để ngỏ — cần người dùng chốt
+## 18.11 Người dùng đã chốt (08/10, lần hai)
 
-1. **Nối Hermes với OpenViking** (`memory.provider: openviking`) để bot dùng được Second brain — đổi hành vi bộ nhớ của bot, ngoài phạm vi dashboard. Local: OpenViking đang là bộ nhớ của Claude Code — có muốn bot đọc chung không?
-2. **Kho tri thức theo nhóm** — cần sửa plugin (phạm vi theo nhóm + đệm theo nhóm). Có cần không?
-3. **Second brain trên máy khách** (bản cài cho khách): trang chỉ hiện khi OpenViking chạy trên máy đó; mặc định ẩn với Chủ bot. Đồng ý không mở cho Chủ bot?
-4. **Trần tóm tắt AI** mặc định 10 lần/ngày — đổi được bằng `ZALO_INSIGHT_DAILY`.
-5. **Mức suy nghĩ có nóng không**: kế hoạch đánh dấu "cần khởi động lại" cho chắc; nếu kiểm thật thấy gateway đọc nóng thì bỏ cờ.
+1. **Second brain**: chỉ Quản trị, chỉ Linux/VPS, bật bằng `ZALO_SECOND_BRAIN_URL`, Windows luôn tắt, bộ cài chỉ gợi ý, doctor kiểm, thanh bên ẩn khi tắt (§18.5.4).
+2. **Nối Hermes ↔ OpenViking**: chưa làm — ghi thành giai đoạn sau (§18.13).
+3. **Kho tri thức theo nhóm**: không làm (giữ phạm vi chung `ZALO_KB_PUBLIC_DIRS`).
+4. **Tóm tắt AI**: 10 lần/ngày (`ZALO_INSIGHT_DAILY`).
+5. **Mức suy nghĩ**: giữ cờ "cần khởi động lại".
 
 ## 18.12 Rủi ro
 
@@ -268,3 +273,7 @@ Node `node --test` (mọi lib/route mới có test; `public.test.js` cho hàm th
 | `tools-manifest.json` thiếu (plugin cũ) | Trang báo cập nhật plugin; không lỗi |
 | Lời mời kết bạn: Zalo đổi định dạng `getFriendRecommendations` | Chuẩn hoá trong `zalo-directory.js` (một chỗ), bỏ mục lạ |
 | Mở MCP cho thành viên qua Cấu hình | Hỏi lại trước khi lưu, Nhật ký ghi cũ → mới |
+
+## 18.13 Giai đoạn sau (chưa làm)
+
+**Bộ nhớ của bot = SQLite + OpenViking.** Dùng `zalo.sqlite` cho lịch sử chính xác (ai nói gì, lúc nào) và OpenViking cho trí nhớ ngữ nghĩa dài hạn, gộp lại thành `memory.provider` của Hermes. Thử trước trên VPS (Uyển Nhi, `hermes-openviking.service` đã chạy); không đụng máy nhà. Cần spec riêng: cái gì được ghi vào OpenViking (chỉ tóm tắt, không tin thô của người ngoài?), tách theo nhóm/người, quyền đọc của lượt người ngoài, xoá theo yêu cầu, chi phí embedding.

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node ≥ 22 ESM, Express 5.2.1, `node:test`, `node:sqlite`, `node:net`, `yaml` 2 (đã có), Preact 10 + htm 3, Python 3.11 `unittest`. Không thêm gói npm nào.
 
-**Spec:** `docs/superpowers/specs/2026-10-08-dashboard-v2-phase7-parity.md` (§18.6–§18.12). Kế hoạch này giả định kế hoạch `2026-10-08-dashboard-v2-phase7a.md` đã xong (thanh bên `GROUPS` có `admin` theo mục, `READ_ONLY_KEYS`, `writeFileAtomic({tmpName})`, lớp `.row-list`, biểu tượng `tool`/`plug`/`settings`).
+**Spec:** `docs/superpowers/specs/2026-10-08-dashboard-v2-phase7-parity.md` (§18.6–§18.12). Kế hoạch này giả định kế hoạch `2026-10-08-dashboard-v2-phase7a.md` đã xong (thanh bên `GROUPS` có `admin`/`feature` theo mục, `visibleGroups(role, features)`, `READ_ONLY_KEYS`, `writeFileAtomic({tmpName})`, lớp `.row-list`, biểu tượng `tool`/`plug`/`settings`).
 
 ## Global Constraints
 
@@ -2642,7 +2642,7 @@ nhóm "Dữ liệu" thêm cuối `{ path: '/mcp', text: 'Kết nối MCP', icon:
 - [ ] **Step 6: Chạy toàn bộ test**
 
 Run: `HERMES_HOME=E:/Hermes npm test`
-Expected: JS PASS (≈ 730), Python xanh (≈ 428).
+Expected: JS PASS (≈ 734), Python xanh (≈ 428).
 
 - [ ] **Step 7: Kiểm tay (Lăng Tiêu, rồi Uyển Nhi sau triển khai)**
   1. Chủ bot: không thấy mục 7B nào; gõ `#/agent` → "Không có quyền"; gọi `/api/admin/settings` → 403.
