@@ -2,6 +2,23 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [1.28.0] — 2026-10-09
+
+### Thêm
+- Trí nhớ dài hạn OpenViking (tắt mặc định, chỉ Linux): provider `zalo_memory` — mỗi nhóm, mỗi người một kho riêng (`viking://user/zalo-g-…` / `zalo-u-…`, tài khoản `zalo`); recall mỗi lượt chỉ trong đúng kho đó; trợ lý tự rút trí nhớ theo chu kỳ (mặc định 120 phút, chỉnh ở dashboard).
+- Công cụ chỉ chủ nhân `zalo_memory_remember` / `zalo_memory_forget`: "nhớ giúp…" / "quên chuyện… đi" ghi/xoá trong trí nhớ của chính cuộc trò chuyện đang nói.
+- Công cụ `zalo_thread_history`: thành viên hỏi "hôm trước ai nói gì / ai gửi file X" thì bot tra lịch sử SQLite của chính nhóm/DM đó (≤30 ngày, ≤40 tin, 20 lần/giờ). Nút **Tra lịch sử trò chuyện** trong Phân quyền (mặc định bật).
+- Dashboard › Trí nhớ › **Kho tri thức tự học** (Quản trị + Chủ bot): xem, tìm theo ý nghĩa, sửa, xoá từng mục, "Quên" cả một nhóm/người; Quản trị chỉnh chu kỳ rút và "Rút trí nhớ ngay"; mọi thao tác ghi Nhật ký.
+- Bộ cài: chép plugin `zalo_memory` (không tự bật), `doctor` có dòng `long-term-memory`, gợi ý cách bật khi thấy OpenViking.
+
+### An toàn
+- Trí nhớ tin nhắn riêng của chủ nhân bot chỉ Quản trị thấy — chặn ở máy chủ dashboard, không chỉ ẩn ở giao diện.
+- `zalo_memory` không chạy trên Windows, không chạy khi có `OPENVIKING_API_KEY`, tự tắt nếu plugin OpenViking của Hermes đổi cấu trúc; bot không có công cụ `viking_*`; không ghi kết quả công cụ; ngoài Zalo không gửi yêu cầu nào.
+- Công cụ nhớ/quên lấy cuộc trò chuyện từ lượt đang chạy, không từ tham số; từ chối trong việc hẹn giờ; người không phải chủ nhân không gọi được.
+- Lệnh sidecar `history_search` chỉ đọc kho, ép đúng hội thoại, bỏ tin chứa mã đăng nhập dashboard và tin thu hồi.
+- Second brain tìm có `target_uri` (kho trí nhớ mới không chen vào kết quả).
+- Lời từ chối công cụ cho thành viên gợi ý `zalo_thread_history` thay vì công cụ chỉ chủ nhân.
+
 ## [1.27.0] — 2026-10-09
 
 ### Thêm (chỉ Quản trị)

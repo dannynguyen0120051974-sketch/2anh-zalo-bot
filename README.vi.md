@@ -471,7 +471,7 @@ Mục **Phân quyền Bot** chọn bot được làm gì trong từng nhóm. Bê
 
 - **Hoạt động** — tắt thì bot không trả lời thành viên trong nhóm đó (vẫn đọc tin để hiểu ngữ cảnh khi chủ nhân hỏi). Việc hẹn giờ do thành viên tạo không còn gửi tin chữ vào nhóm đang tắt; muốn dừng hẳn, nhờ chủ nhân xoá việc đó. Việc hẹn giờ chủ nhân tạo vẫn gửi bình thường.
 - **Chỉ trả lời khi được tag** — tắt thì bot trả lời mọi tin trong nhóm. Khi chưa lưu lần nào, mục Mặc định hiện đúng cờ `ZALO_GROUP_REPLY_ONLY_TAGGED` bot đang dùng (đọc từ `.env` và `config.yaml` của Hermes); lần Lưu đầu tiên ghi giá trị đó vào Mặc định.
-- Chín tính năng: Tra cứu web, Gửi và tạo tệp, Tin nhắn thoại, Nhắc hẹn, Hẹn giờ cho nhóm, Kho tài liệu, Sổ người quen, Tra cứu học thuật, Video. Gửi nhãn dán, gửi liên kết và xem thành viên nhóm luôn bật.
+- Mười tính năng: Tra cứu web, Gửi và tạo tệp, Tin nhắn thoại, Nhắc hẹn, Hẹn giờ cho nhóm, Kho tài liệu, Sổ người quen, Tra cứu học thuật, Video, **Tra lịch sử trò chuyện** (mặc định bật: thành viên chỉ tra được chính nhóm/DM đang nói, tối đa 30 ngày, 40 tin, 20 lần/giờ). Gửi nhãn dán, gửi liên kết và xem thành viên nhóm luôn bật.
 
 Bấm **Lưu** là bot áp dụng ngay, không cần khởi động lại. Thành viên nhờ việc thuộc tính năng đang tắt thì bot trả lời rằng nhóm chưa bật tính năng đó. **Chủ nhân bot luôn dùng được mọi thứ**, kể cả trong nhóm đang tắt. Tắt "Hẹn giờ cho nhóm" chỉ chặn tạo việc mới — việc đã tạo vẫn chạy và vẫn xem, xoá được. Tin nhắn riêng không theo bảng này.
 
@@ -602,6 +602,17 @@ Biến tuỳ chọn trong `.env` của Hermes:
 - `ZALO_SECOND_BRAIN_URL` — **chỉ Linux/VPS**. Đặt `http://127.0.0.1:1933` (OpenViking trên cùng máy) thì Quản trị thấy mục Second brain. Chỉ nhận địa chỉ loopback; máy Windows luôn tắt dù có đặt (OpenViking ở máy nhà là bộ nhớ riêng của chủ máy). Tuỳ chọn `OPENVIKING_ACCOUNT`, `OPENVIKING_USER` (mặc định `default`), `OPENVIKING_API_KEY` — chỉ dùng ở máy chủ, không bao giờ hiện lên giao diện. Bộ cài chỉ gợi ý cách bật khi thấy OpenViking, không tự đặt; `npm run doctor` có dòng `second-brain`.
 
 **Cập nhật lên 1.26.0**: kết nối Zalo (`zalo-directory.js`, `control-api.js`, `hermes-bridge.js`, `server.js`), plugin Hermes (`zalo_tools/insight_ai.py`, `zalo_tools/__init__.py`, hai `plugin.yaml`) và dashboard (`dashboard/`, `scripts/hermes-install-lib.js`, `scripts/install-hermes.js`) cập nhật **cùng lúc**, rồi khởi động lại `zalo-bridge`, gateway và `zalo-dashboard`.
+
+### Trí nhớ dài hạn (tự học, tắt mặc định — chỉ máy chủ Linux)
+
+Bot tự rút điều đáng nhớ từ các cuộc trò chuyện (cách xưng hô, sở thích, việc đang dở) và tự nhắc lại ở lần sau — **tách riêng từng nhóm và từng người**: nhóm này không bao giờ thấy trí nhớ của nhóm khác hay tin nhắn riêng của ai. Hỏi chính xác chuyện cũ ("hôm trước ai gửi file gì") thì bot tra lịch sử tin nhắn thật bằng `zalo_thread_history`, không dựa vào trí nhớ. Chủ nhân dặn "nhớ giúp…" / "quên chuyện… đi" thì bot ghi/xoá đúng trong trí nhớ của cuộc trò chuyện đang nói.
+
+Cần OpenViking chạy trên cùng máy (`127.0.0.1:1933`, `auth_mode: dev`, không khoá API). Bật:
+
+1. `config.yaml` của Hermes: `memory.provider: zalo_memory` (giữ `OPENVIKING_ENDPOINT=http://127.0.0.1:1933` trong `.env`).
+2. Khởi động lại gateway. `npm run doctor` hiện `long-term-memory - bật — zalo_memory…`.
+
+Dashboard › Trí nhớ › **Kho tri thức tự học**: Quản trị và Chủ bot xem, tìm, sửa, xoá (trí nhớ tin nhắn riêng của chủ nhân bot chỉ Quản trị thấy). Quản trị chỉnh chu kỳ rút trí nhớ (30–1440 phút, mặc định 120) và bấm "Rút trí nhớ ngay" (3 lần/kho/ngày). Tắt: đặt `memory.provider: ''` rồi khởi động lại gateway (dữ liệu giữ nguyên). Không bao giờ bật trên Windows.
 
 ### Kiểm tay sau khi cài (Giai đoạn 7A)
 
