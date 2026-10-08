@@ -972,6 +972,88 @@ async def zalo_group_history(args: Dict[str, Any], **_kw) -> str:
     return _ok(ack.get("result"))
 
 
+THREAD_HISTORY_MAX_DAYS = 30
+THREAD_HISTORY_MAX_LIMIT = 40
+THREAD_HISTORY_CHAR_BUDGET = 6000
+THREAD_HISTORY_PER_HOUR = 20
+_THREAD_HISTORY_QUOTA: Dict[str, List[float]] = {}
+_URL_LINE = re.compile(r"^\s*https?://\S+\s*$")
+
+
+def _bounded_int(value: Any, default: int, low: int, high: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(low, min(high, number))
+
+
+def _thread_history_line(msg: Dict[str, Any]) -> str:
+    """Một tin thành một dòng cho thành viên: bỏ dòng chỉ là đường dẫn (ảnh/tệp), gắn nhãn loại tin, không kèm UID."""
+    try:
+        when = datetime.fromtimestamp(int(msg.get("ts") or 0) / 1000, tz=_VN_TZ).strftime("%d/%m %H:%M")
+    except (TypeError, ValueError, OSError):
+        when = "--/-- --:--"
+    who = "Bot" if msg.get("isSelf") else (str(msg.get("senderName") or "").strip() or "Ai đó")
+    kept = [part.strip() for part in str(msg.get("text") or "").splitlines()
+            if part.strip() and not _URL_LINE.match(part)]
+    text = " / ".join(kept)[:300]
+    kind = str(msg.get("msgType") or "")
+    label = {"share.file": "[tệp] ", "chat.photo": "[ảnh] ", "chat.video.msg": "[video] ",
+             "chat.voice": "[ghi âm] ", "chat.sticker": "[nhãn dán] "}.get(kind, "")
+    return f"[{when}] {who}: {label}{text}".rstrip() if (label or text) else f"[{when}] {who}: [{kind or 'tin không có chữ'}]"
+
+
+async def zalo_thread_history(args: Dict[str, Any], **_kw) -> str:
+    """Tra lịch sử của ĐÚNG cuộc trò chuyện đang diễn ra (spec §19.5).
+
+    Không nhận `thread_id` từ mô hình: hội thoại lấy từ turn, sidecar còn ép lại lần nữa
+    (zalo-policy.js sameThread). Chỉ đọc kho SQLite, không gọi Zalo, tối đa 40 tin/6000 ký tự.
+    """
+    turn = _turn()
+    thread_id = str(turn.get("thread_id") or "")
+    if not thread_id:
+        return _err("không xác định được cuộc trò chuyện hiện tại")
+    adapter = _ACTIVE_ADAPTER
+    if adapter is None:
+        return _err("Zalo chưa kết nối")
+    if not _acting_as_owner(turn):
+        problem = _take_quota(_THREAD_HISTORY_QUOTA, str(turn.get("sender_uid") or ""), THREAD_HISTORY_PER_HOUR, "tra lịch sử")
+        if problem:
+            return problem
+    days = _bounded_int(args.get("days"), 7, 1, THREAD_HISTORY_MAX_DAYS)
+    limit = _bounded_int(args.get("limit"), 20, 1, THREAD_HISTORY_MAX_LIMIT)
+    query = str(args.get("query") or "").strip()[:100]
+    sender = str(args.get("sender") or "").strip()[:60]
+    since_ms = int(time.time() * 1000) - days * 86_400_000
+    ack = await adapter.search_history(
+        thread_id, query=query, sender=sender, since_ms=since_ms, limit=limit,
+        metadata={"chat_type": "group" if turn.get("is_group") else "dm"},
+    )
+    if not ack or not ack.get("ok"):
+        return _err((ack or {}).get("error", "không đọc được lịch sử Zalo"))
+    lines: List[str] = []
+    size = 0
+    # Mới nhất được giữ khi chạm ngân sách chữ: đi ngược từ cuối rồi đảo lại.
+    for msg in reversed((ack.get("result") or {}).get("messages") or []):
+        line = _thread_history_line(msg)
+        if size + len(line) + 1 > THREAD_HISTORY_CHAR_BUDGET:
+            break
+        lines.append(line)
+        size += len(line) + 1
+    lines.reverse()
+    return _ok({
+        "days": days,
+        "query": query,
+        "sender": sender,
+        "count": len(lines),
+        "text": "\n".join(lines) if lines else "",
+        "huong_dan": ("Trả lời đúng theo các dòng trên, nêu ngày giờ. Không có dòng nào khớp thì nói là không thấy "
+                      "trong lịch sử, đừng đoán." if lines else
+                      "Không thấy tin nào khớp trong khoảng này. Nói rõ là không thấy; có thể thử từ khoá khác hoặc tăng `days`."),
+    })
+
+
 async def zalo_list_groups(args: Dict[str, Any], **_kw) -> str:
     """Liệt kê nhóm kèm TÊN, không phải chỉ dãy ID.
 
@@ -3004,6 +3086,21 @@ TOOLS = [
         [],
     ), zalo_friend_group, TOOLSET_OWNER),
 
+    ("zalo_thread_history", "🔎", _schema(
+        "zalo_thread_history",
+        "Tra lịch sử tin nhắn THẬT của chính cuộc trò chuyện này (nhóm này, hoặc tin nhắn riêng này) từ kho SQLite. "
+        "Dùng khi được hỏi chính xác về chuyện đã qua: 'hôm trước ai nói gì', 'ai đã gửi file X', 'bot trả lời gì hôm thứ Hai'. "
+        "Tìm theo từ khoá `query` (không phân biệt dấu, khớp cả tên tệp), lọc theo tên người gửi `sender`, trong `days` ngày gần đây. "
+        "Trả từng dòng '[ngày giờ] Tên: nội dung', cũ trước mới sau, tối đa 40 tin. Không đọc được nhóm hay người khác.",
+        {
+            "query": {"type": "string", "description": "Từ khoá cần tìm, ví dụ 'kế hoạch' hoặc 'bao cao.docx'. Bỏ trống = các tin gần nhất."},
+            "sender": {"type": "string", "description": "Một phần tên người gửi, ví dụ 'Lan'."},
+            "days": {"type": "integer", "description": "Tìm trong bao nhiêu ngày gần đây (1–30, mặc định 7)."},
+            "limit": {"type": "integer", "description": "Số tin tối đa (1–40, mặc định 20)."},
+        },
+        [],
+    ), zalo_thread_history, TOOLSET_PUBLIC),
+
     ("zalo_group_members", "🧑‍🤝‍🧑", _schema(
         "zalo_group_members",
         "Xem danh sách thành viên một nhóm, kèm tên hiển thị.",
@@ -3880,7 +3977,7 @@ def guard_member_tool_call(tool_name: str = "", args: Any = None, **_kw) -> Opti
     hints = ", ".join(text for feature, text in (
         ("kb", "cần tra tài liệu thì dùng zalo_kb_list rồi zalo_kb_read"),
         ("files", "cần gửi tệp thì zalo_send_file"),
-        (None, "cần xem lại tin cũ thì zalo_read_history"),
+        ("history", "cần xem lại tin cũ thì zalo_thread_history"),
     ) if feature not in off)
     return {
         "action": "block",

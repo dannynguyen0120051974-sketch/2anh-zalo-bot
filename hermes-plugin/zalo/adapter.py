@@ -2086,6 +2086,28 @@ class ZaloAdapter(BasePlatformAdapter):
             command["cursor"] = str(cursor)
         return await self._command(command, expect_ack=True)
 
+    async def search_history(
+        self,
+        chat_id: str,
+        *,
+        query: str = "",
+        sender: str = "",
+        since_ms: int = 0,
+        limit: int = 20,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Tìm tin trong một hội thoại, đọc từ kho SQLite của sidecar (spec §19.5)."""
+        metadata = metadata or {}
+        return await self._command({
+            "type": "history_search",
+            "threadId": str(chat_id),
+            "threadType": self._guess_thread_type(chat_id, metadata),
+            "query": str(query or "")[:100],
+            "sender": str(sender or "")[:60],
+            "sinceMs": int(since_ms),
+            "limit": min(max(int(limit), 1), 40),
+        }, expect_ack=True)
+
     async def welcome_config(
         self, action: str, group_id: Optional[str] = None, patch: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
