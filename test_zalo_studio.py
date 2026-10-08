@@ -293,3 +293,114 @@ class SandboxTest(unittest.IsolatedAsyncioTestCase):
             slow = await sandbox.run([sys.executable, "-c", "import time; time.sleep(30)"], self.dir, timeout=-29)
             self.assertTrue(slow.timed_out)
             self.assertIsNone(slow.code)
+
+
+from plugins.zalo_tools.studio import images  # noqa: E402
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+JPG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
+PUBLIC = lambda host, port: ["93.184.216.34"]  # noqa: E731
+
+
+def mock_client(handler):
+    import httpx
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=False)
+
+
+class ImagesTest(unittest.IsolatedAsyncioTestCase):
+    def test_magic_bytes_and_public_addresses(self):
+        self.assertEqual(images.sniff(PNG), "png")
+        self.assertEqual(images.sniff(JPG), "jpg")
+        self.assertIsNone(images.sniff(b"<svg onload=alert(1)>"))
+        self.assertIsNone(images.sniff(b"GIF89a"))
+        for ip in ("127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.169.254", "100.64.0.1", "0.0.0.0",
+                   "::1", "fe80::1", "fc00::1", "::ffff:127.0.0.1", "224.0.0.1", "lạ"):
+            self.assertFalse(images.is_public(ip), ip)
+        self.assertTrue(images.is_public("93.184.216.34"))
+
+    def test_check_url_https_only_and_every_resolved_address_must_be_public(self):
+        self.assertEqual(images.check_url("https://upload.wikimedia.org/a.png?x=1", PUBLIC),
+                         ("upload.wikimedia.org", "93.184.216.34", 443, "/a.png?x=1"))
+        for url, resolver in (("http://a.vn/x.png", PUBLIC), ("https://u:p@a.vn/x", PUBLIC), ("https://localhost/x", PUBLIC),
+                              ("https://máy.local/x", PUBLIC), ("https://10.0.0.5/x", PUBLIC),
+                              ("https://rebind.vn/x", lambda h, p: ["93.184.216.34", "127.0.0.1"]),
+                              ("https://nội-bộ.vn/x", lambda h, p: ["192.168.1.10"]), ("file:///E:/Hermes/.env", PUBLIC)):
+            with self.assertRaises(images.ImageError, msg=url):
+                images.check_url(url, resolver)
+
+    async def test_fetch_pins_the_checked_ip_and_rechecks_every_redirect(self):
+        seen = []
+
+        def handler(request):
+            seen.append((str(request.url), request.headers["host"], request.extensions.get("sni_hostname")))
+            if request.headers["host"] == "a.vn":
+                return __import__("httpx").Response(302, headers={"location": "https://b.vn/real.png"})
+            return __import__("httpx").Response(200, headers={"content-type": "image/png"}, content=PNG)
+
+        async with mock_client(handler) as client:
+            data, kind = await images.fetch("https://a.vn/x.png", max_bytes=1000, accept=("image/",), client=client, resolver=PUBLIC)
+        self.assertEqual((data, kind), (PNG, "image/png"))
+        self.assertEqual(seen[0], ("https://93.184.216.34/x.png", "a.vn", "a.vn"))
+        self.assertEqual(seen[1][1:], ("b.vn", "b.vn"))
+
+        def to_private(request):
+            return __import__("httpx").Response(302, headers={"location": "https://169.254.169.254/latest/meta-data"})
+
+        async with mock_client(to_private) as client:
+            with self.assertRaises(images.ImageError):
+                await images.fetch("https://a.vn/x.png", max_bytes=1000, accept=("image/",), client=client, resolver=PUBLIC)
+
+    async def test_fetch_caps_size_type_and_redirect_count(self):
+        import httpx
+        for handler in (lambda r: httpx.Response(200, headers={"content-type": "image/png"}, content=PNG * 100),
+                        lambda r: httpx.Response(200, headers={"content-type": "text/html"}, content=b"<html>"),
+                        lambda r: httpx.Response(302, headers={"location": "https://a.vn/again"}),
+                        lambda r: httpx.Response(500)):
+            async with mock_client(handler) as client:
+                with self.assertRaises(images.ImageError):
+                    await images.fetch("https://a.vn/x", max_bytes=1000, accept=("image/",), client=client, resolver=PUBLIC)
+
+    async def test_generate_uses_the_owner_endpoint_and_accepts_only_png_or_jpeg(self):
+        import base64
+        import httpx
+        calls = []
+
+        def handler(request):
+            calls.append((str(request.url), request.headers.get("authorization"), json.loads(request.content)))
+            return httpx.Response(200, json={"data": [{"b64_json": base64.b64encode(PNG).decode()}]})
+
+        cfg = images.ImageConfig(url="http://127.0.0.1:20128/v1", key="khoa-cua-chu", model="ag/gemini-3.1-flash-image")
+        async with mock_client(handler) as client:
+            picture = await images.generate("  tế bào\n  nhân thực  ", "1536x1024", config=cfg, client=client)
+        self.assertEqual((picture.ext, picture.data), ("png", PNG))
+        self.assertEqual(calls[0][0], "http://127.0.0.1:20128/v1/images/generations")
+        self.assertEqual(calls[0][1], "Bearer khoa-cua-chu")
+        self.assertEqual(calls[0][2], {"model": "ag/gemini-3.1-flash-image", "prompt": "tế bào nhân thực", "size": "1536x1024", "n": 1})
+        for body in ({"data": [{"b64_json": base64.b64encode(b"<svg/>").decode()}]}, {"data": []}, {"lỗi": 1}):
+            async with mock_client(lambda r, b=body: httpx.Response(200, json=b)) as client:
+                with self.assertRaises(images.ImageError, msg=body):
+                    await images.generate("x", "1024x1024", config=cfg, client=client)
+
+    async def test_search_web_takes_an_openverse_result_with_credit(self):
+        import httpx
+
+        def handler(request):
+            if request.headers["host"] == images.OPENVERSE_HOST:
+                self.assertIn("q=te+bao", str(request.url))
+                return httpx.Response(200, headers={"content-type": "application/json"}, json={"results": [
+                    {"url": "http://khong-https.vn/a.jpg"},
+                    {"url": "https://upload.wikimedia.org/a.jpg", "creator": "BruceBlaus", "license": "by", "license_version": "4.0",
+                     "source": "wikimedia", "foreign_landing_url": "https://commons.wikimedia.org/x"}]})
+            return httpx.Response(200, headers={"content-type": "image/jpeg"}, content=JPG)
+
+        async with mock_client(handler) as client:
+            picture = await images.search_web("te bao", client=client, resolver=PUBLIC)
+        self.assertEqual((picture.ext, picture.author, picture.license, picture.provider), ("jpg", "BruceBlaus", "CC BY 4.0", "Openverse/wikimedia"))
+
+    def test_save_uses_plugin_names_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = images.save(images.Picture(PNG, "png"), Path(tmp), "a1")
+            self.assertEqual(path.name, "a1.png")
+            for bad in ("../x", "a/b", "a.png", ""):
+                with self.assertRaises(images.ImageError, msg=bad):
+                    images.save(images.Picture(PNG, "png"), Path(tmp), bad)
