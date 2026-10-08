@@ -33,6 +33,7 @@ import { createSchedules, hermesBin } from './lib/schedules.js';
 import { createKbStore } from './lib/kb-store.js';
 import { createInsightAi } from './lib/insight-ai.js';
 import { createAgentConfig, createSoul } from './lib/agent-config.js';
+import { createAgentTrace } from './lib/agent-trace.js';
 import { createOwnersStore } from './lib/owners.js';
 import { createServiceChecker } from './lib/services.js';
 import { createHealthMonitor } from './lib/health-monitor.js';
@@ -103,6 +104,7 @@ export function buildDeps({ env = process.env, sidecarRoot = join(here, '..'), i
     agentConfig: createAgentConfig({ configFile: paths.hermesConfigFile, envValue: (k) => readEnvKey(paths.hermesEnvFile, k) }),
     soul: createSoul({ hermesHome: paths.hermesHome, historyDir: paths.soulHistoryDir }),
     toolsManifestFile: paths.toolsManifestFile,
+    agentTrace: createAgentTrace({ dbPath: paths.hermesStateDb }),
     publicMcp: () => readEnvKey(paths.hermesEnvFile, 'ZALO_PUBLIC_MCP'),
     // Second brain: chỉ bật khi .env Hermes có ZALO_SECOND_BRAIN_URL (loopback), luôn tắt trên Windows; đọc lại .env mỗi lần.
     secondBrain: createSecondBrain({ settings: () => ({

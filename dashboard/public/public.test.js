@@ -879,3 +879,11 @@ test('Công cụ: nhóm theo mức quyền giữ thứ tự; đếm thay đổi 
   assert.equal(offDiff(new Set(['a', 'b']), new Set(['b', 'c'])), 2);
   assert.equal(offDiff(new Set(), new Set()), 0);
 });
+
+test('Theo dõi agent: thời gian dễ đọc', async () => {
+  const { fmtMs } = await import('./views/trace.js');
+  assert.equal(fmtMs(null), '—');
+  assert.equal(fmtMs(850), '850 ms');
+  assert.equal(fmtMs(2500), '2,5 giây');
+  assert.equal(fmtMs(65_000), '1 phút 5 giây');
+});
