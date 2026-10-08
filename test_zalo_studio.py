@@ -866,11 +866,7 @@ class BuiltinTest(unittest.TestCase):
     @unittest.skipUnless(Path("E:/Hermes/skills/soan-van-ban-doan/scripts/validate_van_ban_doan.py").is_file(),
                          "máy này không có skill soan-van-ban-doan")
     def test_doan_docx_passes_the_real_skill_validator(self):
-        from plugins.zalo_tools.studio import doan_docx
-        try:
-            from plugins.zalo_tools.studio import jobs
-        except ImportError:  # TASK5-TEMP: jobs.py thuộc Task 6
-            self.skipTest("jobs.py chưa có (Task 6)")
+        from plugins.zalo_tools.studio import doan_docx, jobs
 
         data = validate.check_doan_json(json.dumps({
             "loai": "thong_bao", "don_vi_cap_tren": "TRƯỜNG THPT CHUYÊN NGUYỄN TRÃI", "so": "26", "dia_danh": "Hải Phòng",
@@ -888,3 +884,440 @@ class BuiltinTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             out = builtin.build_markdown_docx(md, "Đề", Path(tmp, "de.docx"))
             self.assertGreater(out.stat().st_size, 3000)
+
+
+from plugins.zalo_tools.studio import jobs, ledger  # noqa: E402
+
+MEMBER = "9876543210987654321"
+OWNER = "1234567890123456789"
+GROUP = "2054797107487294899"
+
+
+class LedgerTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="zalo-ledger-"))
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.book = ledger.Ledger(self.dir / "studio-usage.json")
+
+    def take(self, job_id, quota=2, uid=MEMBER):
+        return self.book.take(job_id=job_id, uid=uid, name="Lan", kind="giao_an", thread_id=GROUP,
+                              is_group=True, quota=quota)
+
+    def test_take_counts_against_quota_and_refund_gives_it_back(self):
+        self.assertEqual(self.take("j1"), 1)
+        self.assertEqual(self.take("j2"), 0)
+        self.assertEqual(self.take("j3"), -1, "hết lượt")
+        self.book.finish("j2", "refunded", error="máy hỏng")
+        self.assertEqual(self.book.used_today(MEMBER), 1)
+        self.assertEqual(self.take("j4"), 0)
+        self.book.finish("j1", "running")
+        self.book.finish("j1", "failed", input_tokens=10, output_tokens=5)
+        self.assertEqual(self.book.used_today(MEMBER), 2, "hỏng vì nội dung vẫn tính lượt")
+        day = json.loads((self.dir / "studio-usage.json").read_text(encoding="utf-8"))["days"][ledger.vn_day()][MEMBER]
+        self.assertEqual((day["jobs"], day["failed"], day["refunded"], day["input_tokens"]), (3, 1, 1, 10))
+        self.assertIsNone(self.take("j5", quota=None, uid=OWNER), "chủ nhân không giới hạn")
+
+    def test_sweep_lost_refunds_jobs_left_open_by_a_restart(self):
+        self.take("j1")
+        self.book.finish("j1", "running")
+        self.take("j2")
+        self.assertEqual(ledger.Ledger(self.book.path).sweep_lost(), 2)
+        self.assertEqual(self.book.used_today(MEMBER), 0)
+
+    def test_corrupt_file_is_set_aside_and_a_new_book_started(self):
+        self.book.path.write_text("{hỏng", encoding="utf-8")
+        with self.assertLogs(ledger.logger, level="WARNING"):
+            self.assertEqual(self.take("j1"), 1)
+        self.assertTrue(any(p.name.startswith("studio-usage.json.hong-") for p in self.dir.iterdir()))
+
+    def test_unwritable_book_refuses_the_job(self):
+        with patch.object(ledger.Ledger, "_write", side_effect=PermissionError("ro")), \
+                self.assertLogs(ledger.logger, level="ERROR"):
+            self.assertEqual(self.take("j1"), -1)
+
+    def test_images_are_counted_per_job_and_per_person(self):
+        self.take("j1")
+        self.book.finish("j1", "running")
+        self.book.finish("j1", "ok", input_tokens=5, images=7)
+        data = json.loads((self.dir / "studio-usage.json").read_text(encoding="utf-8"))
+        self.assertEqual(data["jobs"][-1]["images"], 7)
+        self.assertEqual(data["days"][ledger.vn_day()][MEMBER]["images"], 7)
+
+    def test_vn_day_rolls_over_at_midnight_vietnam_time(self):
+        self.assertEqual(ledger.vn_day(1_759_856_399), "2025-10-07")  # 16:59:59 UTC = 23:59:59 giờ VN
+        self.assertEqual(ledger.vn_day(1_759_856_400), "2025-10-08")  # 17:00:00 UTC = 0 giờ ngày mới
+
+
+def fake_places(tmp: Path) -> recipes.Places:
+    studio = tmp / "studio"
+    (studio / "tools" / "vi" / "thi_nghiem_parts" / "mo_hinh").mkdir(parents=True)
+    (studio / "tools" / "vi" / "thi_nghiem_parts" / "mo_hinh" / "li-con-lac-don.json").write_text("{}")
+    (studio / "docs" / "vi" / "tro-ly").mkdir(parents=True)
+    (studio / "docs" / "vi" / "tro-ly" / "giao-an.md").write_text("NGỮ PHÁP GIÁO ÁN", encoding="utf-8")
+    skills = tmp / "skills"
+    (skills / "soan-van-ban-hanh-chinh" / "node_modules" / "docx").mkdir(parents=True)
+    (skills / "soan-van-ban-hanh-chinh" / "SKILL.md").write_text("NĐ30", encoding="utf-8")
+    return recipes.Places(studio=studio, python=Path(sys.executable), skills=skills, node="node")
+
+
+def make_job(kind, turn=None, **options):
+    return jobs.Job(id=jobs.new_job_id(), kind=kind, brief="Giáo án Toán 10 bài Mệnh đề", options=options,
+                    turn=turn or {"sender_uid": MEMBER, "sender_name": "Lan", "thread_id": GROUP, "is_group": True,
+                                  "is_owner": False})
+
+
+class BuilderTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="zalo-builder-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.where = fake_places(self.tmp)
+        self.job_dir = self.tmp / "job"
+        self.job_dir.mkdir()
+        self.runs = []
+
+    def fake_run(self, behave):
+        async def run(argv, job_dir, **kw):
+            self.runs.append([str(a) for a in argv])
+            return behave(list(map(str, argv)), Path(job_dir), kw)
+        return patch.object(jobs.sandbox, "run", side_effect=run)
+
+    async def test_studio_cli_runs_the_fixed_script_on_the_project_folder(self):
+        def behave(argv, job_dir, kw):
+            project = Path(argv[-1])
+            self.assertEqual((project / "giao-an.md").read_text(encoding="utf-8"), "# Bài 1\n")
+            (project / "giao-an.docx").write_bytes(b"PK")
+            return sandbox.Result(0, json.dumps({"ready": True, "files": [], "warnings": ["Thiếu mã NLS"]}), "", False)
+
+        llm = FakeLlm("```\n# Bài 1\n```")
+        with self.fake_run(behave):
+            out = await jobs.produce(make_job("giao_an"), llm, self.job_dir, self.where)
+        self.assertEqual([p.name for p in out.files], ["giao-an.docx"])
+        self.assertEqual(out.notes, ["Thiếu mã NLS"])
+        self.assertEqual(self.runs[0][:3], [sys.executable, str(self.where.studio / "tools/vi/giao_an.py"), "xuat"])
+        self.assertIn("NGỮ PHÁP GIÁO ÁN", llm.calls[0]["messages"][0]["content"])
+
+    async def test_parse_error_from_the_studio_tool_gets_exactly_one_rewrite(self):
+        answers = iter([sandbox.Result(1, json.dumps({"ready": False, "error": {"step": "parse", "message": "Dòng 3: thiếu tiet"}}), "", False),
+                        sandbox.Result(1, json.dumps({"ready": False, "error": {"step": "parse", "message": "Dòng 4"}}), "", False)])
+        llm = FakeLlm("bản 1", "bản 2")
+        with self.fake_run(lambda *a: next(answers)), self.assertRaises(jobs.StudioError) as caught:
+            await jobs.produce(make_job("giao_an"), llm, self.job_dir, self.where)
+        self.assertFalse(caught.exception.refund, "nội dung sai: vẫn tính lượt")
+        self.assertEqual(len(llm.calls), 2)
+        self.assertIn("Dòng 3: thiếu tiet", llm.calls[1]["messages"][-1]["content"])
+
+    async def test_machine_error_and_timeout_are_refunded(self):
+        with self.fake_run(lambda *a: sandbox.Result(1, json.dumps({"ready": False, "error": {"step": "docx"}}), "boom", False)), \
+                self.assertRaises(jobs.StudioError) as caught:
+            await jobs.produce(make_job("giao_an"), FakeLlm("x"), self.job_dir, self.where)
+        self.assertTrue(caught.exception.refund)
+        with self.fake_run(lambda *a: sandbox.Result(None, "", "", True)), self.assertRaises(jobs.StudioError) as caught:
+            await jobs.produce(make_job("giao_an"), FakeLlm("x"), self.tmp / "job2", self.where)
+        self.assertTrue(caught.exception.refund)
+
+    async def test_thi_nghiem_new_model_never_reaches_the_builder(self):
+        moi = "---\ntieu-de: X\nmon: Lí\nlop: 10\nmau: moi\n---\n"
+        with self.fake_run(lambda *a: self.fail("không được chạy bộ dựng")), self.assertRaises(jobs.StudioError):
+            await jobs.produce(make_job("thi_nghiem"), FakeLlm(moi, moi), self.job_dir, self.where)
+        self.assertEqual(self.runs, [])
+
+    async def test_node_engine_gets_validated_json_and_a_fixed_output_path(self):
+        def behave(argv, job_dir, kw):
+            data = json.loads(Path(argv[argv.index("--input") + 1]).read_text(encoding="utf-8"))
+            self.assertNotIn("output_path", data)
+            Path(argv[argv.index("--output") + 1]).write_bytes(b"PK")
+            return sandbox.Result(0, "Đã tạo", "", False)
+
+        doc = json.dumps({"loai_van_ban": "cong_van", "trich_yeu": "v/v họp", "output_path": "C:/Windows/x.docx"})
+        with self.fake_run(behave):
+            out = await jobs.produce(make_job("van_ban"), FakeLlm(doc), self.job_dir, self.where)
+        self.assertEqual(out.files[0].name, "van-ban.docx")
+        self.assertTrue(self.runs[0][1].endswith("generate_cong_van_nd30.js"))
+        self.assertEqual(self.runs[0][0], "node")
+
+    async def test_missing_install_is_a_refunded_error(self):
+        empty = recipes.Places(studio=None, python=None, skills=None, node=None)
+        with self.assertRaises(jobs.StudioError) as caught:
+            await jobs.produce(make_job("video"), FakeLlm(), self.job_dir, empty)
+        self.assertTrue(caught.exception.refund)
+
+    async def test_slides_pipeline_init_check_repair_export(self):
+        svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" data-pptx-page-role="{r}"><text>{t}</text></svg>'
+        outline = json.dumps({"title": "Hô hấp", "pages": [{"role": "cover"}, {"role": "ending"}]})
+        llm = FakeLlm(outline, svg.format(r="cover", t="a"), "<svg><script/></svg>", svg.format(r="ending", t="b"),
+                      svg.format(r="ending", t="b2"))
+        checks = iter([1, 0])
+
+        def behave(argv, job_dir, kw):
+            script = Path(argv[1]).name
+            if script == "project_manager.py":
+                (job_dir / "deck_20261007" / "svg_output").mkdir(parents=True)
+            elif script == "svg_quality_checker.py":
+                code = next(checks)
+                report = Path(argv[2]) / "validation"
+                report.mkdir(exist_ok=True)
+                errors = ["chữ tràn khung"] if code else []
+                (report / "svg_quality_report.json").write_text(json.dumps({"files": [
+                    {"file": "02_ending.svg", "errors": errors}]}), encoding="utf-8")
+                return sandbox.Result(code, "", "", False)
+            elif script == "svg_to_pptx.py":
+                exports = Path(argv[2]) / "exports"
+                exports.mkdir()
+                (exports / "deck.pptx").write_bytes(b"PK")
+            return sandbox.Result(0, "", "", False)
+
+        with self.fake_run(behave):
+            out = await jobs.produce(make_job("slide", loai="bai-giang"), llm, self.job_dir, self.where)
+        self.assertEqual([p.name for p in out.files], ["deck.pptx"])
+        self.assertEqual([Path(r[1]).name for r in self.runs],
+                         ["attribution_guard.py", "project_manager.py", "compact_svg_styles.py", "svg_quality_checker.py",
+                          "compact_svg_styles.py", "svg_quality_checker.py", "svg_to_pptx.py"])
+        self.assertEqual(out.usage.calls, 5, "dàn ý + 2 trang + 1 trang bị chặn script + 1 sửa theo bộ kiểm")
+        self.assertIn("chữ tràn khung", llm.calls[-1]["messages"][-1]["content"])
+
+    def test_collect_skips_backups_and_other_types_and_caps_size(self):
+        project = self.job_dir / "p"
+        (project / "backup").mkdir(parents=True)
+        (project / "a.docx").write_bytes(b"x")
+        (project / "backup" / "old.docx").write_bytes(b"x")
+        (project / "notes.md").write_text("x")
+        self.assertEqual([p.name for p in jobs.collect(self.job_dir, project, (".docx",))], ["a.docx"])
+        with patch.dict(jobs.MAX_FILE_BYTES, {".docx": 0}), self.assertRaises(jobs.StudioError):
+            jobs.collect(self.job_dir, project, (".docx",))
+        with self.assertRaises(jobs.StudioError):
+            jobs.collect(self.job_dir, project, (".pptx",))
+
+
+class BuilderImagesTest(unittest.IsolatedAsyncioTestCase):
+    """Ảnh, Vox, video bài giảng, văn bản Đoàn, trò chơi — ảnh chỉ do plugin vẽ/tải (giả lập ở đây)."""
+
+    fake_run = BuilderTest.fake_run
+
+    def setUp(self):
+        BuilderTest.setUp(self)
+        self.asked = []
+
+        async def fake_generate(prompt, size, **kw):
+            self.asked.append(("ai", prompt, size))
+            return images.Picture(PNG, "png")
+
+        async def fake_search(query, orientation="landscape", **kw):
+            self.asked.append(("web", query, orientation))
+            if "hỏng" in query:
+                raise images.ImageError("không tìm được")
+            return images.Picture(JPG, "jpg", author="BruceBlaus", license="CC BY 4.0", provider="Openverse/wikimedia")
+
+        self.enterContext(patch.object(jobs.images, "generate", side_effect=fake_generate))
+        self.enterContext(patch.object(jobs.images, "search_web", side_effect=fake_search))
+
+    async def test_slides_fetch_requested_images_and_pages_may_only_use_those(self):
+        svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" data-pptx-page-role="{r}">{x}<text>t</text></svg>'
+        outline = json.dumps({"pages": [{"role": "cover"}, {"role": "ending"}],
+                              "images": [{"id": "a1", "ai": "cell diagram"}, {"id": "w1", "web": "mitochondria"},
+                                         {"id": "w2", "web": "hỏng"}]})
+        llm = FakeLlm(outline, svg.format(r="cover", x='<image href="img:a1" width="9" height="9"/>'),
+                      svg.format(r="ending", x='<image href="img:w2" width="9" height="9"/>'),
+                      svg.format(r="ending", x='<image href="img:w1" width="9" height="9"/>'))
+
+        def behave(argv, job_dir, kw):
+            script = Path(argv[1]).name
+            self.assertFalse(kw.get("network"), f"{script} không cần mạng")
+            if script == "project_manager.py":
+                (job_dir / "deck_20261008" / "svg_output").mkdir(parents=True)
+            elif script == "svg_quality_checker.py":
+                (Path(argv[2]) / "validation").mkdir(exist_ok=True)
+                (Path(argv[2]) / "validation" / "svg_quality_report.json").write_text('{"files": []}', encoding="utf-8")
+            elif script == "svg_to_pptx.py":
+                (Path(argv[2]) / "exports").mkdir()
+                (Path(argv[2]) / "exports" / "deck.pptx").write_bytes(b"PK")
+            return sandbox.Result(0, "", "", False)
+
+        with self.fake_run(behave):
+            out = await jobs.produce(make_job("slide", loai="bai-giang"), llm, self.job_dir, self.where)
+        deck = self.job_dir / "deck_20261008"
+        self.assertEqual(sorted(p.name for p in (deck / "images").iterdir()), ["a1.png", "w1.jpg"])
+        self.assertIn('href="../images/a1.png"', (deck / "svg_output" / "01_cover.svg").read_text(encoding="utf-8"))
+        self.assertIn('href="../images/w1.jpg"', (deck / "svg_output" / "02_ending.svg").read_text(encoding="utf-8"))
+        self.assertEqual(out.images, 2)
+        self.assertIn("không lấy được ảnh w2", out.notes[0])
+        page_prompt = llm.calls[1]["messages"][0]["content"]
+        self.assertIn("a1 (", page_prompt)
+        self.assertNotIn("w2 (", page_prompt, "ảnh hỏng không được đưa cho trang dùng")
+
+    async def test_vox_video_plans_in_the_sandbox_then_the_parent_fetches_exactly_those_images(self):
+        vox = ("---\ntieu-de: T\nmon: Sinh\nlop: 10\nphong-cach: vox\nthoi-luong: 60\n---\n\n## Cảnh 1\n"
+               "nen: ve: lớp học\nanh: tim: mitochondria\nloi: Chào.\n")
+        calls = []
+
+        def behave(argv, job_dir, kw):
+            script = Path(argv[1]).name
+            calls.append((script, argv[3:] if len(argv) > 3 else [], kw.get("network")))
+            project = Path(argv[2])
+            if script == "anh_vox.py" and "--chi-ke-hoach" in argv:
+                plan = project / "anh" / "ai" / "ke-hoach.json"
+                plan.parent.mkdir(parents=True, exist_ok=True)
+                plan.write_text(json.dumps({"muc": [
+                    {"nguon": "ve", "prompt": "Collage of a classroom", "kich_thuoc": "1920x1080", "file_goc": "anh/ai/goc/ab12.png"},
+                    {"nguon": "tim", "prompt": "mitochondria", "kich_thuoc": "1024x1536", "file_goc": "anh/tim-cd34.jpg"}]}),
+                    encoding="utf-8")
+                return sandbox.Result(0, json.dumps({"ready": True}), "", False)
+            if script == "anh_vox.py":
+                self.assertTrue((project / "anh" / "ai" / "goc" / "ab12.png").read_bytes().startswith(b"\x89PNG"))
+                manifest = json.loads((project / "anh" / "image_sources.json").read_text(encoding="utf-8"))
+                self.assertEqual(manifest["items"][0]["filename"], "tim-cd34.jpg")
+                self.assertEqual(manifest["items"][0]["license_name"], "CC BY 4.0")
+                return sandbox.Result(0, json.dumps({"ready": True}), "", False)
+            (project / "video.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42")
+            return sandbox.Result(0, json.dumps({"ready": True, "warnings": []}), "", False)
+
+        with self.fake_run(behave):
+            out = await jobs.produce(make_job("video", kieu="vox"), FakeLlm(vox), self.job_dir, self.where)
+        self.assertEqual([p.name for p in out.files], ["video.mp4"])
+        self.assertEqual([c[0] for c in calls], ["anh_vox.py", "anh_vox.py", "video_ma.py"])
+        self.assertEqual([c[2] for c in calls], [False, False, True], "lập kế hoạch/xử lý ảnh không có mạng; dựng có mạng cho giọng đọc")
+        self.assertEqual(calls[1][1][:2], ["--cong-cu", jobs.IMAGE_TOOL_NAME])
+        self.assertEqual(self.asked, [("ai", "Collage of a classroom", "1920x1080"), ("web", "mitochondria", "portrait")])
+        self.assertEqual(out.images, 2)
+
+    async def test_vox_plan_with_odd_entries_never_writes_outside_the_project(self):
+        vox = "---\ntieu-de: T\nmon: Sinh\nlop: 10\nphong-cach: vox\n---\n\n## Cảnh 1\nnen: ve: lớp học\nloi: Chào.\n"
+        for entry, refund in (({"nguon": "file", "prompt": "a.png", "file_goc": "anh/a.png"}, False),
+                              ({"nguon": "ve", "prompt": "x", "kich_thuoc": "1920x1080", "file_goc": "../../evil.png"}, True),
+                              ({"nguon": "ve", "prompt": "x", "kich_thuoc": "1920x1080; rm", "file_goc": "anh/ai/goc/a.png"}, True)):
+            def behave(argv, job_dir, kw, entry=entry):
+                plan = Path(argv[2]) / "anh" / "ai" / "ke-hoach.json"
+                plan.parent.mkdir(parents=True, exist_ok=True)
+                plan.write_text(json.dumps({"muc": [entry]}), encoding="utf-8")
+                return sandbox.Result(0, json.dumps({"ready": True}), "", False)
+
+            job_dir = self.tmp / f"j-{refund}-{len(self.runs)}"
+            job_dir.mkdir()
+            with self.fake_run(behave), self.assertRaises(jobs.StudioError) as caught:
+                await jobs.produce(make_job("video", kieu="vox"), FakeLlm(vox, vox), job_dir, self.where)
+            self.assertEqual(caught.exception.refund, refund, entry)
+        self.assertEqual(self.asked, [])
+        self.assertFalse((self.tmp / "evil.png").exists())
+
+    async def test_lecture_video_runs_audio_narrated_pptx_and_ffmpeg_video_in_order(self):
+        svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" data-pptx-page-role="{r}"><text>t</text></svg>'
+        llm = FakeLlm(json.dumps({"pages": [{"role": "cover"}, {"role": "ending"}]}), svg.format(r="cover"), svg.format(r="ending"),
+                      json.dumps({"1": "Chào các em.", "2": "Hẹn gặp lại."}))
+        order = []
+
+        def behave(argv, job_dir, kw):
+            script = Path(argv[1]).name
+            order.append((script, kw.get("network")))
+            if script == "project_manager.py":
+                (job_dir / "deck_20261008" / "svg_output").mkdir(parents=True)
+            elif script == "svg_quality_checker.py":
+                (Path(argv[2]) / "validation").mkdir(exist_ok=True)
+                (Path(argv[2]) / "validation" / "svg_quality_report.json").write_text('{"files": []}', encoding="utf-8")
+            elif script == "notes_to_audio.py":
+                self.assertEqual((Path(argv[2]) / "notes" / "02_ending.md").read_text(encoding="utf-8"), "Hẹn gặp lại.\n")
+            elif script == "video.py":
+                self.assertEqual(argv[3:], ["--cach", "ffmpeg", "--phu-de", "hinh", "--do-phan-giai", "720"])
+                (Path(argv[2]) / "exports").mkdir(exist_ok=True)
+                (Path(argv[2]) / "exports" / "bai-giang.mp4").write_bytes(b"mp4")
+            return sandbox.Result(0, "", "", False)
+
+        with self.fake_run(behave):
+            out = await jobs.produce(make_job("video_bai_giang", loai="bai-giang"), llm, self.job_dir, self.where)
+        self.assertEqual([p.name for p in out.files], ["bai-giang.mp4"])
+        self.assertEqual([o[0] for o in order][-3:], ["notes_to_audio.py", "svg_to_pptx.py", "video.py"])
+        self.assertEqual([o[1] for o in order][-3:], [True, False, False], "chỉ bước giọng đọc edge-tts có mạng")
+
+    async def test_doan_document_is_built_by_the_fixed_generator_and_checked(self):
+        validator = self.where.skills / "soan-van-ban-doan" / "scripts" / "validate_van_ban_doan.py"
+        validator.parent.mkdir(parents=True)
+        validator.write_text("def validate_document(path, profile='doan'):\n"
+                             "    return {'status': 'fail', 'items': [{'level': 'error', 'code': 'invalid_document_number'}]}\n",
+                             encoding="utf-8")
+        doc = json.dumps({"loai": "cong_van", "don_vi_cap_tren": "TRƯỜNG THPT A", "dia_danh": "Hải Phòng", "ngay": "1",
+                          "thang": "10", "nam": "2026", "trich_yeu": "tham gia chạy bộ", "kinh_gui": ["Các chi đoàn"],
+                          "noi_dung": [{"doan": "BCH Đoàn trường đề nghị…"}], "noi_nhan": ["Như trên;"]})
+        with self.fake_run(lambda *a: self.fail("bộ sinh Đoàn chạy trong plugin, không cần tiến trình con")):
+            out = await jobs.produce(make_job("van_ban_doan"), FakeLlm(doc), self.job_dir, self.where)
+        self.assertEqual([p.name for p in out.files], ["van-ban-doan.docx"])
+        self.assertEqual(out.notes, ["Số văn bản để trống cho văn thư điền", "Chưa ký, chưa đóng dấu"])
+        validator.write_text("def validate_document(path, profile='doan'):\n"
+                             "    return {'items': [{'level': 'error', 'code': 'margins'}]}\n", encoding="utf-8")
+        with self.assertRaises(jobs.StudioError) as caught:
+            await jobs.produce(make_job("van_ban_doan"), FakeLlm(doc), self.tmp / "j2", self.where)
+        self.assertTrue(caught.exception.refund, "lỗi thể thức là lỗi của bộ sinh, trả lượt")
+
+    async def test_game_uses_the_template_chosen_by_the_option_not_by_the_model(self):
+        self.where.skills.joinpath("tro-choi-giao-duc", "references").mkdir(parents=True)
+        cards = json.dumps({"type": "quiz", "title": "Từ vựng", "cards": [{"front": "cell", "back": "tế bào"}, {"front": "a", "back": "b"}]})
+        out = await jobs.produce(make_job("tro_choi", loai="flashcard"), FakeLlm(cards), self.job_dir, self.where)
+        page = out.files[0].read_text(encoding="utf-8")
+        self.assertEqual(out.files[0].name, "tro-choi-flashcard.html")
+        self.assertIn('"type": "flashcard"', page)
+
+
+from plugins.zalo_tools import tools as zalo_tools  # noqa: E402
+
+
+class StudioQueueTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="zalo-queue-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.enterContext(patch.dict(os.environ, {"ZALO_STUDIO_WORK": str(self.tmp / "work")}))
+        self.book = ledger.Ledger(self.tmp / "usage.json")
+        self.sent, self.notes = [], []
+        self.allowed = True
+
+        async def deliver(job, files, caption):
+            self.sent.append((job.turn["thread_id"], [p.name for p in files], caption))
+            return True
+
+        async def notify(job, text):
+            self.notes.append(text)
+
+        self.studio = jobs.Studio(ledger=self.book, llm=lambda: FakeLlm("# Đề\n\n1. Câu một"), deliver=deliver,
+                                  notify=notify, still_allowed=lambda job: self.allowed, quota_left=lambda job: 2)
+
+    def take(self, job):
+        self.book.take(job_id=job.id, uid=job.uid, name="Lan", kind=job.kind, thread_id=GROUP, is_group=True, quota=3)
+
+    async def test_finished_job_is_sent_to_the_captured_thread_recorded_and_cleaned(self):
+        job = make_job("de_kiem_tra")
+        self.take(job)
+        where = recipes.Places(studio=None, python=None, skills=self.tmp, node=None)
+        with patch.object(recipes, "places", return_value=where):
+            await self.studio.run_job(job)
+        self.assertEqual(self.sent[0][0], GROUP)
+        self.assertEqual(self.sent[0][1], ["de.docx"])
+        self.assertIn("Hôm nay còn 2 lượt", self.sent[0][2])
+        record = json.loads(self.book.path.read_text(encoding="utf-8"))["jobs"][-1]
+        self.assertEqual((record["status"], record["input_tokens"]), ("ok", 100))
+        self.assertFalse((self.tmp / "work" / job.id).exists(), "thư mục việc phải được xoá")
+
+    async def test_switch_turned_off_meanwhile_means_no_delivery_and_a_refund(self):
+        job = make_job("de_kiem_tra")
+        self.take(job)
+        self.allowed = False
+        with patch.object(recipes, "places", return_value=recipes.Places(None, None, self.tmp, None)):
+            await self.studio.run_job(job)
+        self.assertEqual(self.sent, [])
+        self.assertIn("Lượt này không bị trừ", self.notes[0])
+        self.assertEqual(self.book.used_today(MEMBER), 0)
+
+    async def test_unexpected_crash_is_reported_plainly_and_refunded(self):
+        job = make_job("de_kiem_tra")
+        self.take(job)
+        with patch.object(jobs, "produce", side_effect=RuntimeError("Traceback E:/Hermes/.env")):
+            with self.assertLogs(jobs.logger, level="ERROR"):
+                await self.studio.run_job(job)
+        self.assertNotIn(".env", self.notes[0])
+        self.assertEqual(self.book.used_today(MEMBER), 0)
+
+    def test_queue_limits_one_job_per_person_and_five_overall(self):
+        with patch.object(jobs.Studio, "_ensure_loop", return_value=None), \
+                patch.object(jobs.asyncio, "run_coroutine_threadsafe", side_effect=lambda coro, loop: coro.close()):
+            self.assertEqual(self.studio.submit(make_job("skkn")), 1)
+            with self.assertRaises(jobs.Busy):
+                self.studio.submit(make_job("skkn"))
+            for i in range(4):
+                self.studio.submit(make_job("skkn", turn={"sender_uid": f"1{i}", "thread_id": GROUP, "is_group": True}))
+            with self.assertRaises(jobs.Busy):
+                self.studio.submit(make_job("skkn", turn={"sender_uid": "99", "thread_id": GROUP, "is_group": True}))
