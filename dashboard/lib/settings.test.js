@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import YAML from 'yaml';
@@ -84,4 +84,26 @@ test('env-file: khoá Cấu hình ghi được chữ có dấu (trong ngoặc k�
   assert.match(readFileSync(f, 'utf8'), /^ZALO_PUBLIC_MCP=rag,mcp-\*$/m);
   for (const v of ['a"\nB=1', 'a\\b', 'x#y', 'a=b', "it's"]) assert.throws(() => writeEnvKey(f, 'ZALO_KB_PUBLIC_DIRS', v), /ký tự không cho phép/, v);
   assert.throws(() => writeEnvKey(f, 'ZALO_ALLOWED_USERS', 'abc'), /chữ số và dấu phẩy/);
+});
+
+test('đọc: bool rỗng = tắt (như _truthy); số thập phân của float() hiện đúng, số nguyên thì không', (t) => {
+  const v = setup(t, { env: 'ZALO_FRIEND_TOOLS=\nZALO_FLOOD_WINDOW_S=7.5\nZALO_FLOOD_THRESHOLD=6.5\n', config: 'a: 1\n' }).s.view();
+  assert.equal(pick(v, 'friendTools').value, false);
+  assert.equal(pick(v, 'autoReact').value, true, 'khoá không đặt → mặc định');
+  assert.equal(pick(setup(t, { env: 'ZALO_ACK_GESTURES=\n', config: 'a: 1\n' }).s.view(), 'ackGestures').value, false);
+  assert.equal(pick(v, 'floodWindow').value, 7.5);
+  assert.equal(pick(v, 'floodThreshold').value, 6, 'int() của adapter không nhận 6.5 → mặc định');
+});
+
+test('lưu nhiều tệp: .env ghi một lần (một .bak); .env hỏng sau khi config.yaml đã ghi → lỗi tiếng Việt kèm mục đã lưu', (t) => {
+  const { d, s } = setup(t, { config: 'platforms:\n  zalo:\n    extra:\n      dm_policy: owner-only\n' });
+  const seen = [];
+  s.save({ dmPolicy: 'open', historyDays: 90, floodMute: 120 }, { onApplied: (c) => seen.push(c.map((x) => x.id)) });
+  assert.deepEqual(seen, [['dmPolicy'], ['historyDays', 'floodMute']]);
+  assert.equal(readFileSync(join(d, '.env.bak'), 'utf8'), ENV, 'một .bak = bản trước lần lưu');
+  rmSync(join(d, '.env'), { force: true }); mkdirSync(join(d, '.env'));
+  const seen2 = [];
+  assert.throws(() => s.save({ dmPolicy: 'owner-only', historyDays: 100 }, { onApplied: (c) => seen2.push(c.map((x) => x.id)) }),
+    (e) => e.partial && e.statusCode === 500 && /Đã lưu .*chưa lưu được/.test(e.message) && e.applied.map((a) => a.id).join() === 'dmPolicy');
+  assert.deepEqual(seen2, [['dmPolicy']], 'cờ khởi động lại đã đánh dấu ngay sau khi ghi YAML');
 });

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readEnvKey, writeEnvKey } from './env-file.js';
+import { readEnvKey, writeEnvKey, writeEnvKeys } from './env-file.js';
 
 const K = 'ZALO_ALLOWED_USERS';
 function tmp(t) { const d = mkdtempSync(join(tmpdir(), 'zd-env-')); t.after(() => rmSync(d, { recursive: true, force: true })); return d; }
@@ -105,4 +105,14 @@ test('khoá chỉ đọc (giai đoạn 7): đọc được, không bao giờ ghi
   assert.equal(readEnvKey(f, 'ZALO_PEOPLE_FILE'), null);
   assert.throws(() => writeEnvKey(f, 'ZALO_KB_DIR', '1'), /không nằm trong danh sách/);
   assert.throws(() => readEnvKey(f, 'TELEGRAM_BOT_TOKEN'), /không nằm trong danh sách/);
+});
+
+test('writeEnvKeys: nhiều khoá trong một lần ghi, một .bak, giữ khoá khác', (t) => {
+  const f = join(tmp(t), '.env');
+  writeFileSync(f, 'A=1\r\nZALO_FLOOD_THRESHOLD=8\r\n');
+  writeEnvKeys(f, { ZALO_FLOOD_THRESHOLD: '9', ZALO_DM_POLICY: 'open' });
+  assert.equal(readFileSync(f, 'utf8'), 'A=1\r\nZALO_FLOOD_THRESHOLD=9\r\nZALO_DM_POLICY=open\r\n');
+  assert.equal(readFileSync(f + '.bak', 'utf8'), 'A=1\r\nZALO_FLOOD_THRESHOLD=8\r\n');
+  assert.throws(() => writeEnvKeys(f, { ZALO_DM_POLICY: 'x', OPENAI_API_KEY: 'k' }));
+  assert.equal(readEnvKey(f, 'ZALO_DM_POLICY'), 'open', 'khoá lạ → không ghi gì');
 });

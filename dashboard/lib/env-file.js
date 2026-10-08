@@ -46,13 +46,21 @@ export function readEnvKey(file, key) {
  * Đặt `key=value`: thay mọi dòng của khoá này (giữ "export " và kiểu xuống dòng của tệp), không có thì thêm cuối tệp.
  * `value` phải qua luật của khoá (VALUE_RULES / SETTING_VALUE) — không bao giờ chèn được dòng hay khoá khác.
  */
-export function writeEnvKey(link, key, value) {
-  allowed(key, { write: true });
-  const rule = VALUE_RULES[key] || SETTING_VALUE;
-  if (typeof value !== 'string' || !rule.test(value)) {
-    throw new Error(key === 'ZALO_ALLOWED_USERS' ? 'env-file: giá trị chỉ được gồm chữ số và dấu phẩy' : `env-file: giá trị của ${key} có ký tự không cho phép`);
+export function writeEnvKey(link, key, value) { writeEnvKeys(link, { [key]: value }); }
+
+/** Như writeEnvKey nhưng đặt NHIỀU khoá trong MỘT lần ghi (một `.bak` duy nhất); kiểm hết rồi mới ghi. */
+export function writeEnvKeys(link, values) {
+  const entries = Object.entries(values);
+  if (!entries.length) return;
+  const rendered = new Map();
+  for (const [key, value] of entries) {
+    allowed(key, { write: true });
+    const rule = VALUE_RULES[key] || SETTING_VALUE;
+    if (typeof value !== 'string' || !rule.test(value)) {
+      throw new Error(key === 'ZALO_ALLOWED_USERS' ? 'env-file: giá trị chỉ được gồm chữ số và dấu phẩy' : `env-file: giá trị của ${key} có ký tự không cho phép`);
+    }
+    rendered.set(key, BARE_VALUE.test(value) ? value : `"${value}"`);
   }
-  const rendered = BARE_VALUE.test(value) ? value : `"${value}"`;
   // .env là symlink thì ghi vào tệp đích, không thay symlink bằng tệp thường.
   let file = link;
   try { file = realpathSync(link); } catch { /* chưa có tệp */ }
@@ -62,16 +70,19 @@ export function writeEnvKey(link, key, value) {
   const text = raw.slice(bom.length);
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   const lines = text.length ? text.split(/\r?\n/) : [];
-  let found = false;
-  const out = lines.map((l) => {
-    const m = lineOf(key).exec(l);
-    if (!m) return l;
-    found = true;
-    return `${m[1]}${key}=${rendered}`;
-  });
-  if (!found) {
-    if (out.length && out[out.length - 1] === '') out.pop();
-    out.push(`${key}=${rendered}`, '');
+  let out = lines;
+  for (const [key, val] of rendered) {
+    let found = false;
+    out = out.map((l) => {
+      const m = lineOf(key).exec(l);
+      if (!m) return l;
+      found = true;
+      return `${m[1]}${key}=${val}`;
+    });
+    if (!found) {
+      if (out.length && out[out.length - 1] === '') out = out.slice(0, -1);
+      out = [...out, `${key}=${val}`, ''];
+    }
   }
   if (exists) {
     copyFileSync(file, `${file}.bak`);

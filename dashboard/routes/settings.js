@@ -21,11 +21,18 @@ export function settingsRoutes({ settings, restartFlags, activity, welcomeFile, 
   r.get('/admin/settings', ...guard, (req, res) => { try { res.json({ ok: true, settings: settings.view() }); } catch (err) { fail(res, err, 'Chưa đọc được cài đặt.'); } });
   r.put('/admin/settings', ...guard, (req, res) => {
     try {
-      const changes = settings.save(req.body?.values);
-      for (const c of changes) for (const target of c.restart) restartFlags.mark(target, `Cấu hình: ${c.label}`);
-      if (changes.length) log(req, 'settings_update', changes.map((c) => `${c.label}: ${show(c.before)} → ${show(c.after)}`).join(' · '));
+      const mark = (cs) => { for (const c of cs) for (const target of c.restart) restartFlags.mark(target, `Cấu hình: ${c.label}`); };
+      const detail = (cs) => cs.map((c) => `${c.label}: ${show(c.before)} → ${show(c.after)}`).join(' · ');
+      const changes = settings.save(req.body?.values, { onApplied: mark });
+      if (changes.length) log(req, 'settings_update', detail(changes));
       res.json({ ok: true, changed: changes.length, settings: settings.view() });
-    } catch (err) { fail(res, err, 'Chưa lưu được cài đặt — thử lại, nếu vẫn lỗi hãy báo người cài đặt.'); }
+    } catch (err) {
+      if (err?.partial) {
+        log(req, 'settings_update', `(lưu dở dang) ${err.applied.map((c) => `${c.label}: ${show(c.before)} → ${show(c.after)}`).join(' · ')}`);
+        return res.status(500).json({ ok: false, error: err.message });
+      }
+      fail(res, err, 'Chưa lưu được cài đặt — thử lại, nếu vẫn lỗi hãy báo người cài đặt.');
+    }
   });
 
   r.get('/admin/welcome', ...guard, async (req, res) => {
