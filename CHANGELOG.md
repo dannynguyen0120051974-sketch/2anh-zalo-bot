@@ -2,6 +2,36 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [1.24.0] — 2026-10-08
+
+### Thêm
+
+- **Xưởng tạo sản phẩm:** người không phải chủ nhân nhờ bot làm slide PowerPoint có ảnh AI/ảnh web, giáo án 5512, văn bản NĐ30/Đoàn/Đảng, đề kiểm tra, đề KHTN tiếng Anh, SKKN, 6 loại trò chơi, thí nghiệm ảo, video giải thích (viết tay, cắt dán, Vox) và video bài giảng từ slide bằng 2Anh Studio; bot tự gửi tệp vào đúng cuộc trò chuyện. Công cụ mới `zalo_studio`.
+- **Văn bản Đoàn** dựng bằng bộ sinh cố định theo thể thức của skill `soan-van-ban-doan` và được bộ kiểm của skill soát.
+- **Dashboard:** hộp "Xưởng tạo sản phẩm" (4 nút) ở Mặc định, từng nhóm, Nhắn riêng và từng người; mục **Hạn mức xưởng** (hạn mức riêng từng người thắng số của nhóm, số của nhóm thắng số mặc định); Sức khoẻ máy chủ hiện lượt dùng, token và số ảnh xưởng theo người.
+- Plugin ghi `studio-policy.json` ngay lúc nạp để dashboard khoá nút Video đúng từ đầu (trước đây chỉ ghi sau lần nhờ xưởng đầu tiên).
+
+### Trả lượt
+
+- Chỉ trả lượt khi việc hỏng vì **lỗi máy chủ** và **chưa tốn gì** (không ảnh, token dưới ngưỡng nhỏ); mỗi người mỗi ngày được trả **tối đa bằng số lượt hạn mức** của mình. Việc hỏng vì nội dung, hoặc sau khi đã tốn token/ảnh, vẫn tính lượt.
+- Gateway khởi động lại giữa việc: sổ lượt ghi dần token/ảnh nên việc đã tốn bị ghi `failed` và tính lượt; việc chưa tốn gì được trả lượt (vẫn chịu trần trả mỗi ngày). Trước đây mọi việc dở đều được trả lượt.
+
+### An toàn
+
+- AI viết nội dung cho xưởng không có công cụ nào và chỉ được xin ảnh; ảnh do mã cố định vẽ/tải (chỉ https, chặn địa chỉ nội bộ, nối thẳng IP đã kiểm, kiểm byte đầu, có trần số ảnh). Bộ dựng là script cố định chạy trong tiến trình con không có khoá; trên Linux trong hộp cát systemd (user `nobody`, không thấy `/root`). Tệp gửi trả chỉ vào đúng cuộc trò chuyện người nhờ.
+- Nút xưởng thiếu hoặc đọc lỗi = tắt. Máy Windows: video luôn tắt.
+- Hộp cát bước có mạng (đọc giọng) vẫn chặn `localhost`, mạng nội bộ và địa chỉ của chính máy chủ, nhưng nay cho phép DNS: `IPAddressAllow` cho stub `127.0.0.53` và các máy chủ DNS trong `/etc/resolv.conf` chỉ khi chúng nằm ở dải bị chặn (không bao giờ mở loopback khác, địa chỉ máy chủ hay địa chỉ metadata đám mây). Bước không mạng không đổi.
+- Khởi tạo xưởng dừng các đơn vị `zalo-studio-*` còn sống sau khi gateway khởi động lại và xoá thư mục việc mồ côi (chỉ thư mục đúng dạng mã việc).
+
+### Sửa
+
+- Nút Video bị chính sách máy chủ khoá nay gửi `studioVideo: false` khi lưu, giao diện và giá trị lưu khớp nhau.
+- Lời gợi ý hạn mức nói rõ hạn mức riêng từng người thắng số của nhóm và số mặc định ("0 = không ai trong nhóm được nhờ, trừ người có hạn mức riêng").
+
+### Kiểm thử
+
+- 597 test JS (593 qua, 4 bỏ qua trên Windows, 0 hỏng) và 420 test Python, đều xanh.
+
 ## [1.23.1] — 2026-10-07
 
 ### Sửa (giao diện dashboard, rà theo UI/UX Pro Max)
