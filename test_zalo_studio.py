@@ -234,3 +234,62 @@ class ValidateTest(unittest.TestCase):
                        {"questions": [{"question": "a", "options": ["x", "y"], "correct": True}]}):
             with self.assertRaises(validate.SourceError, msg=patch_):
                 validate.check_quiz(json.dumps({**q, **patch_}))
+
+from plugins.zalo_tools.studio import sandbox  # noqa: E402
+
+
+class SandboxTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="zalo-studio-test-"))
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        (self.dir / "tmp").mkdir()
+
+    def test_clean_env_drops_secrets_and_points_temp_into_the_job(self):
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-x", "ZALO_BRIDGE_TOKEN": "t", "ANH_AI_KEY": "k",
+                                     "PATH": "/usr/bin", "LOCALAPPDATA": "C:/x"}):
+            env = sandbox.clean_env(self.dir, network=False)
+            self.assertFalse({"OPENAI_API_KEY", "ZALO_BRIDGE_TOKEN", "ANH_AI_KEY", "LOCALAPPDATA"} & set(env))
+            self.assertEqual(env["TEMP"], str(self.dir / "tmp"))
+            self.assertEqual(env["HOME"], str(self.dir))
+            self.assertEqual(env["PATH"], "/usr/bin")
+            self.assertIn("LOCALAPPDATA", sandbox.clean_env(self.dir, network=True))
+
+    def test_systemd_command_isolates_user_home_network_and_resources(self):
+        cmd = sandbox.systemd_command(["/opt/s/venv/bin/python", "tools/vi/giao_an.py", "xuat", "/var/lib/zalo-studio/j1/p"],
+                                      Path("/var/lib/zalo-studio/j1"), {"PATH": "/usr/bin", "HOME": "/var/lib/zalo-studio/j1"},
+                                      network=False, timeout=300, read_only=[])
+        self.assertEqual(cmd[:2], ["systemd-run", "--quiet"])
+        props = [cmd[i + 1] for i, part in enumerate(cmd) if part == "-p"]
+        for needed in ("User=nobody", "ProtectSystem=strict", "ProtectHome=tmpfs", "NoNewPrivileges=yes",
+                       "PrivateNetwork=yes", "CapabilityBoundingSet=", "RuntimeMaxSec=300",
+                       "ReadWritePaths=/var/lib/zalo-studio/j1"):
+            self.assertIn(needed, props)
+        self.assertEqual(cmd[cmd.index("--") + 1:], ["/opt/s/venv/bin/python", "tools/vi/giao_an.py", "xuat",
+                                                     "/var/lib/zalo-studio/j1/p"])
+        self.assertIn("HOME=/var/lib/zalo-studio/j1", cmd)
+        net = sandbox.systemd_command(["x"], Path("/w"), {}, network=True, timeout=10)
+        net_props = [net[i + 1] for i, part in enumerate(net) if part == "-p"]
+        self.assertNotIn("PrivateNetwork=yes", net_props)
+        self.assertTrue(any(p.startswith("IPAddressDeny=localhost") for p in net_props))
+
+    def test_mode_is_plain_off_linux_root_and_can_be_forced_off(self):
+        with patch.dict(os.environ, {"ZALO_STUDIO_SANDBOX": "none"}):
+            self.assertEqual(sandbox.mode(), "plain")
+        if os.name == "nt":
+            self.assertEqual(sandbox.mode(), "plain")
+
+    def test_read_only_paths_binds_the_python_store_and_extras(self):
+        with patch.dict(os.environ, {"ZALO_STUDIO_BIND": "/root/a, /root/b"}):
+            paths = sandbox.read_only_paths(None, Path("/root/.cache/ms-playwright"))
+        self.assertEqual(paths, [Path("/root/.cache/ms-playwright"), Path("/root/a"), Path("/root/b")])
+
+    async def test_run_captures_output_and_kills_on_timeout(self):
+        with patch.dict(os.environ, {"ZALO_STUDIO_SANDBOX": "none", "ZALO_BRIDGE_TOKEN": "bí-mật"}):
+            ok = await sandbox.run([sys.executable, "-c", "import os,json;print(json.dumps({'ready': True, 't': os.environ.get('ZALO_BRIDGE_TOKEN')}))"],
+                                   self.dir, timeout=60)
+            self.assertEqual(ok.code, 0)
+            self.assertEqual(json.loads(ok.out.strip().splitlines()[-1]), {"ready": True, "t": None})
+            # timeout=-29 → chờ tối đa 1 giây (run cộng 30 giây cho systemd tự dừng trước).
+            slow = await sandbox.run([sys.executable, "-c", "import time; time.sleep(30)"], self.dir, timeout=-29)
+            self.assertTrue(slow.timed_out)
+            self.assertIsNone(slow.code)
