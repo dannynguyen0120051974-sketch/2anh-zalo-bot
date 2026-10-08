@@ -39,8 +39,9 @@ class SourceError(ValueError):
 
 
 _FENCE = re.compile(r"^\s*```[a-zA-Z0-9_-]*\s*\n(.*?)\n```\s*$", re.S)
-# Ký tự điều khiển C0 (trừ \t, \n) và DEL: bỏ đi, không để lọt vào tệp Word/HTML/lệnh bộ dựng.
-_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+# Ký tự điều khiển C0 (trừ \t, \n), DEL, nửa cặp UTF-16 lẻ (``"\ud800"`` trong JSON) và U+FFFE/U+FFFF (không hợp lệ
+# trong XML): bỏ đi — không để lọt vào tệp Word/HTML/lệnh bộ dựng (UnicodeEncodeError/ValueError lúc dựng).
+_CONTROL = re.compile("[\x00-\x08\x0b-\x1f\x7f\ud800-\udfff￾￿]")
 
 
 def clean_text(text: Any, limit: int = MAX_SOURCE_CHARS) -> str:
@@ -305,6 +306,8 @@ def check_engine_json(text: str, allowed: Iterable[str], keys: Iterable[str]) ->
             return {k: prune(v) for k, v in value.items() if k in ENGINE_NESTED_KEYS}
         if isinstance(value, list):
             return [prune(v) for v in value]
+        if isinstance(value, str):
+            return _CONTROL.sub("", value)
         return value
 
     allowed_keys = set(keys)

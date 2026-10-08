@@ -73,11 +73,24 @@ SLIDE_PAGE = """ĐẦU RA: đúng một thẻ <svg>…</svg> cho trang {index}/{
 - Chữ không tràn khung; cỡ chữ thân ≥ 22."""
 
 
+class BudgetExceeded(Exception):
+    """Việc đã dùng quá trần token (``Recipe.max_tokens``) — dừng, tính lượt."""
+
+
 @dataclass
 class Usage:
     calls: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    limit: Optional[int] = None     # trần tổng token của cả việc; None = không trần
+
+    @property
+    def total(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+    def check(self) -> None:
+        if self.limit is not None and self.total >= self.limit:
+            raise BudgetExceeded(f"đã dùng {self.total} token, trần {self.limit}")
 
     def add(self, result: Any) -> None:
         usage = getattr(result, "usage", None)
@@ -115,8 +128,10 @@ def system_prompt(output: str, guides: Sequence[Tuple[str, str]]) -> str:
 async def _call(llm: Any, system: str, user: str, usage: Usage, *, max_tokens: int, purpose: str,
                 history: Sequence[Dict[str, str]] = ()) -> str:
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}, *history]
+    usage.check()
     result = await llm.acomplete(messages, max_tokens=max_tokens, timeout=CALL_TIMEOUT, purpose=purpose)
     usage.add(result)
+    usage.check()
     return str(getattr(result, "text", "") or "")
 
 

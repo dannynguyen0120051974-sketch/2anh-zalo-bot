@@ -138,7 +138,7 @@ systemd-run --quiet --wait --pipe --collect --service-type=exec --unit=zalo-stud
   -p InaccessiblePaths=<thư mục gắn lại>/.env   (nếu có)
   -E <môi trường đã lọc> -- <python|node> <script cố định> <tham số cố định>
 ```
-Đường dẫn cấu hình có khoảng trắng, nháy, `\`, `:`, `%`, `;` → lỗi rõ (`SandboxConfigError`), việc dừng, trả lượt. Hết giờ / huỷ: `systemctl stop zalo-studio-<mã việc>` rồi giết client. Video bài giảng: bước `video.py` (máy chủ xem trước trên 127.0.0.1 + Chromium) chạy KHÔNG mạng → loopback riêng của đơn vị, không đụng 127.0.0.1 của máy.
+Đường dẫn cấu hình có khoảng trắng, nháy, `\`, `:`, `%`, `;` → lỗi rõ (`SandboxConfigError`), việc dừng, trả lượt nếu việc chưa tốn gì. Hết giờ / huỷ: `systemctl stop zalo-studio-<mã việc>` rồi giết client. Video bài giảng: bước `video.py` (máy chủ xem trước trên 127.0.0.1 + Chromium) chạy KHÔNG mạng → loopback riêng của đơn vị, không đụng 127.0.0.1 của máy.
 Thư mục việc `/var/lib/zalo-studio/<id>` (không ở `/tmp`, `/var/tmp` vì `PrivateTmp`), trao cho `nobody` (`chown` không theo liên kết). Trước mỗi bước và khi gom kết quả: liên kết tượng trưng, tệp đặc biệt, liên kết cứng → gỡ, dừng việc, tính lượt. Tiến trình cha chỉ đọc/ghi trong thư mục việc qua `sandbox.read_file`/`write_file` (không theo liên kết, không ra ngoài). Lập kế hoạch ảnh, xử lý ảnh, kiểm slide, xuất PPTX: **không mạng**. Vẽ/tải ảnh: tiến trình cha (không trong hộp cát) qua `images.py`.
 
 **Windows (Lăng Tiêu), và Linux không dùng được systemd — không có hộp cát OS → chính sách cài đặt:** video **luôn tắt** (plugin ép tắt, dashboard khoá nút + ghi chú "Máy chủ Windows không có hộp cát — video tắt" / câu riêng cho Linux không hộp cát). POSIX: bộ dựng chạy trong nhóm tiến trình riêng, hết giờ giết cả nhóm (`killpg`). Các loại khác mặc định tắt cho mọi nhóm (thiếu khoá = tắt) — chủ bot chỉ bật cho nhóm/người tin cậy. Hàng rào còn lại: bước viết không công cụ; `validate.py`; dòng lệnh cố định; môi trường chỉ `PATH`, `SYSTEMROOT`… (không khoá); `TEMP`/`HOME`/`USERPROFILE` vào thư mục việc; hạn giờ + `taskkill /T`; `CREATE_NO_WINDOW`; ảnh vẫn qua `images.py`.
@@ -147,8 +147,8 @@ Thư mục việc `/var/lib/zalo-studio/<id>` (không ở `/tmp`, `/var/tmp` vì
 
 - `zalo_studio` trả lời ngay; việc chạy trên luồng `zalo-studio`. `ZALO_STUDIO_CONCURRENCY` 1 (tối đa 2), 5 chờ, 1 việc chưa xong/người.
 - Trần: lời nhờ 8.000 ký tự; tệp nguồn 60.000; trang SVG 120.000 (không ảnh `data:` — chỉ `img:<mã>`); ảnh ≤ 8 MB, PNG/JPEG, ≤ 8192 px mỗi cạnh, ≤ 40 MP; lời đọc video ≤ 180 s × 18 ký tự/s, ≤ 40 cảnh; slide ≤ 12 trang, ≤ 4 AI + 6 web; video ≤ 180 s, 720p, ≤ 12 AI + 8 web; tệp kết quả 50 MB (mp4 200 MB), ≤ 4 tệp. Lời gọi AI `timeout=300`; vẽ ảnh 150 s; tải ảnh 30 s.
-- Nội dung sai → viết lại đúng một lần. Ảnh slide không lấy được → bỏ ảnh đó (trang không được dùng mã của nó) và ghi chú; ảnh Vox không lấy được → việc hỏng, trả lượt.
-- Lỗi do máy (thiếu cài đặt, quá giờ, bộ dựng/bộ kiểm hỏng, ảnh không lấy được ở Vox, gửi không được, gateway khởi động lại, chủ bot vừa tắt nút) → trả lượt. Lỗi do nội dung → tính lượt. Lỗi lạ → trả lượt, câu chung.
+- Nội dung sai → viết lại đúng một lần. Ảnh slide không lấy được → bỏ ảnh đó (trang không được dùng mã của nó) và ghi chú; ảnh Vox không lấy được → việc hỏng, tính lượt (ảnh web tìm TRƯỚC ảnh AI, từ khoá không ra ảnh thì dừng khi chưa vẽ ảnh nào).
+- Trả lượt CHỈ khi lỗi do máy (thiếu cài đặt, AI/cổng không gọi được ngay lời gọi đầu, hộp cát cấu hình sai, gateway khởi động lại, lỗi lạ) VÀ việc chưa tốn gì (0 ảnh, token ≤ `jobs.SPEND_TOKENS` = 1 000) VÀ người này hôm nay chưa được trả quá `quota` lượt (sổ tự ghi `failed` + `refund_denied`). Hỏng sau khi đã tốn (bộ dựng/bộ kiểm hỏng, gửi không được, chủ bot vừa tắt nút…), lỗi nội dung (kể cả `UnicodeError`/`ValueError` của bộ dựng, bộ kiểm Đoàn báo lỗi thể thức), vượt trần token `Recipe.max_tokens` hay thời hạn tổng `Recipe.deadline` → tính lượt. Mọi kết cục ghi đủ token + ảnh. Câu lỗi gửi người ngoài bỏ đường dẫn/tên tệp mã (`jobs.public_message`).
 - Gửi: kiểm lại nút + nhóm "Hoạt động" + `dm_allows`, gửi dưới danh tính đã chụp. "Sidecar không phản hồi" → giữ thư mục 15 phút. Khởi động: việc dở → `refunded`; thư mục việc > 24 giờ → xoá.
 
 ## 17.8 Đồng hồ chi phí
@@ -199,7 +199,7 @@ Không còn quyết định nào chờ người dùng. Giai đoạn sau (không 
 | Chi phí ảnh AI | Trần mỗi việc (slide 4, video 12) × hạn mức/ngày; sổ đếm ảnh theo người; xem ở Sức khoẻ máy chủ |
 | Ảnh web có bản quyền | Chỉ Openverse giấy phép `by, by-sa, cc0, pdm`; ghi tác giả + giấy phép (slide: chữ nhỏ dưới ảnh; video: `image_sources.json` → dòng nguồn) |
 | Đổi DNS giữa lúc kiểm và lúc nối (DNS rebinding) | Nối thẳng IP đã kiểm, SNI/chứng chỉ theo tên gốc; kiểm lại mỗi chuyển hướng |
-| Cổng vẽ ảnh của 9router lỗi/hết hạn mức | Slide: bỏ ảnh đó, ghi chú; Vox: việc hỏng, trả lượt |
+| Cổng vẽ ảnh của 9router lỗi/hết hạn mức | Slide: bỏ ảnh đó, ghi chú; Vox: việc hỏng, tính lượt (đã tốn token viết) |
 | Video nặng trên VPS 4 lõi/3,9 GB | 1 việc/lúc, `MemoryMax`, `CPUQuota`, ≤ 180 s 720p |
 | `systemd-run` trong `hermes-gateway` bị từ chối | Kiểm thật ở triển khai; không bật cho khách tới khi sửa; không tự đặt `ZALO_STUDIO_SANDBOX=none` |
 | Repo studio hai máy lệch | Công thức thử nhiều đường dẫn hướng dẫn; cập nhật VPS khi triển khai |

@@ -14,6 +14,8 @@ import os
 import re
 import secrets
 import shutil
+import stat
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -41,10 +43,19 @@ LECTURE_VOICE = "vi-VN-HoaiMyNeural"
 # Mã lỗi của bộ kiểm văn bản Đoàn do DỮ LIỆU còn thiếu (bản nháp) — không phải lỗi thể thức của bộ sinh.
 DOAN_DRAFT_CODES = {"placeholder": "Bản nháp: còn ô [CẦN BỔ SUNG] cần điền",
                     "invalid_document_number": "Số văn bản để trống cho văn thư điền"}
+# Trả lượt CHỈ khi việc chưa tốn gì: không ảnh nào, token ≤ ngưỡng nhỏ này (một lời gọi AI thật — có hướng dẫn
+# trong system prompt — luôn vượt xa). Lỗi máy sau khi đã tốn (bộ dựng hỏng, gửi không được…) vẫn tính lượt:
+# nếu không, người ngoài cố tình làm hỏng (tìm ảnh không ra, ký tự lạ…) là được việc miễn phí vô hạn.
+SPEND_TOKENS = 1_000
+# Trang thí nghiệm ảo (2Anh Studio) chỉ cần CSS + JS nội tuyến và canvas — như games.html, không mạng, không ảnh.
+THI_NGHIEM_CSP = ("default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'none'; "
+                  "connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; "
+                  "worker-src 'none'; base-uri 'none'; form-action 'none'")
 
 
 class StudioError(Exception):
-    """Việc hỏng. ``refund``: lỗi do máy (trả lượt); ngược lại do nội dung (vẫn tính lượt)."""
+    """Việc hỏng. ``refund``: lỗi do máy — chỉ được trả lượt khi việc CHƯA tốn gì (``spent``) và người này chưa hết
+    trần trả lượt hôm nay (sổ lượt); ngược lại (do nội dung) luôn tính lượt."""
 
     def __init__(self, message: str, *, refund: bool):
         super().__init__(message)
@@ -87,6 +98,55 @@ class Outcome:
     notes: List[str]
     usage: author.Usage
     images: int = 0
+
+
+def spent(usage: author.Usage, images: int) -> bool:
+    """Việc đã tốn tiền thật chưa: có ảnh, token vượt ngưỡng nhỏ, hoặc đã gọi AI mà không biết số token."""
+    tokens = usage.input_tokens + usage.output_tokens
+    return images > 0 or tokens > SPEND_TOKENS or (usage.calls > 0 and tokens == 0)
+
+
+# Đường dẫn tuyệt đối (Windows/POSIX/UNC), tên tệp mã — không đưa cho người ngoài.
+_PATHISH = re.compile(r"(?<![\w/\\])(?:[A-Za-z]:[\\/]|\\\\|/(?=[\w.~-]+/))[^\s'\"<>|,;()]*"
+                      r"|\b[\w.-]+\.(?:py|pyc|js|mjs|cjs|ts|json|sh|ps1|exe|dll|so|env|db|log)\b", re.I)
+_INTERNAL = re.compile(r"traceback|exception|errno|winerror|\b[A-Z][a-z]+Error\b|\bline \d+|File \"", re.I)
+
+
+def public_message(text: str) -> str:
+    """Câu lỗi gửi cho người nhờ: bỏ đường dẫn/tên tệp mã; dấu vết lỗi bên trong → câu chung."""
+    text = " ".join(str(text or "").split())
+    if _INTERNAL.search(text):
+        return "máy chủ gặp lỗi khi dựng sản phẩm"
+    return _PATHISH.sub("…", text)[:300]
+
+
+def _regular_files(job_dir: Path, folder: Path, suffix: str) -> List[Path]:
+    """Tệp thường có đuôi ``suffix`` trong ``folder`` — ``scandir`` + ``lstat`` (không theo liên kết); gặp liên kết,
+    FIFO, tệp nhiều liên kết cứng → ``UnsafeJobDir``. Thư mục chưa có → []."""
+    folder = sandbox.contained(job_dir, folder)
+    if not os.path.isdir(folder):
+        return []
+    out = []
+    with os.scandir(folder) as entries:
+        for entry in entries:
+            if not entry.name.lower().endswith(suffix):
+                continue
+            st = os.lstat(entry.path)
+            if not stat.S_ISREG(st.st_mode) or st.st_nlink > 1:
+                raise sandbox.UnsafeJobDir("thư mục kết quả có liên kết/tệp lạ")
+            out.append(Path(entry.path))
+    return sorted(out)
+
+
+def add_csp(job_dir: Path, page: Path, policy: str = THI_NGHIEM_CSP) -> None:
+    """Chèn ``<meta http-equiv="Content-Security-Policy">`` ngay sau ``<head>`` (trước mọi style/script) — đọc/ghi
+    không theo liên kết. Không có ``<head>`` → trang lạ, dừng (không gửi trang không có CSP)."""
+    html = sandbox.read_file(job_dir, page, limit=DEFAULT_MAX_FILE_BYTES).decode("utf-8")
+    match = re.search(r"<head(?:\s[^>]*)?>", html, re.I)
+    if not match or re.search(r"http-equiv\s*=\s*[\"']?content-security-policy", html, re.I):
+        raise StudioError("trang thí nghiệm không đúng khuôn", refund=False)
+    meta = f'\n<meta http-equiv="Content-Security-Policy" content="{policy}">'
+    sandbox.write_file(job_dir, page, (html[:match.end()] + meta + html[match.end():]).encode("utf-8"))
 
 
 # ---------------------------------------------------------------------- dựng
@@ -135,7 +195,7 @@ class Builder:
         self.job, self.llm, self.where, self.job_dir = job, llm, where, job_dir
         self.recipe = job.recipe
         self.project = job_dir / "p"
-        self.usage = author.Usage()
+        self.usage = author.Usage(limit=self.recipe.max_tokens)
         self.notes: List[str] = []
         self.images_used = 0
         self.guides = author.read_guides(recipes.guide_paths(self.recipe, where, job.options))
@@ -151,16 +211,19 @@ class Builder:
                   network: Optional[bool] = None) -> sandbox.Result:
         """``network``: None = theo công thức. Bước nào không cần mạng thì truyền False (lập kế hoạch ảnh, kiểm…).
 
-        Trước MỖI bước, ``prepare_job_dir`` quét thư mục việc: bộ dựng (đã chạy nội dung của AI) để lại liên kết
-        tượng trưng / tệp đặc biệt / liên kết cứng → gỡ và dừng việc, TÍNH lượt (nghi do nội dung). Đường dẫn cấu
-        hình không dùng được cho systemd (khoảng trắng…) → lỗi máy, trả lượt."""
+        Trước VÀ SAU mỗi bước, quét thư mục việc: bộ dựng (đã chạy nội dung của AI) để lại liên kết tượng trưng /
+        tệp đặc biệt (FIFO…) / liên kết cứng → gỡ và dừng việc, TÍNH lượt (nghi do nội dung) — nên mọi chỗ tiến
+        trình cha đọc/ghi sau bước này không gặp liên kết. Đường dẫn cấu hình không dùng được cho systemd (khoảng
+        trắng…) → lỗi máy."""
         try:
             sandbox.prepare_job_dir(self.job_dir)
             read_only = sandbox.read_only_paths(str(self.where.python) if self.where.python else None,
                                                 self.where.studio, *extra)
-            return await sandbox.run(argv, self.job_dir, timeout=timeout or self.recipe.timeout,
-                                     network=self.recipe.network if network is None else network,
-                                     read_only=read_only, extra_env=extra_env)
+            result = await sandbox.run(argv, self.job_dir, timeout=timeout or self.recipe.timeout,
+                                       network=self.recipe.network if network is None else network,
+                                       read_only=read_only, extra_env=extra_env)
+            sandbox.scan_job_dir(self.job_dir)
+            return result
         except sandbox.UnsafeJobDir as exc:
             logger.warning("[zalo] xưởng %s: %s", self.job.id, exc)
             raise StudioError("bộ dựng để lại tệp không an toàn nên đã dừng", refund=False) from None
@@ -231,13 +294,18 @@ class Builder:
             if self.project.exists():
                 shutil.rmtree(self.project)
             self.project.mkdir(parents=True)
-            (self.project / self.recipe.source).write_text(text, encoding="utf-8")
+            sandbox.write_file(self.job_dir, self.project / self.recipe.source, text.encode("utf-8"))
             if self.recipe.kind == "video" and validate.front_matter(text)[0].get("phong-cach") == "vox":
                 await self.vox_images(extra, extra_env)
             args = [a.replace("{project}", str(self.project)) for a in self.recipe.args]
             result = await self.run([str(self.where.python), str(self.where.studio / self.recipe.script), *args],
                                     extra=extra, extra_env=extra_env)
-            return self._studio_result(result)
+            files = self._studio_result(result)
+            if self.recipe.kind == "thi_nghiem":
+                for page in files:
+                    if page.suffix.lower() == ".html":
+                        add_csp(self.job_dir, page)
+            return files
 
         return await self.with_repair(attempt, await self.write())
 
@@ -274,6 +342,8 @@ class Builder:
             raise validate.SourceError(f"video cần quá {images.MAX_AI_IMAGES} ảnh AI — bớt nhịp `anh: ve:`/nền cảnh")
         if sum(1 for w in wanted if w[0] == "tim") > images.MAX_WEB_IMAGES:
             raise validate.SourceError(f"video cần quá {images.MAX_WEB_IMAGES} ảnh web — bớt nhịp `anh: tim:`")
+        # Tìm ảnh web TRƯỚC khi vẽ ảnh AI: từ khoá không ra ảnh thì dừng khi chưa tốn tiền vẽ.
+        wanted.sort(key=lambda w: w[0] != "tim")
         sources = []
         for source, prompt, size, target in wanted:
             if target.is_file():
@@ -283,7 +353,8 @@ class Builder:
                 width, height = (int(n) for n in size.split("x"))
                 picture = await self.picture(request, size=size, orientation="portrait" if width < height else "landscape")
             except images.ImageError as exc:
-                raise StudioError(f"không lấy được ảnh cho video ({exc})", refund=True) from None
+                # Từ khoá/mô tả do nội dung chọn → tính lượt (không thì tìm-không-ra là lối lấy việc miễn phí).
+                raise StudioError(f"không lấy được ảnh cho video ({exc})", refund=False) from None
             try:
                 sandbox.write_file(self.job_dir, target, picture.data)   # không theo liên kết, không ra ngoài
             except sandbox.UnsafeJobDir:
@@ -322,7 +393,7 @@ class Builder:
                 shutil.rmtree(self.project)
             self.project.mkdir(parents=True)
             source = self.project / self.recipe.source
-            source.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            sandbox.write_file(self.job_dir, source, json.dumps(data, ensure_ascii=False).encode("utf-8"))
             out = self.project / "van-ban.docx"
             script = skill / recipes.node_engine(self.recipe, data["loai_van_ban"])
             result = await self.run([self.where.node, str(script), "--input", str(source), "--output", str(out)],
@@ -365,16 +436,32 @@ class Builder:
             self.project.mkdir(parents=True, exist_ok=True)
             out = self.project / "van-ban-doan.docx"
             await asyncio.to_thread(doan_docx.build, data, out)
-            report = await asyncio.to_thread(_doan_report, validator, out)
-            errors = [i for i in report.get("items", []) if i.get("level") == "error"]
+            report = await self.doan_report(validator, out)
+            errors = [i for i in report.get("items") or [] if isinstance(i, dict) and i.get("level") == "error"]
             hard = [i for i in errors if i.get("code") not in DOAN_DRAFT_CODES]
             if hard:
                 logger.warning("[zalo] xưởng %s: bộ kiểm văn bản Đoàn báo %s", self.job.id, hard)
-                raise StudioError("văn bản Đoàn chưa qua bộ kiểm thể thức", refund=True)
+                raise StudioError("văn bản Đoàn chưa qua bộ kiểm thể thức", refund=False)
             self.notes = [DOAN_DRAFT_CODES[i["code"]] for i in errors] + ["Chưa ký, chưa đóng dấu"]
             return collect(self.job_dir, self.project, self.recipe.outputs)
 
         return await self.with_repair(attempt, await self.write())
+
+    async def doan_report(self, validator: Path, docx: Path) -> Dict[str, Any]:
+        """Bộ kiểm của skill soan-van-ban-doan chạy như MỌI bộ dựng: tiến trình con trong hộp cát, dòng lệnh cố định
+        (``validate_van_ban_doan.py <docx> --profile doan --json``), không mạng — không nạp mã skill vào gateway.
+        Python của gateway (có python-docx) được gắn chỉ đọc."""
+        python = Path(sys.executable)
+        result = await self.run([str(python), str(validator), str(docx), "--profile", "doan", "--json"], timeout=120,
+                                network=False, extra=[validator.parent, Path(sys.prefix), *sandbox.read_only_paths(str(python))])
+        try:
+            report = json.loads(result.out) if not result.timed_out and result.code in (0, 2) else None
+        except ValueError:
+            report = None
+        if not isinstance(report, dict):
+            logger.warning("[zalo] xưởng %s: bộ kiểm văn bản Đoàn lỗi %s — %s", self.job.id, result.code, result.err[-2000:])
+            raise StudioError("chưa kiểm được thể thức văn bản Đoàn", refund=True)
+        return report
 
     async def _deck(self) -> Tuple[Dict[str, Any], Dict[int, str], Path, Dict[str, Dict[str, str]]]:
         """Dàn ý → ảnh → trang SVG → bộ kiểm (sửa 1 vòng). Trả (dàn ý, trang, thư mục scripts, ảnh)."""
@@ -391,7 +478,9 @@ class Builder:
             raise StudioError(f"chưa lập được dàn ý ({exc})", refund=False) from None
         init = await self.run([py, str(scripts / "project_manager.py"), "init", "deck", "--quick-generate",
                                "--dir", str(self.job_dir)], timeout=120, network=False)
-        decks = sorted(self.job_dir.glob("deck_*"))
+        with os.scandir(self.job_dir) as entries:
+            decks = sorted(Path(e.path) for e in entries
+                           if e.name.startswith("deck_") and stat.S_ISDIR(os.lstat(e.path).st_mode))
         if init.code != 0 or not decks:
             raise StudioError("chưa tạo được dự án slide", refund=True)
         self.project = decks[0]
@@ -401,13 +490,13 @@ class Builder:
         pages = {}
         for index in range(1, len(outline["pages"]) + 1):
             pages[index] = await self._page(outline, index, None, refs, available)
+        svg_dir = self.project / "svg_output"
         for round_ in (1, 2):
-            svg_dir = self.project / "svg_output"
-            for old in svg_dir.glob("*.svg"):
-                old.unlink()
+            for old in _regular_files(self.job_dir, svg_dir, ".svg"):
+                os.unlink(old)
             for index, text in pages.items():
                 role = outline["pages"][index - 1]["role"]
-                (svg_dir / f"{index:02d}_{role}.svg").write_text(text, encoding="utf-8")
+                sandbox.write_file(self.job_dir, svg_dir / f"{index:02d}_{role}.svg", text.encode("utf-8"))
             await self.run([py, str(scripts / "compact_svg_styles.py"), str(svg_dir), "--inplace"], timeout=120,
                            network=False)
             check = await self.run([py, str(scripts / "svg_quality_checker.py"), str(self.project), "--quick-generate",
@@ -440,10 +529,11 @@ class Builder:
         except validate.SourceError as exc:
             raise StudioError(f"chưa viết được lời giảng ({exc})", refund=False) from None
         notes_dir = self.project / "notes"
-        notes_dir.mkdir(exist_ok=True)
-        for svg in sorted((self.project / "svg_output").glob("*.svg")):
-            index = int(svg.name[:2])
-            (notes_dir / f"{svg.stem}.md").write_text(notes[index] + "\n", encoding="utf-8")
+        for svg in _regular_files(self.job_dir, self.project / "svg_output", ".svg"):
+            index = int(svg.name[:2]) if svg.name[:2].isdigit() else 0
+            if index not in notes:
+                raise StudioError("trang slide không khớp lời giảng", refund=True)
+            sandbox.write_file(self.job_dir, notes_dir / f"{svg.stem}.md", (notes[index] + "\n").encode("utf-8"))
         steps = (
             ([py, str(scripts / "notes_to_audio.py"), str(self.project), "--voice", LECTURE_VOICE], 900, True),
             ([py, str(scripts / "svg_to_pptx.py"), str(self.project), "--quick-generate", "--with-notes",
@@ -480,37 +570,48 @@ class Builder:
             return await self._page(outline, index, (text, str(exc)), refs, available)
 
     def _checker_errors(self) -> Dict[int, str]:
+        """Báo cáo của bộ kiểm (viết trong hộp cát) — đọc bằng ``read_file`` (không theo liên kết, không FIFO, có trần)."""
         try:
-            report = json.loads((self.project / "validation" / "svg_quality_report.json").read_text(encoding="utf-8"))
+            raw = sandbox.read_file(self.job_dir, self.project / "validation" / "svg_quality_report.json", limit=5_000_000)
+            report = json.loads(raw.decode("utf-8"))
         except (OSError, ValueError):
             return {}
         out = {}
-        for item in report.get("files") or []:
+        for item in (report.get("files") or []) if isinstance(report, dict) else []:
+            if not isinstance(item, dict):
+                continue
             name = str(item.get("file") or "")
             if item.get("errors") and name[:2].isdigit():
                 out[int(name[:2])] = "; ".join(str(e) for e in item["errors"])[:1500]
         return out
 
 
-def _doan_report(validator: Path, docx: Path) -> Dict[str, Any]:
-    """Chạy ``validate_document`` của skill soan-van-ban-doan (mã của chủ bot) trên tệp do bộ sinh cố định tạo."""
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location("zalo_studio_doan_validator", validator)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.validate_document(docx, profile="doan")
-
-
-async def produce(job: Job, llm: Any, job_dir: Path, where: Optional[recipes.Places] = None) -> Outcome:
+async def produce(job: Job, llm: Any, job_dir: Path, where: Optional[recipes.Places] = None, *,
+                  track: Optional[List["Builder"]] = None) -> Outcome:
+    """Làm một việc. Mọi lỗi ra ngoài mang ``usage``/``images`` đã tốn; ``track`` nhận Builder để bên gọi vẫn thấy chi
+    phí khi việc bị huỷ giữa chừng (hết thời hạn). Lỗi lạ do nội dung (ký tự không mã hoá được, giá trị python-docx
+    từ chối…) và vượt trần token → ``StudioError`` tính lượt."""
     where = where or recipes.places()
     reason = recipes.missing(job.recipe, where)
     if reason:
         raise StudioError(reason, refund=True)
     builder = Builder(job, llm, where, job_dir)
+    if track is not None:
+        track.append(builder)
     try:
-        files = await getattr(builder, job.recipe.builder)()
-    except StudioError as exc:
+        try:
+            files = await getattr(builder, job.recipe.builder)()
+        except author.BudgetExceeded:
+            raise StudioError("việc dùng quá trần token của một việc nên đã dừng", refund=False) from None
+        except sandbox.UnsafeJobDir as exc:
+            logger.warning("[zalo] xưởng %s: %s", job.id, exc)
+            raise StudioError("bộ dựng để lại tệp không an toàn nên đã dừng", refund=False) from None
+        except validate.SourceError as exc:
+            raise StudioError(f"nội dung chưa dựng được ({exc})", refund=False) from None
+        except (UnicodeError, ValueError) as exc:
+            logger.info("[zalo] xưởng %s: nội dung không dựng được: %r", job.id, exc)
+            raise StudioError("nội dung có ký tự hoặc giá trị không dựng được", refund=False) from None
+    except BaseException as exc:
         exc.usage = builder.usage  # type: ignore[attr-defined]
         exc.images = builder.images_used  # type: ignore[attr-defined]
         raise
@@ -591,18 +692,36 @@ class Studio:
                 self._pending.pop(job.id, None)
 
     async def run_job(self, job: Job) -> None:
-        """Làm một việc từ đầu tới cuối; không bao giờ ném ra ngoài."""
+        """Làm một việc từ đầu tới cuối; không bao giờ ném ra ngoài. Mọi kết cục ghi sổ đủ token + ảnh đã tốn.
+
+        Trả lượt chỉ khi: lỗi do máy (``StudioError.refund`` hoặc lỗi lạ) VÀ việc chưa tốn gì (``spent``) VÀ người này
+        chưa hết trần trả lượt hôm nay (sổ lượt tự đổi thành ``failed``). Cả việc có thời hạn tổng ``recipe.deadline``."""
         job_dir = sandbox.work_root() / job.id
-        usage = author.Usage()
+        track: List[Builder] = []
+        outcome: Optional[Outcome] = None
         keep = False
         self.ledger.finish(job.id, "running")
+
+        def cost() -> Tuple[author.Usage, int]:
+            if outcome is not None:
+                return outcome.usage, outcome.images
+            if track:
+                return track[0].usage, track[0].images_used
+            return author.Usage(), 0
+
         try:
             job_dir.mkdir(parents=True, exist_ok=False)
             llm = self.llm()
             if llm is None:
                 raise StudioError("Hermes trên máy chủ chưa hỗ trợ xưởng (thiếu ctx.llm)", refund=True)
-            outcome = await produce(job, llm, job_dir)
-            usage = outcome.usage
+            loop = asyncio.get_running_loop()
+            started = loop.time()
+            try:
+                outcome = await asyncio.wait_for(produce(job, llm, job_dir, track=track), timeout=job.recipe.deadline)
+            except asyncio.TimeoutError:
+                if loop.time() - started < job.recipe.deadline - 1:
+                    raise  # hết giờ của một lời gọi bên trong, không phải thời hạn của việc
+                raise StudioError("làm quá thời hạn của một việc nên đã dừng", refund=False) from None
             if not self.still_allowed(job):
                 raise StudioError("chủ bot vừa tắt tính năng này", refund=True)
             left = self.quota_left(job)
@@ -616,20 +735,23 @@ class Studio:
                 keep = True  # Zalo chưa xác nhận: tệp có thể vẫn đang gửi — xoá sau
             elif not sent:
                 raise StudioError("chưa gửi được tệp vào Zalo", refund=True)
-            self.ledger.finish(job.id, "ok", input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
-                               images=outcome.images)
-        except StudioError as exc:
+            self.ledger.finish(job.id, "ok", input_tokens=outcome.usage.input_tokens,
+                               output_tokens=outcome.usage.output_tokens, images=outcome.images)
+        except Exception as exc:
+            usage, images_used = cost()
             usage = getattr(exc, "usage", usage)
-            logger.info("[zalo] xưởng %s (%s, %s): %s", job.id, job.kind, job.uid, exc)
-            self.ledger.finish(job.id, "refunded" if exc.refund else "failed", input_tokens=usage.input_tokens,
-                               output_tokens=usage.output_tokens, error=str(exc), images=getattr(exc, "images", 0))
-            tail = " Lượt này không bị trừ." if exc.refund else ""
-            await self._safe_notify(job, f"Xin lỗi {job.name}, chưa làm được {job.recipe.label}: {exc}.{tail}")
-        except Exception as exc:  # lỗi lạ: trả lượt, báo gọn, ghi đủ vào log
-            logger.exception("[zalo] xưởng %s hỏng bất ngờ: %s", job.id, exc)
-            self.ledger.finish(job.id, "refunded", input_tokens=usage.input_tokens,
-                               output_tokens=usage.output_tokens, error="lỗi bên trong")
-            await self._safe_notify(job, f"Xin lỗi {job.name}, xưởng gặp lỗi khi làm {job.recipe.label}. Lượt này không bị trừ.")
+            images_used = getattr(exc, "images", images_used)
+            if isinstance(exc, StudioError):
+                logger.info("[zalo] xưởng %s (%s, %s): %s", job.id, job.kind, job.uid, exc)
+                machine, error, said = exc.refund, str(exc), public_message(str(exc))
+            else:  # lỗi lạ: báo gọn, ghi đủ vào log
+                logger.exception("[zalo] xưởng %s hỏng bất ngờ: %s", job.id, exc)
+                machine, error, said = True, "lỗi bên trong", "xưởng gặp lỗi bên trong"
+            wanted = "refunded" if machine and not spent(usage, images_used) else "failed"
+            status = self.ledger.finish(job.id, wanted, input_tokens=usage.input_tokens,
+                                        output_tokens=usage.output_tokens, error=error, images=images_used)
+            tail = " Lượt này không bị trừ." if status == "refunded" else ""
+            await self._safe_notify(job, f"Xin lỗi {job.name}, chưa làm được {job.recipe.label}: {said}.{tail}")
         finally:
             if keep:
                 timer = threading.Timer(900, shutil.rmtree, args=(job_dir,), kwargs={"ignore_errors": True})

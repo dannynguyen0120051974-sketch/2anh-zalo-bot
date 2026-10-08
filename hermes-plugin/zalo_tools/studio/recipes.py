@@ -30,6 +30,10 @@ class Recipe:
     options: Dict[str, Tuple[str, ...]] = field(default_factory=dict)
     # Hướng dẫn thêm theo giá trị lựa chọn đầu tiên (video: vox đọc nhịp Vox; viết tay đọc cảnh viết tay).
     extra_guides: Dict[str, Tuple[Tuple[str, Tuple[str, ...]], ...]] = field(default_factory=dict)
+    # Trần của CẢ việc: tổng token AI (vào + ra; vượt → dừng, tính lượt) và thời hạn tổng (giây, asyncio.wait_for).
+    # Mặc định đủ cho 2 lời gọi viết (bản đầu + một lần sửa) với hướng dẫn ~20k token mỗi lời gọi.
+    max_tokens: int = 150_000
+    deadline: int = 1_500
 
 
 GAME_TYPES = ("quiz", "matching", "crossword", "spinwheel", "flashcard", "timer")
@@ -76,7 +80,9 @@ RECIPES: Dict[str, Recipe] = {r.kind: r for r in (
                    ("studio", ("skills/ppt-master/references/canvas-formats.md",)),
                    ("studio", ("skills/ppt-master/references/semantic-svg.md",)),
                    ("studio", ("skills/ppt-master/references/shared-standards-core.md",))),
-           outputs=(".pptx",), timeout=900, options={"loai": SLIDE_TYPES}),
+           outputs=(".pptx",), timeout=900, options={"loai": SLIDE_TYPES},
+           # dàn ý + ≤ 12 trang + sửa trang + một vòng sửa theo bộ kiểm, ~25k token mỗi lời gọi
+           max_tokens=800_000, deadline=3_600),
     Recipe("giao_an", "studioDocs", "giáo án 5512 (Word)", "giao-an.md", "studio_cli",
            guides=(("studio", ("docs/vi/tro-ly/giao-an.md",)), ("studio", ("docs/vi/tro-ly/nang-luc-so-va-ai.md",))),
            script="tools/vi/giao_an.py", args=("xuat", "{project}"), outputs=(".docx",)),
@@ -111,6 +117,7 @@ RECIPES: Dict[str, Recipe] = {r.kind: r for r in (
            script="tools/vi/thi_nghiem.py", args=("{project}",), outputs=(".html", ".docx")),
     Recipe("video", "studioVideo", "video giải thích (MP4)", "video.md", "studio_cli",
            script="tools/vi/video_ma.py", args=("{project}",), outputs=(".mp4",), timeout=1800, network=True,
+           max_tokens=200_000, deadline=3_600,
            options={"kieu": ("viet-tay", "cat-dan", "vox")},
            extra_guides={
                "vox": (("studio", ("docs/vi/tro-ly/video-giai-thich.md",)), ("studio", ("docs/vi/tro-ly/nhip-vox.md",))),
@@ -125,7 +132,8 @@ RECIPES: Dict[str, Recipe] = {r.kind: r for r in (
                    ("studio", ("skills/ppt-master/references/canvas-formats.md",)),
                    ("studio", ("skills/ppt-master/references/semantic-svg.md",)),
                    ("studio", ("skills/ppt-master/references/shared-standards-core.md",))),
-           outputs=(".mp4",), timeout=2400, network=True, options={"loai": SLIDE_TYPES}),
+           outputs=(".mp4",), timeout=2400, network=True, options={"loai": SLIDE_TYPES},
+           max_tokens=900_000, deadline=7_200),
 )}
 
 
