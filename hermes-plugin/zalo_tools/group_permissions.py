@@ -17,6 +17,7 @@ là "theo cờ toàn cục" ``ZALO_GROUP_REPLY_ONLY_TAGGED`` của adapter.
 import json
 import logging
 import os
+import sys
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -59,6 +60,28 @@ _TOOL_FEATURE = {tool: feature for feature, tools in FEATURE_TOOLS.items() for t
 DM_FEATURES = tuple(feature for feature in FEATURES if feature != "groupCron")
 DM_WHO = ("owners", "list", "everyone")
 
+# Xưởng tạo sản phẩm (spec §17): 4 nút, nằm cùng ``features`` của mặc định/nhóm/
+# nhắn riêng/từng người. KHÁC 9 nút cũ: thiếu khoá = TẮT, đọc tệp lỗi = TẮT —
+# xưởng dùng tài nguyên AI của chủ bot nên không bao giờ mở vì lỗi.
+STUDIO_FEATURES = ("studioSlides", "studioDocs", "studioExams", "studioVideo")
+STUDIO_LABELS: Dict[str, str] = {
+    "studioSlides": "làm slide PowerPoint",
+    "studioDocs": "soạn văn bản và giáo án",
+    "studioExams": "làm đề thi, SKKN, trò chơi, thí nghiệm ảo",
+    "studioVideo": "làm video",
+}
+# Công cụ của xưởng: một công cụ, nút nào áp tuỳ ``kind`` (xem studio/recipes.py).
+STUDIO_TOOLS = frozenset({"zalo_studio"})
+# Chính sách cài đặt (spec §17.6): máy Windows không có hộp cát của hệ điều hành → video (bộ dựng nặng nhất, có
+# mạng) luôn tắt ở đây, bất kể tệp quyền nói gì. Linux chạy không hộp cát cũng vậy — xem video_policy().
+# Dashboard cùng máy hiện ghi chú và khoá nút.
+VIDEO_BLOCKED = sys.platform == "win32"
+WINDOWS_VIDEO_NOTE = "Máy chủ Windows không có hộp cát — video tắt"
+PLAIN_VIDEO_NOTE = ("Máy chủ chưa dùng được hộp cát systemd (cần Linux, gateway chạy bằng root, có systemd-run, "
+                    "không đặt ZALO_STUDIO_SANDBOX=none) — video tắt")
+DEFAULT_STUDIO_QUOTA = 3
+MAX_STUDIO_QUOTA = 50
+
 _lock = threading.Lock()
 _cache: Dict[str, Any] = {"key": None, "data": None}
 
@@ -87,6 +110,13 @@ def _bools(raw: Any, keys) -> Dict[str, bool]:
     return {key: raw[key] for key in keys if isinstance(raw.get(key), bool)}
 
 
+def _quota(value: Any) -> Optional[int]:
+    """Số lượt xưởng hợp lệ (số nguyên 0–50, không phải bool) hoặc None."""
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= MAX_STUDIO_QUOTA:
+        return value
+    return None
+
+
 def _layer(raw: Any) -> Dict[str, Any]:
     """Một lớp (defaults hoặc một nhóm): chỉ giữ khoá hợp lệ, đúng kiểu bool."""
     if not isinstance(raw, dict):
@@ -95,6 +125,30 @@ def _layer(raw: Any) -> Dict[str, Any]:
     features = _bools(raw.get("features"), FEATURES)
     if features:
         out["features"] = features
+    studio = _bools(raw.get("features"), STUDIO_FEATURES)
+    if studio:
+        out["studio"] = studio
+    quota = _quota(raw.get("studioQuota"))
+    if quota is not None:
+        out["studioQuota"] = quota
+    return out
+
+
+def _studio_section(raw: Any) -> Dict[str, Any]:
+    """Mục ``studio`` gốc: ``quota`` mặc định mỗi người mỗi ngày, ``people[uid].quota`` riêng từng người."""
+    if not isinstance(raw, dict):
+        return {}
+    out: Dict[str, Any] = {"people": {}}
+    quota = _quota(raw.get("quota"))
+    if quota is not None:
+        out["quota"] = quota
+    people = raw.get("people") if isinstance(raw.get("people"), dict) else {}
+    for uid, entry in people.items():
+        if not (str(uid).isascii() and str(uid).isdigit()) or len(str(uid)) > 32:
+            continue
+        quota = _quota(entry.get("quota")) if isinstance(entry, dict) else None
+        if quota is not None:
+            out["people"][str(uid)] = quota
     return out
 
 
@@ -102,15 +156,18 @@ def _dm(raw: Any) -> Dict[str, Any]:
     """Mục ``dm``: ``who`` hợp lệ, 8 nút đúng kiểu, ``people`` khoá là UID số — giống ``normalizeDm`` (dm-rules.js)."""
     if not isinstance(raw, dict):
         return {}
-    out: Dict[str, Any] = {"features": _bools(raw.get("features"), DM_FEATURES), "people": {}}
+    out: Dict[str, Any] = {"features": _bools(raw.get("features"), DM_FEATURES), "people": {},
+                           "studio": _bools(raw.get("features"), STUDIO_FEATURES)}
     if raw.get("who") in DM_WHO:
         out["who"] = raw["who"]
     people = raw.get("people") if isinstance(raw.get("people"), dict) else {}
     for uid, entry in people.items():
         if not (str(uid).isascii() and str(uid).isdigit()) or len(str(uid)) > 32:
             continue
+        own = entry.get("features") if isinstance(entry, dict) else None
         out["people"][str(uid)] = {
-            "features": _bools(entry.get("features") if isinstance(entry, dict) else None, DM_FEATURES),
+            "features": _bools(own, DM_FEATURES),
+            "studio": _bools(own, STUDIO_FEATURES),
         }
     return out
 
@@ -124,6 +181,7 @@ def _parse(text: str) -> Dict[str, Any]:
         "defaults": _layer(data.get("defaults")),
         "groups": {str(gid): _layer(entry) for gid, entry in groups.items()},
         "dm": _dm(data.get("dm")),
+        "studio": _studio_section(data.get("studio")),
     }
 
 
@@ -204,3 +262,75 @@ def dm_disabled_features(uid: str) -> List[str]:
     """Các nút đang tắt khi người này nhắn riêng, theo thứ tự DM_FEATURES."""
     features = dm_settings(uid)["features"]
     return [feature for feature in DM_FEATURES if not features[feature]]
+
+
+def sandbox_mode() -> str:
+    """``studio.sandbox.mode()``; lỗi bất kỳ → ``plain`` (đóng)."""
+    try:
+        from .studio import sandbox
+        return sandbox.mode()
+    except Exception:
+        return "plain"
+
+
+def video_policy() -> Dict[str, Any]:
+    """Video (bộ dựng nặng nhất, có bước ra mạng) chỉ mở khi có hộp cát systemd. Windows, hoặc Linux chạy không
+    hộp cát (không root, không systemd-run, ``ZALO_STUDIO_SANDBOX=none``) → ``videoBlocked`` + câu ghi chú (dashboard
+    hiện đúng câu này, đọc từ ``studio-policy.json`` — xem ``publish_video_policy``)."""
+    if VIDEO_BLOCKED:
+        return {"videoBlocked": True, "note": WINDOWS_VIDEO_NOTE}
+    if sandbox_mode() != "systemd":
+        return {"videoBlocked": True, "note": PLAIN_VIDEO_NOTE}
+    return {"videoBlocked": False, "note": ""}
+
+
+def video_policy_path() -> Path:
+    """``studio-policy.json`` cạnh ``permissions.json`` (dashboard đọc để khoá nút video và hiện ghi chú)."""
+    return permissions_path().parent / "studio-policy.json"
+
+
+def publish_video_policy(path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    """Ghi ``{"version": 1, "videoBlocked", "note", "sandbox"}`` (ghi nguyên tử). Cố hết sức: lỗi → None, ghi log."""
+    target = Path(path) if path else video_policy_path()
+    data = {"version": 1, **video_policy(), "sandbox": sandbox_mode()}
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(target.name + ".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, target)
+    except OSError as exc:
+        logger.warning("[zalo] không ghi được %s: %s", target, exc)
+        return None
+    return data
+
+
+def studio_settings(uid: str, thread_id: str, is_group: bool) -> Dict[str, Any]:
+    """Quyền xưởng của một người KHÔNG phải chủ nhân trong hội thoại này (bên gọi tự miễn trừ chủ nhân).
+
+    ``features``: đủ 4 nút — TẮT ← ``defaults``/``dm`` ← nhóm/người (khoá thiếu rơi xuống lớp dưới;
+    không có tệp, tệp hỏng, không đọc được → cả 4 tắt). ``quota``: số việc mỗi ngày —
+    ``studio.people[uid]`` ← (trong nhóm) ``groups[id].studioQuota`` ← ``studio.quota`` ← 3.
+    """
+    data = _load()
+    features = {feature: False for feature in STUDIO_FEATURES}
+    quota: Optional[int] = None
+    if is_group:
+        entry = (data.get("groups") or {}).get(str(thread_id or "")) or {}
+        features.update((data.get("defaults") or {}).get("studio") or {})
+        features.update(entry.get("studio") or {})
+        quota = entry.get("studioQuota")
+    else:
+        dm = data.get("dm") or {}
+        person = (dm.get("people") or {}).get(str(uid or ""))
+        features.update(dm.get("studio") or {})
+        if person:
+            features.update(person.get("studio") or {})
+    if video_policy()["videoBlocked"]:
+        features["studioVideo"] = False
+    studio = data.get("studio") or {}
+    own = (studio.get("people") or {}).get(str(uid or ""))
+    if own is not None:
+        quota = own
+    elif quota is None:
+        quota = studio.get("quota", DEFAULT_STUDIO_QUOTA)
+    return {"features": features, "quota": quota}

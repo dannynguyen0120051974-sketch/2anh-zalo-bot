@@ -22,6 +22,7 @@ import logging
 import os
 import re
 import secrets
+import threading
 import time
 import unicodedata
 from datetime import datetime, timedelta, timezone
@@ -586,6 +587,175 @@ async def zalo_pdf(args: Dict[str, Any], **_kw) -> str:
             else:
                 shutil.rmtree(directory, ignore_errors=True)
         pdf_tools.LOCK.release()
+
+
+# =====================================================================
+#  Xưởng tạo sản phẩm (spec §17) — slide, văn bản, đề, video cho người không phải chủ nhân
+# =====================================================================
+#
+# Công cụ chỉ NHẬN việc: kiểm nút + hạn mức, chụp danh tính lượt này, xếp hàng, trả lời ngay.
+# Việc thật chạy ở studio/jobs.py trên luồng riêng; xong thì gửi tệp vào đúng hội thoại đã chụp.
+
+_STUDIO_CTX = None   # PluginContext — lấy ctx.llm lúc cần (Hermes cũ không có thuộc tính này)
+_STUDIO = None
+_STUDIO_LOCK = threading.Lock()
+
+
+def set_studio_context(ctx) -> None:
+    global _STUDIO_CTX
+    _STUDIO_CTX = ctx
+
+
+def _studio_llm():
+    try:
+        return getattr(_STUDIO_CTX, "llm", None)
+    except Exception as exc:
+        logger.warning("[zalo] không lấy được ctx.llm cho xưởng: %s", exc)
+        return None
+
+
+def _studio_rules(turn: Dict[str, Any]) -> Dict[str, Any]:
+    """Quyền xưởng của lượt (không phải chủ nhân). Đọc lỗi → mọi nút tắt: xưởng không bao giờ mở vì lỗi."""
+    try:
+        return group_permissions.studio_settings(str(turn.get("sender_uid") or ""),
+                                                 str(turn.get("thread_id") or ""), bool(turn.get("is_group")))
+    except Exception as exc:
+        logger.warning("[zalo] không đọc được quyền xưởng — coi như tắt: %s", exc)
+        return {"features": {f: False for f in group_permissions.STUDIO_FEATURES}, "quota": 0}
+
+
+def _studio_ledger():
+    from .studio.ledger import Ledger
+    return Ledger()
+
+
+def _studio_quota_left(job) -> Optional[int]:
+    if job.turn.get("is_owner"):
+        return None
+    quota = _studio_rules(job.turn)["quota"]
+    return max(0, quota - _studio_ledger().used_today(job.uid))
+
+
+def _studio_still_allowed(job) -> bool:
+    """Ngay trước khi gửi: nút còn bật, nhóm còn hoạt động, người này còn được nhắn riêng."""
+    turn = job.turn
+    if turn.get("is_owner"):
+        return True
+    if not _studio_rules(turn)["features"].get(job.recipe.switch):
+        return False
+    try:
+        if turn.get("is_group"):
+            return bool(group_permissions.group_settings(str(turn.get("thread_id") or ""))["active"])
+        return group_permissions.dm_allows(str(turn.get("sender_uid") or "")) is not False
+    except Exception:
+        return False
+
+
+async def _studio_send(job, payload: Dict[str, Any]) -> str:
+    """Gửi bằng danh tính đã chụp lúc nhận việc — kết nối Zalo vẫn kiểm cùng hội thoại + quyền nhắn riêng."""
+    token = _TURN.set(dict(job.turn))
+    try:
+        return await _invoke("sendMessage", [payload, str(job.turn.get("thread_id") or ""),
+                                             THREAD_GROUP if job.turn.get("is_group") else THREAD_USER])
+    finally:
+        _TURN.reset(token)
+
+
+async def _studio_deliver(job, files, caption: str) -> Optional[bool]:
+    sent = json.loads(await _studio_send(job, {"msg": caption, "attachments": [str(p) for p in files]}))
+    if sent.get("success"):
+        return True
+    if str(sent.get("error", "")).startswith("Sidecar không phản hồi"):
+        return None
+    logger.warning("[zalo] xưởng %s: gửi tệp lỗi: %s", job.id, sent.get("error"))
+    return False
+
+
+async def _studio_notify(job, text: str) -> None:
+    await _studio_send(job, {"msg": text})
+
+
+def _studio():
+    global _STUDIO
+    from .studio import jobs
+    with _STUDIO_LOCK:
+        if _STUDIO is None:
+            _STUDIO = jobs.Studio(ledger=_studio_ledger(), llm=_studio_llm, deliver=_studio_deliver,
+                                  notify=_studio_notify, still_allowed=_studio_still_allowed,
+                                  quota_left=_studio_quota_left)
+        return _STUDIO
+
+
+def studio_turn_note(sender_uid: str, thread_id: str, is_group: bool) -> Optional[str]:
+    """Dòng ngữ cảnh cho lượt không phải chủ nhân: xưởng làm được gì cho người này, còn bao nhiêu lượt."""
+    from .studio import recipes
+
+    rules = _studio_rules({"sender_uid": sender_uid, "thread_id": thread_id, "is_group": is_group})
+    on = [f for f in group_permissions.STUDIO_FEATURES if rules["features"].get(f)]
+    if not on:
+        return None
+    kinds = ", ".join(f"{kind} ({recipes.RECIPES[kind].label})" for f in on for kind in recipes.kinds_for(f))
+    left = max(0, rules["quota"] - _studio_ledger().used_today(sender_uid))
+    return (f"[Xưởng tạo sản phẩm: người này nhờ được bằng công cụ zalo_studio — {kinds}. Hôm nay còn {left} "
+            f"lượt. Gom đủ yêu cầu vào `brief` rồi gọi một lần; không tự làm bằng cách khác.]")
+
+
+async def zalo_studio(args: Dict[str, Any], **_kw) -> str:
+    """Nhận một việc cho xưởng; tệp làm xong bot tự gửi vào đúng cuộc trò chuyện này."""
+    from .studio import jobs, recipes
+
+    turn = _turn() or {}
+    if not turn.get("thread_id") or not turn.get("sender_uid"):
+        return _err("chỉ dùng được trong một cuộc trò chuyện Zalo")
+    kind = str(args.get("kind") or "")
+    recipe = recipes.RECIPES.get(kind)
+    if recipe is None:
+        return _err(f"`kind` phải là một trong: {', '.join(recipes.RECIPES)}")
+    brief = str(args.get("brief") or "").strip()
+    if len(brief) < 10:
+        return _err("cần `brief`: chép đủ yêu cầu của người dùng (chủ đề, môn, lớp, số lượng, yêu cầu riêng)")
+    raw_options = args.get("options")
+    if raw_options is None:
+        raw_options = {}
+    if not isinstance(raw_options, dict):
+        return _err("`options` phải là một object, ví dụ {\"loai\": \"bai-giang\"}")
+    options: Dict[str, str] = {}
+    for key, allowed in recipe.options.items():
+        value = str(raw_options.get(key) or allowed[0])
+        if value not in allowed:
+            return _err(f"`options.{key}` phải là một trong: {', '.join(allowed)}")
+        options[key] = value
+    as_owner = _acting_as_owner(turn)
+    quota: Optional[int] = None
+    if not as_owner:
+        rules = _studio_rules(turn)
+        if not rules["features"].get(recipe.switch):
+            label = group_permissions.STUDIO_LABELS[recipe.switch]
+            return _err(f"chủ bot chưa bật tính năng {label} cho {'nhóm này' if turn.get('is_group') else 'người này'} — "
+                        "nói ngắn gọn với người hỏi, đừng thử cách khác")
+        quota = rules["quota"]
+    captured = {key: turn.get(key) for key in ("sender_uid", "sender_name", "thread_id", "is_group")}
+    captured["is_owner"] = as_owner
+    job = jobs.Job(id=jobs.new_job_id(), kind=kind, brief=brief[:8000], options=options, turn=captured)
+    studio = _studio()
+    if studio.pending_for(job.uid):
+        return _err("người này đang có một việc ở xưởng chưa xong — chờ bot gửi xong rồi nhờ tiếp")
+    left = studio.ledger.take(job_id=job.id, uid=job.uid, name=str(turn.get("sender_name") or ""), kind=kind,
+                              thread_id=str(turn.get("thread_id")), is_group=bool(turn.get("is_group")), quota=quota)
+    if left == -1:
+        return _err(f"hôm nay người này đã dùng hết {quota} lượt xưởng — hẹn mai nhé")
+    try:
+        position = studio.submit(job)
+    except jobs.Busy as exc:
+        # Việc chưa chạy (hàng đầy ngay lúc nhận): trả lượt, không tính vào trần trả lượt trong ngày.
+        studio.ledger.finish(job.id, "refunded", error=str(exc), capped=False)
+        return _err(str(exc))
+    minutes = {"video": "10–30", "slide": "5–15"}.get(kind, "2–5")
+    return _ok({"status": "queued", "job_id": job.id, "position": position, "quota_left": left,
+                "note": (f"Đã nhận việc {recipe.label}. Báo người dùng: bot đang làm, khoảng {minutes} phút "
+                         f"(đang xếp thứ {position}), xong sẽ tự gửi tệp vào đây. Không gọi lại cho cùng yêu cầu.")})
+
+
 
 
 async def zalo_send_voice(args: Dict[str, Any], **_kw) -> str:
@@ -2688,6 +2858,35 @@ TOOLS = [
         ["action"],
     ), zalo_pdf, TOOLSET_PUBLIC),
 
+    ("zalo_studio", "🏭", _schema(
+        "zalo_studio",
+        "Xưởng tạo sản phẩm của 2Anh Studio: nhờ máy chủ làm slide PowerPoint đẹp (có ảnh minh hoạ), giáo án 5512, "
+        "văn bản hành chính NĐ30 / văn bản Đoàn / văn bản Đảng, đề kiểm tra, đề KHTN tiếng Anh, SKKN, trò chơi "
+        "(trắc nghiệm, ghép đôi, ô chữ, vòng quay, thẻ lật, đếm ngược), thí nghiệm ảo, video giải thích (viết tay, "
+        "cắt dán, Vox có ảnh AI) và video bài giảng từ slide — rồi tự gửi tệp vào cuộc trò chuyện này sau vài phút. "
+        "Gọi MỘT lần cho một yêu cầu, khi đã đủ thông tin. Công cụ trả lời ngay là đã nhận việc; báo người dùng chờ, "
+        "đừng gọi lại. Bị từ chối (chưa bật, hết lượt) thì nói đúng lý do, không tự làm bằng cách khác.",
+        {
+            "kind": {"type": "string", "enum": ["slide", "giao_an", "van_ban", "van_ban_doan", "van_ban_dang",
+                                                "de_kiem_tra", "de_tieng_anh", "skkn", "tro_choi", "thi_nghiem",
+                                                "video", "video_bai_giang"],
+                     "description": "Loại sản phẩm."},
+            "brief": {"type": "string", "description":
+                      "Yêu cầu đầy đủ bằng tiếng Việt: chủ đề, môn, lớp, số lượng, đơn vị, người ký, nội dung "
+                      "người dùng đưa (chép lại chữ từ ảnh họ gửi nếu có). Tối đa 8.000 ký tự."},
+            "options": {"type": "object", "properties": {
+                "loai": {"type": "string", "enum": ["bai-giang", "bao-cao-tong-ket", "hoat-dong-doan",
+                                                    "poster-mang-xa-hoi", "tap-huan-workshop", "quiz", "matching",
+                                                    "crossword", "spinwheel", "flashcard", "timer"],
+                         "description": "slide / video_bai_giang: kiểu bài; tro_choi: loại trò chơi."},
+                "kieu": {"type": "string", "enum": ["viet-tay", "cat-dan", "vox"],
+                         "description": "Chỉ với video: phong cách (vox có ảnh AI/ảnh web)."}},
+                        "additionalProperties": False},
+        },
+        ["kind", "brief"],
+    ), zalo_studio, TOOLSET_PUBLIC),
+
+
     ("zalo_send_voice", "🎙️", _schema(
         "zalo_send_voice",
         "Gửi tin nhắn thoại từ một URL âm thanh (định dạng .aac). Kết hợp với "
@@ -3553,6 +3752,8 @@ def _feature_block(turn: Dict[str, Any], name: str, args: Any) -> Optional[Dict[
             return None
         if not isinstance(real_args, dict):
             real_args = {}
+    if real in group_permissions.STUDIO_TOOLS:
+        return _studio_block(turn, real_args)
     feature = group_permissions.feature_of(real)
     if feature is None:
         return None
@@ -3589,6 +3790,26 @@ def _feature_block(turn: Dict[str, Any], name: str, args: Any) -> Optional[Dict[
                     f"chủ bot đã tắt {label} trong nhóm này; đừng gọi lại công cụ này và đừng "
                     "dùng công cụ khác để làm thay."),
     }
+
+
+def _studio_block(turn: Dict[str, Any], args: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    """``zalo_studio``: nút áp tuỳ ``kind``. Khác các nút cũ, đọc quyền lỗi thì CHẶN (xem _studio_rules)."""
+    from .studio import recipes
+
+    recipe = recipes.RECIPES.get(str((args or {}).get("kind") or ""))
+    if recipe is None:
+        return None  # công cụ tự báo kind sai
+    if _studio_rules(turn)["features"].get(recipe.switch):
+        return None
+    label = group_permissions.STUDIO_LABELS[recipe.switch]
+    where = "trong nhóm này" if turn.get("is_group") else "khi nhắn riêng với người này"
+    logger.info("[zalo] chặn zalo_studio(%s) — %s đang tắt %s", recipe.kind, turn.get("sender_uid"), recipe.switch)
+    return {
+        "action": "block",
+        "message": (f"Chủ bot chưa bật tính năng {label} {where}. Hãy nói ngắn gọn với người hỏi rằng tính năng "
+                    "này đang tắt; đừng gọi lại công cụ này và đừng dùng công cụ khác để làm thay."),
+    }
+
 
 
 def guard_member_tool_call(tool_name: str = "", args: Any = None, **_kw) -> Optional[Dict[str, str]]:

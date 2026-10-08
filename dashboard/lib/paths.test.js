@@ -18,6 +18,8 @@ test('đường dẫn dựng từ HERMES_HOME và thư mục sidecar', () => {
   assert.equal(p.healthHistoryFile, join(resolve('/h'), 'zalo', 'dashboard', 'health-history.json'));
   assert.equal(p.aiUsageFile, join(resolve('/h'), 'zalo', 'dashboard', 'ai-usage.json'));
   assert.equal(p.hermesStateDb, join(resolve('/h'), 'state.db'));
+  assert.equal(p.studioUsageFile, join(resolve('/h'), 'zalo', 'studio-usage.json'));
+  assert.equal(p.studioPolicyFile, join(resolve('/h'), 'zalo', 'studio-policy.json'));
 });
 
 test('thiếu HERMES_HOME thì báo lỗi dễ hiểu', () => {

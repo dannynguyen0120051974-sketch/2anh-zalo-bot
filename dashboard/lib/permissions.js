@@ -9,7 +9,7 @@ import { parseEnv } from 'node:util';
 import YAML from 'yaml';
 import { writeJsonAtomic } from './json-store.js';
 import { ZALO_UID } from './users.js';
-import { DM_FEATURE_KEYS, DM_WHO, normalizeDm } from '../../dm-rules.js';
+import { DM_FEATURE_KEYS, DM_WHO, STUDIO_KEYS, normalizeDm } from '../../dm-rules.js';
 
 export const FEATURES = [
   { key: 'web', label: 'Tra cứu web', hint: 'Tìm và đọc trang web' },
@@ -26,6 +26,35 @@ export const FEATURE_KEYS = FEATURES.map((f) => f.key);
 // Nút cho tin nhắn riêng (spec §16): 8 nút, không có "Hẹn giờ cho nhóm"; lời gợi ý viết cho một người.
 const DM_HINTS = { kb: 'Đọc tài liệu chủ bot đã mở cho mọi người', people: 'Bot nhớ hồ sơ người nhắn để xưng hô đúng' };
 export const DM_FEATURES = FEATURES.filter((f) => DM_FEATURE_KEYS.includes(f.key)).map((f) => ({ ...f, hint: DM_HINTS[f.key] || f.hint }));
+// Xưởng tạo sản phẩm (spec §17): 4 nút nằm cùng `features` trong tệp nhưng thiếu khoá = TẮT; giao diện tách riêng
+// thành `studio`. Hạn mức: `groups[id].studioQuota`, mục gốc `studio: { quota, people: { uid: { name, quota } } }`.
+export const STUDIO_FEATURES = [
+  { key: 'studioSlides', label: 'Slide PowerPoint', hint: 'Bài giảng, báo cáo, hoạt động Đoàn, poster, tập huấn — tệp .pptx làm bằng 2Anh Studio, có ảnh AI/ảnh web' },
+  { key: 'studioDocs', label: 'Văn bản và giáo án', hint: 'Giáo án 5512, văn bản hành chính Nghị định 30, văn bản Đoàn, văn bản Đảng — tệp Word' },
+  { key: 'studioExams', label: 'Đề thi, SKKN, trò chơi, thí nghiệm ảo', hint: 'Đề kiểm tra, đề KHTN tiếng Anh, sáng kiến kinh nghiệm, trò chơi (trắc nghiệm, ghép đôi, ô chữ, vòng quay, thẻ lật, đếm ngược), thí nghiệm ảo' },
+  { key: 'studioVideo', label: 'Video', hint: 'Video giải thích (viết tay, cắt dán, Vox có ảnh AI) và video bài giảng từ slide, tối đa 3 phút, 720p. Máy chủ chạy nặng vài phút mỗi video' },
+];
+/**
+ * Chính sách cài đặt (spec §17.6): máy Windows không có hộp cát của hệ điều hành nên video luôn tắt (plugin ép tắt;
+ * giao diện khoá nút và ghi chú). Linux: video chỉ mở khi gateway dùng được hộp cát systemd — plugin ghi kết luận vào
+ * `<HERMES_HOME>/zalo/studio-policy.json` (group_permissions.publish_video_policy, lúc xưởng khởi động). Thiếu tệp,
+ * tệp hỏng → tắt (đóng), ghi chú nói rõ. Đọc lại mỗi lần gọi (gateway có thể khởi động sau dashboard).
+ */
+const WINDOWS_NOTE = 'Máy chủ Windows không có hộp cát — video tắt';
+const UNKNOWN_NOTE = 'Chưa biết máy chủ có hộp cát systemd không (gateway chưa khởi động xưởng) — video tắt';
+export function studioPolicy(platform = process.platform, policyFile = '') {
+  if (platform === 'win32') return { videoBlocked: true, note: WINDOWS_NOTE };
+  try {
+    const data = JSON.parse(readFileSync(policyFile, 'utf8'));
+    if (data && data.version === 1 && typeof data.videoBlocked === 'boolean') {
+      return { videoBlocked: data.videoBlocked, note: data.videoBlocked ? String(data.note || UNKNOWN_NOTE).slice(0, 200) : '' };
+    }
+  } catch { /* thiếu/hỏng → đóng */ }
+  return { videoBlocked: true, note: UNKNOWN_NOTE };
+}
+export const DEFAULT_STUDIO_QUOTA = 3;
+export const MAX_STUDIO_QUOTA = 50;
+const MAX_STUDIO_PEOPLE = 500;
 const SWITCHES = ['active', 'replyOnlyTagged'];
 export const GROUP_ID = /^\d{1,32}$/;
 const MAX_NAME = 120;
@@ -38,6 +67,12 @@ export class InvalidPermissions extends Error {
 }
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const isQuota = (v) => Number.isInteger(v) && v >= 0 && v <= MAX_STUDIO_QUOTA;
+const pickBools = (raw, keys) => (isObj(raw) ? Object.fromEntries(keys.filter((k) => typeof raw[k] === 'boolean').map((k) => [k, raw[k]])) : {});
+const studioOff = () => Object.fromEntries(STUDIO_KEYS.map((k) => [k, false]));
+// Ở mặc định và nhắn riêng chỉ ghi nút xưởng đang BẬT (thiếu khoá = tắt) — tệp gọn, bản cũ đọc vẫn y như trước.
+const onlyOn = (studio) => Object.fromEntries(STUDIO_KEYS.filter((k) => studio[k] === true).map((k) => [k, true]));
+const tidy = (v, max) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, max) : '');
 
 /** `_truthy` của adapter: None → mặc định, còn lại so chuỗi đã hạ chữ thường. */
 const truthy = (v, dflt = false) => (v === undefined || v === null ? dflt : ['1', 'true', 'yes', 'on'].includes(String(v).trim().toLowerCase()));
@@ -116,14 +151,27 @@ export function makeDmEnv({ envFile, configFile, inherited = {} }) {
   };
 }
 
-/** Một lớp: chỉ giữ khoá biết và đúng kiểu boolean — giống `_layer` bên Python. */
+/** Một lớp: chỉ giữ khoá biết và đúng kiểu — giống `_layer` bên Python (9 nút + 4 nút xưởng + hạn mức xưởng). */
 function layer(raw) {
   if (!isObj(raw)) return {};
   const out = {};
   for (const k of SWITCHES) if (typeof raw[k] === 'boolean') out[k] = raw[k];
-  const features = {};
-  if (isObj(raw.features)) for (const k of FEATURE_KEYS) if (typeof raw.features[k] === 'boolean') features[k] = raw.features[k];
+  const features = pickBools(raw.features, [...FEATURE_KEYS, ...STUDIO_KEYS]);
   if (Object.keys(features).length) out.features = features;
+  if (isQuota(raw.studioQuota)) out.studioQuota = raw.studioQuota;
+  return out;
+}
+
+/** Mục gốc `studio` (giống `_studio_section` bên Python); không phải object → null. */
+function normalizeStudio(raw) {
+  if (!isObj(raw)) return null;
+  const out = { people: {} };
+  if (isQuota(raw.quota)) out.quota = raw.quota;
+  for (const [uid, entry] of Object.entries(isObj(raw.people) ? raw.people : {})) {
+    if (!GROUP_ID.test(uid) || !isObj(entry) || !isQuota(entry.quota)) continue;
+    const name = tidy(entry.name, MAX_PERSON_NAME);
+    out.people[uid] = name ? { name, quota: entry.quota } : { quota: entry.quota };
+  }
   return out;
 }
 
@@ -137,9 +185,39 @@ export function normalize(raw) {
     const name = isObj(entry) && typeof entry.name === 'string' ? entry.name.trim().slice(0, MAX_NAME) : '';
     groups[id] = name ? { name, ...l } : l;
   }
-  // Mục `dm` (giai đoạn 5) phải sống qua mọi lần lưu nhóm/mặc định.
+  // Mục `dm` (giai đoạn 5) và `studio` (giai đoạn 6) phải sống qua mọi lần lưu nhóm/mặc định.
   const dm = normalizeDm(raw.dm);
-  return { version: 1, defaults: layer(raw.defaults), groups, ...(dm ? { dm } : {}) };
+  const studio = normalizeStudio(raw.studio);
+  return { version: 1, defaults: layer(raw.defaults), groups, ...(dm ? { dm } : {}), ...(studio ? { studio } : {}) };
+}
+
+/** 4 nút xưởng gửi lên: thiếu → undefined (giữ như cũ — bản giao diện cũ không gửi); có thì phải đủ và đúng kiểu. */
+function parseStudioSwitches(raw, what) {
+  if (raw === undefined || raw === null) return undefined;
+  if (!isObj(raw) || Object.keys(raw).some((k) => !STUDIO_KEYS.includes(k)) || STUDIO_KEYS.some((k) => typeof raw[k] !== 'boolean')) {
+    throw new InvalidPermissions(`Nút xưởng tạo sản phẩm ${what} không hợp lệ — tải lại trang rồi thử lại.`);
+  }
+  return Object.fromEntries(STUDIO_KEYS.map((k) => [k, raw[k]]));
+}
+
+/** Thân PUT /api/permissions/studio: `{ quota, people: [{ uid, name?, quota }] }`. */
+export function parseStudio(body) {
+  if (!isObj(body) || !isQuota(body.quota)) throw new InvalidPermissions(`Số lượt mặc định là số nguyên từ 0 đến ${MAX_STUDIO_QUOTA} — sửa rồi lưu lại.`);
+  if (!Array.isArray(body.people)) throw new InvalidPermissions('Danh sách người không hợp lệ — tải lại trang rồi thử lại.');
+  if (body.people.length > MAX_STUDIO_PEOPLE) throw new InvalidPermissions(`Hạn mức riêng tối đa ${MAX_STUDIO_PEOPLE} người — bỏ bớt rồi lưu lại.`);
+  const seen = new Set();
+  const people = [];
+  for (const p of body.people) {
+    const uid = String(isObj(p) ? p.uid ?? '' : '').trim();
+    if (!ZALO_UID.test(uid)) {
+      throw new InvalidPermissions(`"${uid.slice(0, 30)}" không phải UID Zalo — UID là dãy 15–22 chữ số; nhờ người đó nhắn /sethome cho bot để biết.`);
+    }
+    if (!isQuota(p.quota)) throw new InvalidPermissions(`Số lượt của một người là số nguyên từ 0 đến ${MAX_STUDIO_QUOTA} — sửa rồi lưu lại.`);
+    if (seen.has(uid)) continue;
+    seen.add(uid);
+    people.push({ uid, name: tidy(p.name, MAX_PERSON_NAME), quota: p.quota });
+  }
+  return { quota: body.quota, people };
 }
 
 /**
@@ -164,13 +242,31 @@ export function parseDm(body) {
     if (seen.has(uid)) continue;
     seen.add(uid);
     const name = typeof p.name === 'string' ? p.name.replace(/\s+/g, ' ').trim().slice(0, MAX_PERSON_NAME) : '';
-    people.push({ uid, name, features: p.features == null ? null : pick8(p.features) });
+    const studio = parseStudioSwitches(p.studio, 'của một người');
+    people.push({ uid, name, features: p.features == null ? null : pick8(p.features), ...(studio ? { studio } : {}) });
   }
-  return { who: body.who, features: pick8(body.features), people };
+  const studio = parseStudioSwitches(body.studio, 'khi nhắn riêng');
+  return { who: body.who, features: pick8(body.features), people, ...(studio ? { studio } : {}) };
 }
 
-/** Kiểm thân request: đủ hai công tắc và đủ 9 nút, tất cả boolean. */
+/**
+ * Kiểm thân request: đủ hai công tắc và đủ 9 nút, tất cả boolean. Tuỳ chọn (spec §17): `studio` = 4 nút xưởng,
+ * `studioQuota` = số lượt mỗi người mỗi ngày của nhóm (null = theo mặc định).
+ */
 export function parseSettings(body) {
+  const base = parseSettings9(body);
+  const studio = parseStudioSwitches(body.studio, '');
+  if (studio) base.studio = studio;
+  if (body.studioQuota !== undefined) {
+    if (body.studioQuota !== null && !isQuota(body.studioQuota)) {
+      throw new InvalidPermissions(`Số lượt xưởng là số nguyên từ 0 đến ${MAX_STUDIO_QUOTA}, hoặc để trống để theo mặc định — sửa rồi lưu lại.`);
+    }
+    base.studioQuota = body.studioQuota;
+  }
+  return base;
+}
+
+function parseSettings9(body) {
   if (!isObj(body)) throw new InvalidPermissions('Dữ liệu phân quyền không hợp lệ — tải lại trang rồi thử lại.');
   for (const k of SWITCHES) {
     if (typeof body[k] !== 'boolean') throw new InvalidPermissions('Thiếu công tắc Hoạt động hoặc Chỉ trả lời khi được tag — tải lại trang rồi thử lại.');
@@ -189,11 +285,13 @@ export function parseSettings(body) {
  */
 export function createPermissionsStore({ file, globalReplyOnlyTagged = true, dmEnv = () => ({ legacyWho: 'owners', gatewayOpen: true }) }) {
   const globalFlag = () => (typeof globalReplyOnlyTagged === 'function' ? globalReplyOnlyTagged() : globalReplyOnlyTagged);
-  const builtin = () => ({ active: true, replyOnlyTagged: globalFlag(), features: Object.fromEntries(FEATURE_KEYS.map((k) => [k, true])) });
+  const builtin = () => ({ active: true, replyOnlyTagged: globalFlag(), features: Object.fromEntries(FEATURE_KEYS.map((k) => [k, true])), studio: studioOff() });
+  // Trong tệp, nút xưởng nằm chung `features`; ở giao diện tách ra `studio` (thiếu khoá = tắt).
   const merge = (base, l) => ({
     active: l.active ?? base.active,
     replyOnlyTagged: l.replyOnlyTagged ?? base.replyOnlyTagged,
-    features: { ...base.features, ...(l.features || {}) },
+    features: { ...base.features, ...pickBools(l.features, FEATURE_KEYS) },
+    studio: { ...base.studio, ...pickBools(l.features, STUDIO_KEYS) },
   });
 
   /** `{ data, exists, corrupt }` — tệp hỏng thì data rỗng (bot cũng đang dùng mặc định), không đổi tên tệp. */
@@ -236,17 +334,27 @@ export function createPermissionsStore({ file, globalReplyOnlyTagged = true, dmE
   /** Mục nhắn riêng đã gộp: chưa có trong tệp → `who` theo ZALO_DM_POLICY (`explicit: false`), mọi nút bật. */
   const dmView = (dm) => {
     const env = dmEnv();
-    const features = { ...Object.fromEntries(DM_FEATURE_KEYS.map((k) => [k, true])), ...(dm?.features || {}) };
+    const features = { ...Object.fromEntries(DM_FEATURE_KEYS.map((k) => [k, true])), ...pickBools(dm?.features, DM_FEATURE_KEYS) };
+    const studio = { ...studioOff(), ...pickBools(dm?.features, STUDIO_KEYS) };
     const people = Object.entries(dm?.people || {}).map(([uid, p]) => ({
-      uid, name: p.name || '', custom: Object.keys(p.features || {}).length > 0, features: { ...features, ...(p.features || {}) },
+      uid, name: p.name || '', custom: Object.keys(p.features || {}).length > 0,
+      features: { ...features, ...pickBools(p.features, DM_FEATURE_KEYS) }, studio: { ...studio, ...pickBools(p.features, STUDIO_KEYS) },
     }));
-    return { who: dm?.who || env.legacyWho, explicit: Boolean(dm?.who), gatewayOpen: env.gatewayOpen, features, people };
+    return { who: dm?.who || env.legacyWho, explicit: Boolean(dm?.who), gatewayOpen: env.gatewayOpen, features, studio, people };
   };
+
+  /** Hạn mức xưởng: mặc định mỗi người mỗi ngày + danh sách người có hạn mức riêng. */
+  const studioView = (st) => ({
+    quota: st?.quota ?? DEFAULT_STUDIO_QUOTA,
+    people: Object.entries(st?.people || {}).map(([uid, p]) => ({ uid, name: p.name || '', quota: p.quota })),
+  });
 
   const view = ({ data, exists, corrupt }) => {
     const defaults = merge(builtin(), data.defaults);
-    const groups = Object.fromEntries(Object.entries(data.groups).map(([id, g]) => [id, { name: g.name || '', custom: true, ...merge(defaults, g) }]));
-    return { exists, corrupt, defaults, groups, dm: dmView(data.dm) };
+    const groups = Object.fromEntries(Object.entries(data.groups).map(([id, g]) => [id, {
+      name: g.name || '', custom: true, ...merge(defaults, g), studioQuota: g.studioQuota ?? null,
+    }]));
+    return { exists, corrupt, defaults, groups, dm: dmView(data.dm), studio: studioView(data.studio) };
   };
 
   return {
@@ -256,7 +364,9 @@ export function createPermissionsStore({ file, globalReplyOnlyTagged = true, dmE
     setDefaults(settings) {
       const { data } = read();
       seedReplyOnlyTagged(data, settings.replyOnlyTagged);
-      data.defaults = settings;
+      // Bản giao diện cũ không gửi nút xưởng → giữ nút xưởng đang có trong tệp.
+      const studio = settings.studio ?? pickBools(data.defaults.features, STUDIO_KEYS);
+      data.defaults = { active: settings.active, replyOnlyTagged: settings.replyOnlyTagged, features: { ...settings.features, ...onlyOn(studio) } };
       write(data);
       return view({ data, exists: true, corrupt: false });
     },
@@ -273,8 +383,13 @@ export function createPermissionsStore({ file, globalReplyOnlyTagged = true, dmE
       const entry = {};
       for (const k of SWITCHES) if (settings[k] !== defaults[k]) entry[k] = settings[k];
       const features = Object.fromEntries(FEATURE_KEYS.filter((k) => settings.features[k] !== defaults.features[k]).map((k) => [k, settings.features[k]]));
+      const prev = data.groups[groupId] || {};
+      const studio = settings.studio ?? { ...defaults.studio, ...pickBools(prev.features, STUDIO_KEYS) };
+      for (const k of STUDIO_KEYS) if (studio[k] !== defaults.studio[k]) features[k] = studio[k];
       if (Object.keys(features).length) entry.features = features;
-      const changed = [...SWITCHES.filter((k) => settings[k] !== defaults[k]), ...Object.keys(features)];
+      const quota = settings.studioQuota === undefined ? prev.studioQuota ?? null : settings.studioQuota;
+      if (quota !== null) entry.studioQuota = quota;
+      const changed = [...SWITCHES.filter((k) => settings[k] !== defaults[k]), ...Object.keys(features), ...(quota !== null ? ['studioQuota'] : [])];
       const cleanName = String(name || prevName || '').trim().slice(0, MAX_NAME);
       if (Object.keys(entry).length && !data.groups[groupId] && Object.keys(data.groups).length >= MAX_GROUPS) {
         throw new InvalidPermissions(`Đã có ${MAX_GROUPS} nhóm được chỉnh riêng, chưa thêm được nhóm nữa — đưa bớt nhóm về mặc định rồi thử lại.`);
@@ -290,12 +405,27 @@ export function createPermissionsStore({ file, globalReplyOnlyTagged = true, dmE
      */
     setDm(settings) {
       const { data } = read();
+      const prevStudio = { ...studioOff(), ...pickBools(data.dm?.features, STUDIO_KEYS) };
+      const studio = settings.studio ?? prevStudio;
       const people = {};
       for (const p of settings.people) {
         const diff = p.features ? Object.fromEntries(DM_FEATURE_KEYS.filter((k) => p.features[k] !== settings.features[k]).map((k) => [k, p.features[k]])) : {};
+        // Người có tính năng riêng: nút xưởng riêng (gửi lên, hoặc giữ như cũ nếu bản giao diện cũ không gửi).
+        const own = p.features ? p.studio ?? { ...studio, ...pickBools(data.dm?.people?.[p.uid]?.features, STUDIO_KEYS) } : studio;
+        for (const k of STUDIO_KEYS) if (own[k] !== studio[k]) diff[k] = own[k];
         people[p.uid] = { ...(p.name ? { name: p.name } : {}), ...(Object.keys(diff).length ? { features: diff } : {}) };
       }
-      data.dm = { who: settings.who, features: { ...settings.features }, people };
+      data.dm = { who: settings.who, features: { ...settings.features, ...onlyOn(studio) }, people };
+      write(data);
+      return view({ data, exists: true, corrupt: false });
+    },
+    /** Lưu hạn mức xưởng (đã qua parseStudio): số lượt mặc định + người có hạn mức riêng. */
+    setStudio(settings) {
+      const { data } = read();
+      data.studio = {
+        quota: settings.quota,
+        people: Object.fromEntries(settings.people.map((p) => [p.uid, p.name ? { name: p.name, quota: p.quota } : { quota: p.quota }])),
+      };
       write(data);
       return view({ data, exists: true, corrupt: false });
     },

@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'none'; connect-src 'none'; form-action 'none'">
+<title>Trò chơi</title>
+<style>
+  :root { --navy: #1f4e79; --accent: #2e75b6; --ok: #2e7d32; --bad: #c62828; --bg: #f2f7fc; --ink: #263238; --key: #fdecea; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Segoe UI", Arial, sans-serif; background: var(--bg); color: var(--ink); }
+  main { max-width: 860px; margin: 0 auto; padding: 16px; }
+  header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  h1 { font-size: 1.4rem; color: var(--navy); margin: 8px 0; }
+  .sub { color: #5f6b76; margin: 0; }
+  .bar { height: 10px; background: #dde6ef; border-radius: 5px; overflow: hidden; margin: 12px 0; }
+  .bar > span { display: block; height: 100%; background: var(--accent); width: 0; transition: width .3s; }
+  .card { background: #fff; border-radius: 14px; padding: 20px; box-shadow: 0 2px 10px rgba(0,0,0,.08); }
+  .q { font-size: 1.25rem; font-weight: 600; margin: 0 0 16px; }
+  .opts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 560px) { .opts { grid-template-columns: 1fr; } }
+  button, input { font: inherit; }
+  button { border: 2px solid #c9d6e3; background: #fff; border-radius: 10px; padding: 12px; text-align: left; cursor: pointer; color: inherit; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button.ok, .ok { border-color: var(--ok); background: #e8f5e9; }
+  button.bad, .bad { border-color: var(--bad); background: #ffebee; }
+  button.sel { border-color: var(--accent); background: #e3f0fb; }
+  .timer { font-weight: 700; color: var(--navy); min-width: 3em; text-align: right; }
+  .why { margin-top: 14px; color: #37474f; }
+  .row { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+  .primary { background: var(--navy); color: #fff; border-color: var(--navy); text-align: center; }
+  .score { font-size: 2.4rem; font-weight: 800; color: var(--navy); margin: 8px 0; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .cols > div { display: grid; gap: 8px; align-content: start; }
+  .cw { display: grid; gap: 3px; margin: 8px 0 16px; overflow-x: auto; }
+  .cell { width: 34px; height: 34px; border: 1px solid #90a4ae; background: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; }
+  .cell.void { border: 0; background: transparent; }
+  .cell.key { background: var(--key); border-color: var(--bad); }
+  .cw-row { display: flex; gap: 3px; align-items: center; cursor: pointer; }
+  .cw-row.active .cell:not(.void) { outline: 2px solid var(--accent); }
+  .cw-num { width: 24px; color: #5f6b76; font-weight: 700; }
+  input[type=text] { border: 2px solid #c9d6e3; border-radius: 10px; padding: 10px; min-width: 0; flex: 1; text-transform: uppercase; }
+  .flip { perspective: 1000px; height: 240px; margin: 12px 0; cursor: pointer; }
+  .flip-in { position: relative; width: 100%; height: 100%; transition: transform .6s; transform-style: preserve-3d; }
+  .flip.on .flip-in { transform: rotateY(180deg); }
+  .face { position: absolute; inset: 0; backface-visibility: hidden; border-radius: 16px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; text-align: center; background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.08); font-size: clamp(1rem, 3vw, 1.6rem); }
+  .face.back { transform: rotateY(180deg); background: #e3f0fb; }
+  .big { font-size: clamp(3rem, 14vw, 7rem); font-weight: 800; font-variant-numeric: tabular-nums; text-align: center; color: var(--navy); margin: 12px 0; }
+  .big.warn { color: #b26a00; } .big.danger { color: var(--bad); }
+  svg.wheel { width: min(100%, 380px); display: block; margin: 0 auto; transition: transform 4.5s cubic-bezier(.17,.67,.12,.99); }
+  .pointer { text-align: center; font-size: 1.6rem; color: var(--bad); line-height: 1; }
+  .used { opacity: .35; }
+  footer { text-align: center; color: #8a97a3; font-size: .85rem; margin-top: 18px; }
+</style>
+</head>
+<body>
+<main>
+  <header><div><h1 id="title"></h1><p class="sub" id="subject"></p></div><div class="timer" id="timer" aria-live="off"></div></header>
+  <div class="bar" aria-hidden="true"><span id="progress"></span></div>
+  <section class="card" id="stage" aria-live="polite"></section>
+  <footer>Làm bằng 2Anh Studio · mở bằng trình duyệt, không cần mạng</footer>
+</main>
+<script id="game-data" type="application/json">__GAME_DATA__</script>
+<script>
+(function () {
+  "use strict";
+  // Mọi chữ của trò chơi đi qua textContent — không bao giờ thành HTML.
+  var data = JSON.parse(document.getElementById("game-data").textContent);
+  var stage = document.getElementById("stage");
+  var timerEl = document.getElementById("timer");
+  var progress = document.getElementById("progress");
+  var LETTERS = ["A", "B", "C", "D"];
+  var ticking = null;
+  document.getElementById("title").textContent = data.title;
+  document.getElementById("subject").textContent = data.subject || "";
+  document.title = data.title;
+
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+  function btn(cls, text, onClick) { var b = el("button", cls, text); b.type = "button"; b.addEventListener("click", onClick); return b; }
+  function shuffle(list) {
+    for (var i = list.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = list[i]; list[i] = list[j]; list[j] = t; }
+    return list;
+  }
+  function stop() { if (ticking) { clearInterval(ticking); ticking = null; } }
+  function clear() { stop(); stage.replaceChildren(); }
+  function setProgress(done, total) { progress.style.width = Math.round(done / Math.max(total, 1) * 100) + "%"; }
+  function grade(pct) { return pct >= 90 ? "Xuất sắc" : pct >= 75 ? "Giỏi" : pct >= 50 ? "Khá" : "Cần cố gắng"; }
+  function again(fn) { var row = el("div", "row"); row.appendChild(btn("primary", "Chơi lại", fn)); stage.appendChild(row); }
+  function norm(s) { return String(s).normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D").toUpperCase().replace(/[^A-Z0-9]/g, ""); }
+  function beep(freq, ms) {
+    try { var a = new (window.AudioContext || window.webkitAudioContext)(); var o = a.createOscillator(); o.frequency.value = freq; o.connect(a.destination); o.start(); setTimeout(function () { o.stop(); a.close(); }, ms); } catch (e) { /* không có âm thanh */ }
+  }
+
+  // ---- Trắc nghiệm -------------------------------------------------------
+  function askQuestion(q, onDone, seconds, box) {
+    stop(); box.replaceChildren();
+    box.appendChild(el("p", "q", q.question));
+    var opts = el("div", "opts");
+    var left = seconds;
+    function answer(choice) {
+      stop();
+      opts.querySelectorAll("button").forEach(function (b, i) {
+        b.disabled = true;
+        if (i === q.correct) b.className = "ok"; else if (i === choice) b.className = "bad";
+      });
+      if (q.explanation) box.appendChild(el("p", "why", q.explanation));
+      var row = el("div", "row");
+      var next = btn("primary", "Tiếp", function () { onDone(choice === q.correct); });
+      row.appendChild(next); box.appendChild(row); next.focus();
+    }
+    q.options.forEach(function (text, i) { opts.appendChild(btn("", LETTERS[i] + ". " + text, function () { answer(i); })); });
+    box.appendChild(opts);
+    if (seconds) {
+      timerEl.textContent = left + "s";
+      ticking = setInterval(function () { left -= 1; timerEl.textContent = Math.max(left, 0) + "s"; if (left <= 0) answer(-1); }, 1000);
+    }
+  }
+  function quiz() {
+    var order = shuffle(data.questions.map(function (_q, i) { return i; }));
+    var index = 0, score = 0, wrong = [];
+    function next() {
+      if (index >= order.length) return finish();
+      setProgress(index, order.length);
+      var q = data.questions[order[index]];
+      askQuestion(q, function (ok) { if (ok) score += 1; else wrong.push(q); index += 1; next(); }, data.timePerQuestion, stage);
+      stage.insertBefore(el("p", "sub", "Câu " + (index + 1) + " / " + order.length), stage.firstChild);
+    }
+    function finish() {
+      clear(); setProgress(1, 1); timerEl.textContent = "";
+      var pct = Math.round(score / order.length * 100);
+      stage.appendChild(el("p", "score", score + " / " + order.length));
+      stage.appendChild(el("p", "q", grade(pct) + " (" + pct + "%)"));
+      if (wrong.length) {
+        stage.appendChild(el("p", "sub", "Câu làm sai:"));
+        var list = el("ol");
+        wrong.forEach(function (q) { list.appendChild(el("li", "", q.question + " → " + LETTERS[q.correct] + ". " + q.options[q.correct])); });
+        stage.appendChild(list);
+      }
+      again(quiz);
+    }
+    next();
+  }
+
+  // ---- Ghép đôi ------------------------------------------------------------
+  function matching() {
+    var rounds = [];
+    for (var i = 0; i < data.pairs.length; i += 8) rounds.push(data.pairs.slice(i, i + 8));
+    var round = 0, tries = 0, started = Date.now();
+    function play() {
+      clear();
+      var pairs = rounds[round], matched = 0, picked = null;
+      if (rounds.length > 1) stage.appendChild(el("p", "sub", "Vòng " + (round + 1) + " / " + rounds.length));
+      var cols = el("div", "cols"), left = el("div"), right = el("div");
+      shuffle(pairs.map(function (p, i) { return i; })).forEach(function (i) {
+        var b = btn("", pairs[i].left, function () { if (b.disabled) return; if (picked) picked.className = ""; picked = b; b.className = "sel"; b.dataset.i = i; });
+        left.appendChild(b);
+      });
+      shuffle(pairs.map(function (p, i) { return i; })).forEach(function (i) {
+        var b = btn("", pairs[i].right, function () {
+          if (!picked || b.disabled) return;
+          tries += 1;
+          if (Number(picked.dataset.i) === i) {
+            picked.className = "ok"; b.className = "ok"; picked.disabled = true; b.disabled = true; picked = null; matched += 1;
+            setProgress(matched, pairs.length);
+            if (matched === pairs.length) { round += 1; if (round < rounds.length) setTimeout(play, 600); else setTimeout(finish, 600); }
+          } else {
+            b.className = "bad"; var p = picked; setTimeout(function () { b.className = ""; p.className = "sel"; }, 500);
+          }
+        });
+        right.appendChild(b);
+      });
+      cols.appendChild(left); cols.appendChild(right); stage.appendChild(cols);
+    }
+    function finish() {
+      clear();
+      stage.appendChild(el("p", "score", "Hoàn thành!"));
+      stage.appendChild(el("p", "q", "Thời gian " + Math.round((Date.now() - started) / 1000) + " giây · " + tries + " lần thử"));
+      again(matching);
+    }
+    play();
+  }
+
+  // ---- Ô chữ ---------------------------------------------------------------
+  function crossword() {
+    clear();
+    var width = 0, solved = {}, active = 0, score = data.rows.length * 10;
+    data.rows.forEach(function (r) { width = Math.max(width, r.startCol + r.answer.length); });
+    var grid = el("div", "cw"), clue = el("p", "q"), form = el("div", "row");
+    var input = el("input"); input.type = "text"; input.maxLength = 20; input.setAttribute("aria-label", "Đáp án hàng đang chọn");
+    var status = el("p", "sub");
+    var rowsEl = data.rows.map(function (r, i) {
+      var row = el("div", "cw-row"); row.appendChild(el("span", "cw-num", String(i + 1)));
+      for (var c = 0; c < width; c++) {
+        var inside = c >= r.startCol && c < r.startCol + r.answer.length;
+        row.appendChild(el("span", "cell" + (inside ? "" : " void") + (c === data.keywordCol ? " key" : ""), ""));
+      }
+      row.addEventListener("click", function () { choose(i); });
+      grid.appendChild(row);
+      return row;
+    });
+    function choose(i) {
+      active = i; rowsEl.forEach(function (r, j) { r.className = "cw-row" + (j === i ? " active" : ""); });
+      clue.textContent = "Hàng " + (i + 1) + " (" + data.rows[i].answer.length + " chữ): " + data.rows[i].clue;
+      input.value = ""; input.focus();
+    }
+    function fill(i) {
+      var r = data.rows[i], cells = rowsEl[i].querySelectorAll(".cell");
+      for (var k = 0; k < r.answer.length; k++) cells[r.startCol + k].textContent = r.answer[k];
+      rowsEl[i].classList.add("ok");
+    }
+    function check() {
+      var r = data.rows[active];
+      if (norm(input.value) === r.answer) { solved[active] = true; fill(active); beep(880, 120); }
+      else { score -= 2; rowsEl[active].classList.add("bad"); setTimeout(function () { rowsEl[active].classList.remove("bad"); }, 400); }
+      var n = Object.keys(solved).length;
+      status.textContent = "Đã giải: " + n + "/" + data.rows.length + " hàng";
+      setProgress(n, data.rows.length);
+      if (n === data.rows.length) finish();
+    }
+    function hint() { var r = data.rows[active]; score -= 3; clue.textContent = "Gợi ý thêm: " + (r.clue2 || ("Bắt đầu bằng chữ " + r.answer[0])); }
+    function finish() {
+      stage.appendChild(el("p", "score", "Từ chìa khoá: " + data.keywordDisplay));
+      stage.appendChild(el("p", "q", "Điểm: " + Math.max(score, 0)));
+      again(crossword);
+    }
+    form.appendChild(input);
+    form.appendChild(btn("primary", "Kiểm tra", check));
+    form.appendChild(btn("", "Xem thêm gợi ý", hint));
+    input.addEventListener("keydown", function (e) { if (e.key === "Enter") check(); });
+    stage.appendChild(el("p", "sub", "Hàng chìa khoá (cột đỏ): " + data.keywordClue));
+    stage.appendChild(grid); stage.appendChild(clue); stage.appendChild(form); stage.appendChild(status);
+    choose(0);
+  }
+
+  // ---- Vòng quay -----------------------------------------------------------
+  function spinwheel() {
+    clear();
+    var NS = "http://www.w3.org/2000/svg", COLORS = ["#1f4e79", "#2e75b6", "#2e7d32", "#ef6c00", "#6a1b9a", "#c62828"];
+    var segs = data.segments, used = {}, turn = 0, score = 0;
+    var svg = document.createElementNS(NS, "svg"); svg.setAttribute("viewBox", "0 0 400 400"); svg.setAttribute("class", "wheel");
+    var per = 2 * Math.PI / segs.length;
+    segs.forEach(function (s, i) {
+      var a0 = i * per - Math.PI / 2, a1 = a0 + per;
+      var path = document.createElementNS(NS, "path");
+      path.setAttribute("d", "M200 200 L" + (200 + 190 * Math.cos(a0)) + " " + (200 + 190 * Math.sin(a0)) +
+        " A190 190 0 " + (per > Math.PI ? 1 : 0) + " 1 " + (200 + 190 * Math.cos(a1)) + " " + (200 + 190 * Math.sin(a1)) + " Z");
+      path.setAttribute("fill", COLORS[i % COLORS.length]); path.setAttribute("stroke", "#fff");
+      var mid = (a0 + a1) / 2, text = document.createElementNS(NS, "text");
+      text.setAttribute("x", 200 + 120 * Math.cos(mid)); text.setAttribute("y", 200 + 120 * Math.sin(mid));
+      text.setAttribute("fill", "#fff"); text.setAttribute("font-size", "16"); text.setAttribute("text-anchor", "middle");
+      text.setAttribute("dominant-baseline", "middle");
+      text.setAttribute("transform", "rotate(" + (mid * 180 / Math.PI + 90) + " " + (200 + 120 * Math.cos(mid)) + " " + (200 + 120 * Math.sin(mid)) + ")");
+      text.textContent = s.label;
+      var g = document.createElementNS(NS, "g"); g.appendChild(path); g.appendChild(text); svg.appendChild(g);
+    });
+    var out = el("div");
+    stage.appendChild(el("div", "pointer", "▼")); stage.appendChild(svg);
+    var row = el("div", "row"), spin = btn("primary", "QUAY!", go);
+    row.appendChild(spin); stage.appendChild(row); stage.appendChild(out);
+    function go() {
+      var left = segs.map(function (s, i) { return i; }).filter(function (i) { return !used[i]; });
+      if (!left.length) { out.replaceChildren(el("p", "q", data.mode === "quiz" ? "Hết câu! Điểm: " + score : "Đã chọn hết.")); return; }
+      var pick = left[Math.floor(Math.random() * left.length)];
+      turn += 4 * 360 + (360 - (pick + 0.5) * 360 / segs.length) - (turn % 360);
+      spin.disabled = true; svg.style.transform = "rotate(" + turn + "deg)";
+      setTimeout(function () {
+        beep(1200, 150); used[pick] = true; svg.childNodes[pick].setAttribute("class", "used"); spin.disabled = false;
+        var s = segs[pick];
+        out.replaceChildren(el("p", "q", s.label));
+        if (data.mode === "quiz") {
+          var box = el("div"); out.appendChild(box);
+          askQuestion(s, function (ok) { if (ok) score += 1; out.replaceChildren(el("p", "sub", "Điểm: " + score)); }, 0, box);
+        }
+      }, 4600);
+    }
+  }
+
+  // ---- Thẻ lật -------------------------------------------------------------
+  function flashcard() {
+    var stack = data.cards.slice(), known = 0, unknown = [];
+    function show() {
+      clear();
+      if (!stack.length) return finish();
+      setProgress(known, data.cards.length);
+      var c = stack[0], box = el("div", "flip"), inner = el("div", "flip-in"), front = el("div", "face"), back = el("div", "face back");
+      front.appendChild(el("strong", "", c.front)); if (c.phonetic) front.appendChild(el("span", "sub", c.phonetic));
+      back.appendChild(el("strong", "", c.back)); if (c.example) back.appendChild(el("span", "sub", c.example));
+      inner.appendChild(front); inner.appendChild(back); box.appendChild(inner);
+      box.addEventListener("click", function () { box.classList.toggle("on"); });
+      stage.appendChild(el("p", "sub", "Bấm vào thẻ để lật · còn " + stack.length + " thẻ"));
+      stage.appendChild(box);
+      var row = el("div", "row");
+      row.appendChild(btn("", "Chưa biết", function () { unknown.push(c); stack.push(stack.shift()); show(); }));
+      row.appendChild(btn("primary", "Đã biết", function () { known += 1; stack.shift(); show(); }));
+      stage.appendChild(row);
+    }
+    function finish() {
+      setProgress(1, 1);
+      stage.appendChild(el("p", "score", "Đã thuộc " + data.cards.length + " thẻ"));
+      if (unknown.length) stage.appendChild(el("p", "sub", "Thẻ từng chưa biết: " + unknown.map(function (c) { return c.front; }).join(", ")));
+      again(flashcard);
+    }
+    show();
+  }
+
+  // ---- Đếm ngược / trả lời nhanh -------------------------------------------
+  function timer() {
+    clear();
+    if (data.mode === "countdown") {
+      var total = data.presets[0], left = total;
+      var big = el("div", "big", ""), row = el("div", "row");
+      function draw() {
+        var m = Math.floor(left / 60), s = left % 60;
+        big.textContent = (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s;
+        big.className = "big" + (left <= total * 0.1 ? " danger" : left <= total * 0.3 ? " warn" : "");
+        setProgress(total - left, total);
+      }
+      data.presets.forEach(function (p) { row.appendChild(btn("", Math.round(p / 60 * 10) / 10 + " phút", function () { stop(); total = left = p; draw(); })); });
+      row.appendChild(btn("primary", "Bắt đầu", function () {
+        stop(); ticking = setInterval(function () { left -= 1; if (left <= 10 && left > 0) beep(660, 80); if (left <= 0) { stop(); left = 0; beep(440, 900); } draw(); }, 1000);
+      }));
+      row.appendChild(btn("", "Dừng", stop));
+      row.appendChild(btn("", "Đặt lại", function () { stop(); left = total; draw(); }));
+      stage.appendChild(big); stage.appendChild(row); draw();
+      return;
+    }
+    var qs = shuffle(data.questions.slice()), i = 0, score = 0, remain = data.totalTime;
+    var q = el("p", "q"), input = el("input"), row = el("div", "row"), msg = el("p", "sub");
+    input.type = "text"; input.setAttribute("aria-label", "Câu trả lời");
+    function show() { q.textContent = qs[i % qs.length].q; input.value = ""; input.focus(); }
+    function submit() {
+      if (remain <= 0) return;
+      if (norm(input.value) === norm(qs[i % qs.length].a)) { score += 1; msg.textContent = "Đúng! Điểm: " + score; beep(880, 80); }
+      else msg.textContent = "Sai — đáp án: " + qs[i % qs.length].a;
+      i += 1; show();
+    }
+    input.addEventListener("keydown", function (e) { if (e.key === "Enter") submit(); });
+    row.appendChild(input); row.appendChild(btn("primary", "Trả lời", submit));
+    stage.appendChild(q); stage.appendChild(row); stage.appendChild(msg); show();
+    ticking = setInterval(function () {
+      remain -= 1; timerEl.textContent = remain + "s"; setProgress(data.totalTime - remain, data.totalTime);
+      if (remain <= 0) { stop(); clear(); stage.appendChild(el("p", "score", score + " câu đúng")); again(timer); }
+    }, 1000);
+  }
+
+  ({ quiz: quiz, matching: matching, crossword: crossword, spinwheel: spinwheel, flashcard: flashcard, timer: timer })[data.type]();
+})();
+</script>
+</body>
+</html>

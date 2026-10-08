@@ -2,7 +2,7 @@
 // Lưu là có hiệu lực ngay — plugin đọc lại permissions.json khi tệp đổi.
 import express from 'express';
 import { requireAuth } from '../lib/http-guards.js';
-import { DM_FEATURES, FEATURES, GROUP_ID, parseDm, parseSettings } from '../lib/permissions.js';
+import { DM_FEATURES, FEATURES, GROUP_ID, STUDIO_FEATURES, parseDm, parseSettings, parseStudio, studioPolicy } from '../lib/permissions.js';
 import { fallbackName } from '../lib/thread-names.js';
 import { failSidecar } from '../lib/route-errors.js';
 
@@ -10,11 +10,20 @@ const SAVE_FAIL = 'Chưa lưu được phân quyền — thử lại, nếu vẫ
 const READ_FAIL = 'Chưa đọc được phân quyền — tải lại trang, nếu vẫn lỗi hãy báo người cài đặt.';
 const label = Object.fromEntries(FEATURES.map((f) => [f.key, f.label]));
 
+/** Phần Nhật ký cho xưởng (chỉ khi lần lưu có gửi nút xưởng): "xưởng: Slide PowerPoint, Video" / "xưởng tắt". */
+function describeStudio(studio, quota) {
+  if (!studio) return [];
+  const on = STUDIO_FEATURES.filter((f) => studio[f.key]).map((f) => f.label);
+  const parts = [on.length ? `xưởng: ${on.join(', ')}` : 'xưởng tắt'];
+  if (Number.isInteger(quota)) parts.push(`${quota} lượt/người/ngày`);
+  return parts;
+}
+
 /** Một dòng dễ đọc cho Nhật ký: "Hoạt động · chỉ trả lời khi được tag · tắt: Tra cứu web, Video". */
 export function describeSettings(s) {
   const off = FEATURES.filter((f) => !s.features[f.key]).map((f) => label[f.key]);
   return [s.active ? 'Hoạt động' : 'Tạm tắt', s.replyOnlyTagged ? 'chỉ trả lời khi được tag' : 'trả lời mọi tin',
-    off.length ? `tắt: ${off.join(', ')}` : 'bật mọi tính năng'].join(' · ');
+    off.length ? `tắt: ${off.join(', ')}` : 'bật mọi tính năng', ...describeStudio(s.studio, s.studioQuota)].join(' · ');
 }
 
 export const WHO_LABELS = { owners: 'Chỉ chủ nhân', list: 'Những người trong danh sách', everyone: 'Mọi người' };
@@ -23,12 +32,18 @@ export const WHO_LABELS = { owners: 'Chỉ chủ nhân', list: 'Những người
 export function describeDm(s) {
   const off = DM_FEATURES.filter((f) => !s.features[f.key]).map((f) => f.label);
   const custom = s.people.filter((p) => p.features).length;
-  return [WHO_LABELS[s.who], off.length ? `tắt: ${off.join(', ')}` : 'bật mọi tính năng',
+  return [WHO_LABELS[s.who], off.length ? `tắt: ${off.join(', ')}` : 'bật mọi tính năng', ...describeStudio(s.studio),
     `${s.people.length} người trong danh sách${custom ? ` (${custom} chỉnh riêng)` : ''}`].join(' · ');
 }
 
-export function permissionRoutes({ permissions, sidecar, threadNames, activity }) {
+/** Dòng Nhật ký cho Hạn mức xưởng: "Mặc định 3 lượt/người/ngày · 2 người có hạn mức riêng". */
+export function describeQuotas(s) {
+  return [`Mặc định ${s.quota} lượt/người/ngày`, s.people.length ? `${s.people.length} người có hạn mức riêng` : 'không ai có hạn mức riêng'].join(' · ');
+}
+
+export function permissionRoutes({ permissions, sidecar, threadNames, activity, platform = process.platform, studioPolicyFile = '' }) {
   const r = express.Router();
+  const policy = () => studioPolicy(platform, studioPolicyFile);   // đọc lại mỗi lần: plugin có thể ghi sau
   const fail = (res, err, fallback) => {
     if (err?.name === 'InvalidPermissions') return res.status(400).json({ ok: false, error: err.message });
     console.error('[dashboard]', err);
@@ -36,7 +51,7 @@ export function permissionRoutes({ permissions, sidecar, threadNames, activity }
   };
 
   r.get('/permissions', requireAuth, (req, res) => {
-    try { res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, ...permissions.get() }); } catch (err) { fail(res, err, READ_FAIL); }
+    try { res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, studioFeatures: STUDIO_FEATURES, studioPolicy: policy(), ...permissions.get() }); } catch (err) { fail(res, err, READ_FAIL); }
   });
 
   r.get('/groups', requireAuth, async (req, res) => {
@@ -60,7 +75,7 @@ export function permissionRoutes({ permissions, sidecar, threadNames, activity }
       try {
         activity.append({ actor: req.user.username, action: 'permissions_defaults', detail: describeSettings(s) });
       } catch (err) { console.error('[dashboard] không ghi được Nhật ký phân quyền:', err); }
-      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, ...state });
+      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, studioFeatures: STUDIO_FEATURES, studioPolicy: policy(), ...state });
     } catch (err) { fail(res, err, SAVE_FAIL); }
   });
 
@@ -71,7 +86,18 @@ export function permissionRoutes({ permissions, sidecar, threadNames, activity }
       try {
         activity.append({ actor: req.user.username, action: 'permissions_dm', detail: describeDm(s) });
       } catch (err) { console.error('[dashboard] không ghi được Nhật ký phân quyền:', err); }
-      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, ...state });
+      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, studioFeatures: STUDIO_FEATURES, studioPolicy: policy(), ...state });
+    } catch (err) { fail(res, err, SAVE_FAIL); }
+  });
+
+  r.put('/permissions/studio', requireAuth, (req, res) => {
+    try {
+      const s = parseStudio(req.body);
+      const state = permissions.setStudio(s);
+      try {
+        activity.append({ actor: req.user.username, action: 'permissions_studio', detail: describeQuotas(s) });
+      } catch (err) { console.error('[dashboard] không ghi được Nhật ký phân quyền:', err); }
+      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, studioFeatures: STUDIO_FEATURES, studioPolicy: policy(), ...state });
     } catch (err) { fail(res, err, SAVE_FAIL); }
   });
 
@@ -89,7 +115,7 @@ export function permissionRoutes({ permissions, sidecar, threadNames, activity }
           detail: `${name || fallbackName(groupId, 1)}: ${changed.length ? describeSettings(s) : 'dùng mặc định'}`,
         });
       } catch (err) { console.error('[dashboard] không ghi được Nhật ký phân quyền:', err); }
-      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, ...state });
+      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, studioFeatures: STUDIO_FEATURES, studioPolicy: policy(), ...state });
     } catch (err) { fail(res, err, SAVE_FAIL); }
   });
 

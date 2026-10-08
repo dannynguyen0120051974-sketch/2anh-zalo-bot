@@ -97,7 +97,8 @@ class GroupPermissionsTest(PermissionsFile, unittest.TestCase):
         mapped = [tool for feature in gp.FEATURES for tool in gp.FEATURE_TOOLS[feature]]
         self.assertEqual(len(mapped), len(set(mapped)), "một công cụ nằm ở hai nút")
         self.assertFalse(set(mapped) & gp.ALWAYS_ON)
-        self.assertEqual(set(mapped) | gp.ALWAYS_ON, public,
+        self.assertFalse(set(mapped) & gp.STUDIO_TOOLS)
+        self.assertEqual(set(mapped) | gp.ALWAYS_ON | gp.STUDIO_TOOLS, public,
                          "công cụ công khai mới phải được xếp vào một nút (spec §8.2)")
         self.assertEqual(set(gp.FEATURE_TOOLS), set(gp.FEATURES))
         self.assertEqual(set(gp.FEATURE_LABELS), set(gp.FEATURES))
@@ -375,18 +376,21 @@ _NODE_FIXTURE = r"""
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 const [modUrl, home, stepsJson] = process.argv.slice(1);
-const { createPermissionsStore, makeGlobalReplyOnlyTagged, parseDm } = await import(modUrl);
+const { createPermissionsStore, makeGlobalReplyOnlyTagged, parseDm, parseStudio } = await import(modUrl);
 const store = createPermissionsStore({
   file: join(home, 'zalo', 'permissions.json'),
   globalReplyOnlyTagged: makeGlobalReplyOnlyTagged({ envFile: join(home, '.env'), configFile: join(home, 'config.yaml') }),
 });
 for (const step of JSON.parse(stepsJson)) {
   if (step.dm) { store.setDm(parseDm(step.dm)); continue; }
+  if (step.quotas) { store.setStudio(parseStudio(step.quotas)); continue; }
   const view = store.get();
   const base = step.group ? (view.groups[step.group] || view.defaults) : view.defaults;
-  const s = { active: base.active, replyOnlyTagged: base.replyOnlyTagged, features: { ...base.features } };
+  const s = { active: base.active, replyOnlyTagged: base.replyOnlyTagged, features: { ...base.features }, studio: { ...base.studio } };
   Object.assign(s, step.set || {});
   Object.assign(s.features, step.features || {});
+  Object.assign(s.studio, step.studio || {});
+  if (step.studioQuota !== undefined) s.studioQuota = step.studioQuota;
   if (step.group) store.setGroup(step.group, s); else store.setDefaults(s);
 }
 """
@@ -461,6 +465,28 @@ class DashboardContractTest(AdapterHarness, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gp.dm_disabled_features(lan), ["voice"], "người có nút riêng: video bật lại, thoại tắt")
         self.assertEqual(gp.dm_disabled_features(MEMBER), ["video"])
         self.assertEqual(gp.disabled_features(GROUP_A), ["web"])
+        self.assertEqual(gp.disabled_features(GROUP_B), ["kb"])
+
+    async def test_s4_studio_switches_and_quotas_written_by_dashboard_are_read_by_plugin(self):
+        self.enterContext(patch.object(gp, "VIDEO_BLOCKED", False))
+        self.enterContext(patch.object(gp, "sandbox_mode", lambda: "systemd"))
+        all8 = {feature: True for feature in gp.DM_FEATURES}
+        lan = "1234567890123456"
+        off = {f: False for f in gp.STUDIO_FEATURES}
+        self.dashboard_saves([
+            {"studio": {"studioSlides": True, "studioDocs": True}},
+            {"group": GROUP_A, "studio": {"studioDocs": False, "studioVideo": True}, "studioQuota": 5},
+            {"dm": {"who": "everyone", "features": all8, "studio": {**off, "studioExams": True},
+                    "people": [{"uid": lan, "features": all8, "studio": {**off, "studioExams": True, "studioSlides": True}}]}},
+            {"quotas": {"quota": 2, "people": [{"uid": lan, "name": "Cô Lan", "quota": 9}]}},
+            {"group": GROUP_B, "features": {"kb": False}},
+        ])
+        a = gp.studio_settings(MEMBER, GROUP_A, True)
+        self.assertEqual(a, {"features": {**off, "studioSlides": True, "studioVideo": True}, "quota": 5})
+        self.assertEqual(gp.studio_settings(MEMBER, GROUP_B, True), {"features": {**off, "studioSlides": True, "studioDocs": True}, "quota": 2})
+        self.assertEqual(gp.studio_settings(MEMBER, MEMBER, False), {"features": {**off, "studioExams": True}, "quota": 2})
+        self.assertEqual(gp.studio_settings(lan, lan, False), {"features": {**off, "studioExams": True, "studioSlides": True}, "quota": 9})
+        self.assertEqual(gp.studio_settings(lan, GROUP_A, True)["quota"], 9, "hạn mức riêng của người thắng nhóm")
         self.assertEqual(gp.disabled_features(GROUP_B), ["kb"])
 
 
@@ -637,6 +663,137 @@ class AdapterDmTest(PermissionsFile, AdapterHarness, unittest.IsolatedAsyncioTes
         self.assertEqual(len(sent), 1)
         self.assertEqual(sent[0]["notice"], "sethome")
         self.assertEqual(sent[0]["actorUid"], STRANGER)
+
+
+REAL_SANDBOX_MODE = gp.sandbox_mode
+
+
+class StudioPermissionsTest(PermissionsFile, unittest.TestCase):
+    """Xưởng tạo sản phẩm (spec §17): thiếu khoá/lỗi = tắt; hạn mức người ← nhóm ← mặc định ← 3."""
+
+    def setUp(self):
+        super().setUp()
+        # Máy chạy test có thể là Windows (và không có systemd): chính sách "video tắt khi không có hộp cát"
+        # được thử riêng bên dưới.
+        self.enterContext(patch.object(gp, "VIDEO_BLOCKED", False))
+        self.enterContext(patch.object(gp, "sandbox_mode", lambda: "systemd"))
+
+    def test_linux_without_systemd_sandbox_forces_video_off_with_its_own_note(self):
+        self.write({"version": 1, "defaults": {"features": {"studioVideo": True, "studioSlides": True}},
+                    "dm": {"features": {"studioVideo": True}}})
+        self.assertTrue(gp.studio_settings(MEMBER, GROUP_A, True)["features"]["studioVideo"])
+        self.assertEqual(gp.video_policy(), {"videoBlocked": False, "note": ""})
+        with patch.object(gp, "sandbox_mode", lambda: "plain"):
+            for thread, is_group in ((GROUP_A, True), (MEMBER, False)):
+                rules = gp.studio_settings(MEMBER, thread, is_group)["features"]
+                self.assertFalse(rules["studioVideo"])
+                self.assertEqual(rules["studioSlides"], is_group)
+            self.assertEqual(gp.video_policy(), {"videoBlocked": True, "note": gp.PLAIN_VIDEO_NOTE})
+        # Đường thật, không giả: ZALO_STUDIO_SANDBOX=none → sandbox.mode() là plain trên mọi máy.
+        with patch.object(gp, "sandbox_mode", REAL_SANDBOX_MODE), patch.dict(os.environ, {"ZALO_STUDIO_SANDBOX": "none"}):
+            self.assertEqual(gp.sandbox_mode(), "plain")
+            self.assertFalse(gp.studio_settings(MEMBER, GROUP_A, True)["features"]["studioVideo"])
+        with patch.object(gp, "VIDEO_BLOCKED", True):
+            self.assertEqual(gp.video_policy(), {"videoBlocked": True, "note": gp.WINDOWS_VIDEO_NOTE})
+
+    def test_video_policy_is_published_next_to_permissions_for_the_dashboard(self):
+        with patch.object(gp, "sandbox_mode", lambda: "plain"):
+            data = gp.publish_video_policy()
+        self.assertEqual(gp.video_policy_path(), gp.permissions_path().parent / "studio-policy.json")
+        with open(gp.video_policy_path(), encoding="utf-8") as fh:
+            self.assertEqual(json.load(fh), data)
+        self.assertEqual(data, {"version": 1, "videoBlocked": True, "note": gp.PLAIN_VIDEO_NOTE, "sandbox": "plain"})
+
+    def test_unreadable_permissions_file_keeps_every_studio_switch_off(self):
+        self.write({"version": 1, "defaults": {"features": {f: True for f in gp.STUDIO_FEATURES}},
+                    "dm": {"who": "everyone", "features": {f: True for f in gp.STUDIO_FEATURES}}})
+        with patch.object(gp.Path, "read_text", side_effect=PermissionError(13, "Permission denied")), \
+                self.assertLogs(gp.logger, level="ERROR"):
+            for thread, is_group in ((GROUP_A, True), (MEMBER, False)):
+                self.assertEqual(gp.studio_settings(MEMBER, thread, is_group)["features"],
+                                 {f: False for f in gp.STUDIO_FEATURES})
+
+    def test_windows_policy_forces_video_off_whatever_the_file_says(self):
+        self.write({"version": 1, "defaults": {"features": {"studioVideo": True, "studioSlides": True}},
+                    "dm": {"features": {"studioVideo": True}}})
+        with patch.object(gp, "VIDEO_BLOCKED", True):
+            for thread, is_group in ((GROUP_A, True), (MEMBER, False)):
+                rules = gp.studio_settings(MEMBER, thread, is_group)["features"]
+                self.assertFalse(rules["studioVideo"])
+                self.assertEqual(rules["studioSlides"], is_group)
+
+    def test_missing_file_corrupt_file_and_missing_keys_keep_every_studio_switch_off(self):
+        for content in (None, "{hỏng", {"version": 1, "defaults": {"features": {"web": False}}, "groups": {}}):
+            if content is not None:
+                self.write(content)
+            for is_group, thread in ((True, GROUP_A), (False, MEMBER)):
+                rules = gp.studio_settings(MEMBER, thread, is_group)
+                self.assertEqual(rules["features"], {f: False for f in gp.STUDIO_FEATURES}, content)
+                self.assertEqual(rules["quota"], gp.DEFAULT_STUDIO_QUOTA)
+
+    def test_group_switches_layer_defaults_then_group_and_never_touch_old_switches(self):
+        self.write({"version": 1,
+                    "defaults": {"features": {"studioSlides": True, "studioDocs": True}},
+                    "groups": {GROUP_A: {"features": {"studioDocs": False, "studioVideo": True}, "studioQuota": 5}}})
+        a = gp.studio_settings(MEMBER, GROUP_A, True)
+        self.assertEqual(a["features"], {"studioSlides": True, "studioDocs": False, "studioExams": False, "studioVideo": True})
+        self.assertEqual(a["quota"], 5)
+        b = gp.studio_settings(MEMBER, GROUP_B, True)
+        self.assertEqual(b["features"]["studioDocs"], True)
+        self.assertEqual(b["quota"], 3)
+        self.assertEqual(gp.disabled_features(GROUP_A), [], "nút xưởng không lẫn vào 9 nút cũ")
+
+    def test_dm_switches_layer_dm_then_person_and_group_entries_do_not_leak_into_dm(self):
+        self.write({"version": 1,
+                    "defaults": {"features": {"studioVideo": True}},
+                    "groups": {},
+                    "dm": {"who": "everyone", "features": {"studioSlides": True},
+                           "people": {MEMBER: {"features": {"studioSlides": False, "studioExams": True}}}}})
+        mine = gp.studio_settings(MEMBER, MEMBER, False)["features"]
+        self.assertEqual(mine, {"studioSlides": False, "studioDocs": False, "studioExams": True, "studioVideo": False})
+        other = gp.studio_settings(OWNER, OWNER, False)["features"]
+        self.assertTrue(other["studioSlides"])
+        self.assertFalse(other["studioVideo"], "nút mặc định của nhóm không áp cho nhắn riêng")
+        self.assertEqual(gp.dm_disabled_features(MEMBER), [], "nút xưởng không lẫn vào 8 nút nhắn riêng")
+
+    def test_quota_person_beats_group_beats_default_and_garbage_is_ignored(self):
+        self.write({"version": 1, "defaults": {}, "groups": {GROUP_A: {"studioQuota": 7}, GROUP_B: {"studioQuota": 99}},
+                    "studio": {"quota": 2, "people": {MEMBER: {"name": "Lan", "quota": 10}, "abc": {"quota": 1},
+                                                      OWNER: {"quota": True}}}})
+        self.assertEqual(gp.studio_settings(MEMBER, GROUP_A, True)["quota"], 10)
+        self.assertEqual(gp.studio_settings(MEMBER, MEMBER, False)["quota"], 10)
+        self.assertEqual(gp.studio_settings(OWNER, GROUP_A, True)["quota"], 7)
+        self.assertEqual(gp.studio_settings(OWNER, GROUP_B, True)["quota"], 2, "99 vượt trần 50 → bỏ")
+        self.assertEqual(gp.studio_settings(OWNER, OWNER, False)["quota"], 2, "True không phải số lượt")
+        self.write({"version": 1, "studio": {"quota": 0}})
+        self.assertEqual(gp.studio_settings(MEMBER, GROUP_A, True)["quota"], 0)
+
+    def test_wrong_types_never_turn_a_switch_on(self):
+        self.write({"version": 1, "defaults": {"features": {"studioSlides": "true", "studioDocs": 1}},
+                    "groups": {GROUP_A: {"features": ["studioVideo"]}},
+                    "dm": {"features": {"studioExams": "yes"}}})
+        self.assertFalse(any(gp.studio_settings(MEMBER, GROUP_A, True)["features"].values()))
+        self.assertFalse(any(gp.studio_settings(MEMBER, MEMBER, False)["features"].values()))
+
+
+class AdapterStudioNoteTest(PermissionsFile, AdapterHarness, unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        super().setUp()
+        self.enterContext(patch.dict(os.environ, {"ZALO_ALLOWED_USERS": OWNER,
+                                                  "ZALO_STUDIO_USAGE_FILE": os.path.join(self.dir, "studio-usage.json")}))
+
+    async def test_member_turn_mentions_the_studio_only_when_a_switch_is_on(self):
+        adapter = self.make_adapter()
+        await self.say(adapter, "m1", MEMBER, "@Lăng Tiêu làm slide giúp")
+        self.assertNotIn("Xưởng tạo sản phẩm", self.handled[-1].channel_context or "")
+        self.write({"version": 1, "defaults": {"features": {"studioSlides": True}}, "groups": {}})
+        await self.say(adapter, "m2", MEMBER, "@Lăng Tiêu làm slide giúp")
+        context = self.handled[-1].channel_context
+        self.assertIn("[Xưởng tạo sản phẩm", context)
+        self.assertIn("slide (slide PowerPoint)", context)
+        self.assertIn("còn 3 lượt", context)
+        await self.say(adapter, "m3", OWNER, "@Lăng Tiêu làm slide giúp")
+        self.assertNotIn("Xưởng tạo sản phẩm", self.handled[-1].channel_context or "")
 
 
 if __name__ == "__main__":

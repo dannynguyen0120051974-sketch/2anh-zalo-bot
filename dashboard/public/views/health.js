@@ -1,8 +1,9 @@
 // Sức khoẻ máy chủ (spec §16.B): CPU/RAM/ổ đĩa/thời gian chạy, biểu đồ 24 giờ (SVG dựng bằng htm,
-// hợp CSP), trạng thái dịch vụ, lượt gọi AI theo ngày. Tự làm mới mỗi 30 giây.
+// hợp CSP), trạng thái dịch vụ, lượt gọi AI theo ngày, lượt dùng Xưởng tạo sản phẩm (spec §17). Tự làm mới mỗi 30 giây.
 import { useEffect, useState } from '../vendor/hooks.mjs';
 import { api } from '../api.js';
 import { html, Icon, Notice, PageHead, Spinner, fmtTime } from '../ui.js';
+import { vnToday } from './studio-box.js';
 
 const REFRESH_MS = 30_000;
 const W = 600;
@@ -215,8 +216,73 @@ function Usage({ usage }) {
   </section>`;
 }
 
+// Xưởng tạo sản phẩm (spec §17): tên loại việc cho người đọc.
+export const STUDIO_KINDS = {
+  slide: 'Slide', giao_an: 'Giáo án', van_ban: 'Văn bản NĐ30', van_ban_doan: 'Văn bản Đoàn', van_ban_dang: 'Văn bản Đảng',
+  de_kiem_tra: 'Đề kiểm tra', de_tieng_anh: 'Đề KHTN tiếng Anh', skkn: 'SKKN', tro_choi: 'Trò chơi', thi_nghiem: 'Thí nghiệm ảo',
+  video: 'Video giải thích', video_bai_giang: 'Video bài giảng',
+};
+const STUDIO_STATUS = { ok: ['ok', 'Đã gửi'], failed: ['danger', 'Không làm được'], refunded: ['idle', 'Trả lượt'],
+  queued: ['warn', 'Đang chờ'], running: ['warn', 'Đang làm'] };
+export const studioStatus = (s) => STUDIO_STATUS[s] || STUDIO_STATUS.failed;
+
+/** Nhãn một việc gần đây; việc hỏng mà không được trả lượt (đã trả đủ hạn mức hôm nay) ghi thêm "lượt bị tính dù lỗi". */
+export function jobBadge(j) {
+  const [kind, text] = studioStatus(j.status);
+  return { kind, text, note: kind === 'danger' && j.refundDenied ? 'lượt bị tính dù lỗi' : '' };
+}
+
+/** Gộp 14 ngày theo người: [{ uid, name, jobs, ok, failed, refunded, tokens, images }] — dùng nhiều nhất trước. */
+export function studioPeople(days) {
+  const map = new Map();
+  for (const d of days || []) {
+    for (const p of d.people || []) {
+      const cur = map.get(p.uid) || { uid: p.uid, name: '', jobs: 0, ok: 0, failed: 0, refunded: 0, tokens: 0, images: 0 };
+      cur.name = cur.name || p.name;
+      cur.jobs += p.jobs; cur.ok += p.ok; cur.failed += p.failed; cur.refunded += p.refunded;
+      cur.tokens += p.inputTokens + p.outputTokens;
+      cur.images += p.images || 0;
+      map.set(p.uid, cur);
+    }
+  }
+  return [...map.values()].sort((a, b) => b.jobs - a.jobs || a.uid.localeCompare(b.uid));
+}
+
+function StudioUsage({ usage }) {
+  if (!usage) return null;
+  const people = studioPeople(usage.days);
+  const last = usage.days?.[0];
+  const dmy = (d) => d.split('-').reverse().join('/');
+  return html`<section class="card">
+    <h2>Xưởng tạo sản phẩm</h2>
+    <p class="muted small">Sản phẩm người khác nhờ bot làm (slide, văn bản, đề, video…) trong 14 ngày gần nhất, theo giờ Việt Nam. Token là phần AI dùng để viết nội dung; Ảnh là số ảnh vẽ bằng AI hoặc tải từ web cho slide/video; chưa tính tiền. Hạn mức chỉnh ở Phân quyền Bot → Hạn mức xưởng.</p>
+    ${usage.error ? html`<${Notice} kind="warn">Chưa đọc được sổ lượt xưởng — báo người cài đặt kiểm tệp studio-usage.json trong thư mục zalo của trợ lý.<//>` : null}
+    ${!usage.error && !people.length ? html`<p class="muted">Chưa ai nhờ xưởng làm gì. Bật xưởng ở Phân quyền Bot → Mặc định, từng nhóm hoặc Nhắn riêng.</p>` : null}
+    ${people.length ? html`
+      ${last ? html`<p class="small">${last.date === vnToday() ? 'Hôm nay' : 'Ngày gần nhất'} (${dmy(last.date)}): ${fmtNum(last.jobs)} việc · ${fmtNum(last.ok)} đã gửi · ${fmtNum(last.failed)} không làm được · ${fmtNum(last.refunded)} trả lượt.</p>` : null}
+      <div class="table-wrap"><table class="table table-cards">
+        <thead><tr><th>Người nhờ</th><th>Số việc</th><th>Đã gửi</th><th>Không làm được</th><th>Trả lượt</th><th>Token</th><th>Ảnh</th></tr></thead>
+        <tbody>${people.map((p) => html`<tr key=${p.uid}>
+          <td data-label="Người nhờ">${p.name || 'Chưa rõ tên'} <small class="mono muted">…${p.uid.slice(-7)}</small></td>
+          <td data-label="Số việc">${fmtNum(p.jobs)}</td><td data-label="Đã gửi">${fmtNum(p.ok)}</td>
+          <td data-label="Không làm được">${fmtNum(p.failed)}</td><td data-label="Trả lượt">${fmtNum(p.refunded)}</td>
+          <td data-label="Token">${fmtNum(p.tokens)}</td><td data-label="Ảnh">${fmtNum(p.images)}</td>
+        </tr>`)}</tbody>
+      </table></div>` : null}
+    ${usage.recent?.length ? html`
+      <h3 class="studio-recent-head">Việc gần đây</h3>
+      <ul class="list svc-list">${usage.recent.map((j, i) => {
+        const b = jobBadge(j);
+        return html`<li key=${i}><span class="svc-main"><span>${STUDIO_KINDS[j.kind] || j.kind} · ${j.name || 'Chưa rõ tên'}</span>
+          <small class="muted">${fmtTime(j.at)} · ${j.group ? 'trong nhóm' : 'nhắn riêng'}${b.note ? ` · ${b.note}` : ''}</small></span>
+          <span class=${`badge badge-${b.kind} push`}>${b.text}</span></li>`;
+      })}</ul>` : null}
+  </section>`;
+}
+
 export function Health({ me }) {
   const [data, setData] = useState(null);
+  const [studio, setStudio] = useState(null);
   const [error, setError] = useState('');
   useEffect(() => {
     let alive = true; let timer = null;
@@ -224,6 +290,8 @@ export function Health({ me }) {
       try { const r = await api('/api/server-health'); if (alive) { setData(r); setError(''); } } catch (err) {
         if (alive && err.status !== 401) setError(err.message);
       } finally { if (alive) timer = setTimeout(load, REFRESH_MS); }
+      // Sổ lượt xưởng: lỗi đọc chỉ ẩn mục này, không làm hỏng cả trang.
+      try { const s = await api('/api/studio-usage'); if (alive) setStudio(s); } catch { /* bỏ qua */ }
     };
     load();
     return () => { alive = false; clearTimeout(timer); };
@@ -267,5 +335,6 @@ export function Health({ me }) {
           <span class=${`badge badge-${b.kind} push`}>${b.text}</span></li>`;
       })}</ul>
     </section>
-    <${Usage} usage=${data.usage} />`;
+    <${Usage} usage=${data.usage} />
+    <${StudioUsage} usage=${studio} />`;
 }

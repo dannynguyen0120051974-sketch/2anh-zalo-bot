@@ -79,10 +79,13 @@ export function PoweredBy({ brand }) {
   return brand?.poweredBy ? html`<p class="powered">Vận hành bởi 2Anh AI</p>` : null;
 }
 
-/** Ô bật/tắt có nhãn và dòng gợi ý (Phân quyền Bot: nhóm và nhắn riêng); `more` = phần giải thích gập thêm. */
-export function Toggle({ id, checked, onChange, label, hint, more }) {
+/**
+ * Ô bật/tắt có nhãn và dòng gợi ý (Phân quyền Bot: nhóm và nhắn riêng); `more` = phần giải thích gập thêm;
+ * `disabled` = máy chủ khoá nút này (lý do nằm ở dòng gợi ý).
+ */
+export function Toggle({ id, checked, onChange, label, hint, more, disabled }) {
   return html`<div class="perm-row">
-    <label class="check" for=${id}><input id=${id} type="checkbox" checked=${checked}
+    <label class="check" for=${id}><input id=${id} type="checkbox" checked=${checked} disabled=${disabled}
       aria-describedby=${hint ? `${id}-hint` : undefined} onChange=${(e) => onChange(e.currentTarget.checked)} />${label}</label>
     ${hint ? html`<small id=${`${id}-hint`} class="muted">${hint}</small>` : null}
     ${more ? html`<details class="more-hint"><summary>Chi tiết</summary><p class="muted small">${more}</p></details>` : null}

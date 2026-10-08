@@ -115,6 +115,7 @@ export function makeDeps(t, overrides = {}) {
     owners: createOwnersStore({ envFile: join(dir, 'hermes.env'), sidecarEnvFile: join(dir, 'sidecar.env'), pendingFile: join(dir, 'pending-restart.json') }),
     brand: createBrandStore({ file: join(dir, 'brand.json'), logoFile: join(dir, 'brand', 'logo.png') }),
     health: fakeHealth(),
+    studioUsageFile: join(dir, 'zalo', 'studio-usage.json'),
     publicDir: join(dir, 'public'),
     dir,
     ...overrides,

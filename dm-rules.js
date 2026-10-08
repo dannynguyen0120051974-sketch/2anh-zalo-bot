@@ -17,14 +17,17 @@ import { join } from 'node:path';
 export const DM_WHO = ['owners', 'list', 'everyone'];
 // "Hẹn giờ cho nhóm" không có nghĩa trong tin nhắn riêng (công cụ tự từ chối ngoài nhóm).
 export const DM_FEATURE_KEYS = ['web', 'files', 'voice', 'reminders', 'kb', 'people', 'academic', 'video'];
+// Xưởng tạo sản phẩm (spec §17): nằm cùng `features` trong tệp nhưng thiếu khoá = TẮT. Kết nối Zalo không dùng tới;
+// chỉ giữ lại để dashboard lưu nhắn riêng không làm rơi chúng.
+export const STUDIO_KEYS = ['studioSlides', 'studioDocs', 'studioExams', 'studioVideo'];
 const UID_KEY = /^\d{1,32}$/;
 const MAX_NAME = 80;
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-function bools(raw) {
+function bools(raw, keys = [...DM_FEATURE_KEYS, ...STUDIO_KEYS]) {
   const out = {};
-  if (isObj(raw)) for (const k of DM_FEATURE_KEYS) if (typeof raw[k] === 'boolean') out[k] = raw[k];
+  if (isObj(raw)) for (const k of keys) if (typeof raw[k] === 'boolean') out[k] = raw[k];
   return out;
 }
 
@@ -55,7 +58,7 @@ export function dmVerdict(dm, uid) {
   // Object.hasOwn: "constructor", "__proto__"… không được tính là người trong danh sách qua prototype.
   const person = dm?.people && Object.hasOwn(dm.people, key) ? dm.people[key] : undefined;
   const features = Object.fromEntries(DM_FEATURE_KEYS.map((k) => [k, true]));
-  Object.assign(features, dm?.features || {}, person?.features || {});
+  Object.assign(features, bools(dm?.features, DM_FEATURE_KEYS), bools(person?.features, DM_FEATURE_KEYS));
   const who = dm?.who;
   const allowed = who == null ? null : who === 'everyone' || (who === 'list' && Boolean(person));
   return { allowed, features };

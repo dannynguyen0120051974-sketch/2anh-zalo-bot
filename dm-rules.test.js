@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DM_FEATURE_KEYS, createDmRules, dmVerdict, normalizeDm, permissionsFileFromEnv } from './dm-rules.js';
+import { DM_FEATURE_KEYS, STUDIO_KEYS, createDmRules, dmVerdict, normalizeDm, permissionsFileFromEnv } from './dm-rules.js';
 
 const A = '1111111111111111111';
 const B = '2222222222222222222';
@@ -68,4 +68,13 @@ test('createDmRules: đọc lại khi tệp đổi; không có tệp, tệp hỏ
   write(JSON.stringify({ version: 2, dm: { who: 'everyone' } }));
   assert.equal(rules(), null);
   assert.equal(createDmRules({ file: null })(), null);
+});
+
+test('xưởng (spec §17): normalizeDm giữ 4 nút xưởng để dashboard không làm rơi; dmVerdict vẫn đúng 8 nút', () => {
+  const dm = normalizeDm({ who: 'everyone', features: { studioSlides: true, studioVideo: 'yes' },
+    people: { [A]: { features: { studioDocs: true, web: false } } } });
+  assert.deepEqual(dm.features, { studioSlides: true });
+  assert.deepEqual(dm.people[A].features, { web: false, studioDocs: true });
+  assert.deepEqual(Object.keys(dmVerdict(dm, A).features), DM_FEATURE_KEYS);
+  assert.deepEqual(STUDIO_KEYS, ['studioSlides', 'studioDocs', 'studioExams', 'studioVideo']);
 });

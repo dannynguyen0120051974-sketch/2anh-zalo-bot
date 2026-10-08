@@ -1,11 +1,16 @@
 // Mục "Nhắn riêng" trong Phân quyền Bot (spec §16): ai được nhắn riêng với bot, 8 nút tính năng,
 // danh sách người kèm tính năng riêng từng người. Lưu là có hiệu lực ngay. Chủ nhân luôn được miễn.
-// Bố cục: ba hộp (Ai được nhắn · Tính năng chung · Danh sách người); mỗi người là một hàng gập,
-// chỉ mở một người một lúc; thanh Lưu dính đáy.
+// Bố cục: bốn hộp (Ai được nhắn · Tính năng chung · Xưởng tạo sản phẩm · Danh sách người); mỗi người là một
+// hàng gập (tóm tắt cả nút xưởng), chỉ mở một người một lúc; thanh Lưu dính đáy.
 import { useEffect, useState } from '../vendor/hooks.mjs';
 import { api } from '../api.js';
 import { html, Notice, SaveBar, Toggle, onText } from '../ui.js';
 import { fold } from '../fold.js';
+import { StudioBox, applyPolicy, effectiveStudio, lockedByPolicy } from './studio-box.js';
+
+const STUDIO_KEYS = ['studioSlides', 'studioDocs', 'studioExams', 'studioVideo'];
+/** Đủ 4 nút xưởng (dữ liệu từ máy chủ mới) thì gửi kèm; thiếu thì bỏ — máy chủ giữ nút xưởng như cũ. */
+const fullStudio = (st, policy) => (st && STUDIO_KEYS.every((k) => typeof st[k] === 'boolean') ? { studio: applyPolicy(st, policy) } : {});
 
 const UID = /^[1-9]\d{14,21}$/;
 export const MAX_PEOPLE = 200;
@@ -25,16 +30,20 @@ export function dmDraft(dm) {
   return {
     who: dm.who,
     features: { ...dm.features },
-    people: dm.people.map((p) => ({ uid: p.uid, name: p.name, custom: p.custom, features: { ...p.features } })),
+    ...(dm.studio ? { studio: { ...dm.studio } } : {}),
+    people: dm.people.map((p) => ({ uid: p.uid, name: p.name, custom: p.custom, features: { ...p.features },
+      ...(p.studio ? { studio: { ...p.studio } } : {}) })),
   };
 }
 
 /** Thân PUT /api/permissions/dm: người không bật "tính năng riêng" gửi `features: null` (theo nút chung). */
-export function dmPayload(d) {
+export function dmPayload(d, policy) {
   return {
     who: d.who,
     features: { ...d.features },
-    people: d.people.map((p) => ({ uid: p.uid, name: p.name, features: p.custom ? { ...p.features } : null })),
+    ...fullStudio(d.studio, policy),
+    people: d.people.map((p) => ({ uid: p.uid, name: p.name, features: p.custom ? { ...p.features } : null,
+      ...(p.custom ? fullStudio(p.studio, policy) : {}) })),
   };
 }
 
@@ -46,6 +55,7 @@ export function dmChangeCount(d, dm) {
   const b = dmPayload(dm);
   let n = a.who === b.who ? 0 : 1;
   for (const k of Object.keys({ ...a.features, ...b.features })) if (a.features[k] !== b.features[k]) n += 1;
+  for (const k of Object.keys({ ...a.studio, ...b.studio })) if (a.studio?.[k] !== b.studio?.[k]) n += 1;
   const before = new Map(b.people.map((p) => [p.uid, JSON.stringify(p)]));
   const after = new Map(a.people.map((p) => [p.uid, JSON.stringify(p)]));
   for (const [uid, s] of after) if (before.get(uid) !== s) n += 1;
@@ -60,7 +70,8 @@ export function addPerson(d, uid, name = '') {
   if (!UID.test(id)) return { error: 'UID Zalo là dãy 15–22 chữ số, không phải số điện thoại — nhờ người đó nhắn /sethome cho bot để biết.' };
   if (d.people.some((p) => p.uid === id)) return { error: 'Người này đã có trong danh sách.' };
   if (d.people.length >= MAX_PEOPLE) return { error: `Danh sách tối đa ${MAX_PEOPLE} người — bỏ bớt rồi thêm.` };
-  const person = { uid: id, name: String(name || '').trim().slice(0, 80), custom: false, features: { ...d.features } };
+  const person = { uid: id, name: String(name || '').trim().slice(0, 80), custom: false, features: { ...d.features },
+    ...(d.studio ? { studio: { ...d.studio } } : {}) };
   return { draft: { ...d, people: [...d.people, person] } };
 }
 
@@ -102,12 +113,24 @@ export function dmBadge(dm) {
   return { kind: 'ok', text: `${dm.people.length} người` };
 }
 
-/** Tóm tắt một người trên hàng gập: theo chung / riêng bật hết / riêng tắt N (detail = các tính năng tắt). */
-export function personSummary(p, features) {
+/**
+ * Tóm tắt một người trên hàng gập: theo chung / riêng bật hết / riêng tắt N (detail = các tính năng tắt),
+ * thêm "xưởng a/b" khi có nút xưởng (nút máy chủ khoá tính là tắt).
+ */
+export function personSummary(p, features, studioFeatures = [], policy) {
   if (!p.custom) return { kind: 'idle', text: 'Theo cài đặt chung', detail: '' };
   const off = features.filter((f) => !p.features[f.key]).map((f) => f.label);
-  if (!off.length) return { kind: 'ok', text: 'Riêng · bật tất cả', detail: '' };
-  return { kind: 'warn', text: `Riêng · ${off.length} tính năng tắt`, detail: `Đang tắt: ${off.join(', ')}` };
+  let studioText = '';
+  let studioDetail = '';
+  if (studioFeatures.length && p.studio) {
+    const eff = effectiveStudio(p.studio, studioFeatures, policy);
+    const on = studioFeatures.filter((f) => eff[f.key]).map((f) => f.label);
+    studioText = ` · xưởng ${on.length}/${studioFeatures.length}`;
+    studioDetail = on.length ? `Xưởng bật: ${on.join(', ')}` : 'Xưởng tắt hết';
+  }
+  if (!off.length) return { kind: 'ok', text: `Riêng · bật tất cả${studioText}`, detail: studioDetail };
+  return { kind: 'warn', text: `Riêng · ${off.length} tính năng tắt${studioText}`,
+    detail: [`Đang tắt: ${off.join(', ')}`, studioDetail].filter(Boolean).join('. ') };
 }
 
 /** Lọc danh sách người theo tên (không phân biệt dấu) hoặc UID, và "chỉ người có chỉnh riêng". */
@@ -120,9 +143,11 @@ export function filterPeople(people, { q = '', customOnly = false, names = new M
 /** "…" + 7 số cuối của UID cho hàng gập (UID đầy đủ ở title). */
 export const shortUid = (uid) => (uid.length > 7 ? `…${uid.slice(-7)}` : uid);
 
-function Person({ p, known, base, features, open, onToggle, onChange, onRemove }) {
+function Person({ p, known, base, baseStudio, features, studioFeatures, policy, open, onToggle, onChange, onRemove }) {
   const id = `dm-p-${p.uid}`;
-  const s = personSummary(p, features);
+  const s = personSummary(p, features, studioFeatures, policy);
+  // Bật/tắt "tính năng riêng" hoặc đặt lại: nút xưởng đi cùng nút tính năng.
+  const withStudio = (st) => (baseStudio && st ? { studio: { ...st } } : {});
   const name = p.name || known || 'Chưa rõ tên';
   return html`<li class=${`dm-person${open ? ' open' : ''}`}>
     <div class="dm-row">
@@ -135,14 +160,21 @@ function Person({ p, known, base, features, open, onToggle, onChange, onRemove }
       ${s.detail ? html`<p class="muted small">${s.detail}.</p>` : null}
       <${Toggle} id=${`${id}-custom`} checked=${p.custom} label="Dùng tính năng riêng"
         hint=${p.custom ? 'Các nút dưới đây chỉ áp cho người này.' : 'Đang theo Tính năng chung ở trên.'}
-        onChange=${(v) => onChange({ custom: v, features: { ...(v ? base : p.features) } })} />
+        onChange=${(v) => onChange({ custom: v, features: { ...(v ? base : p.features) }, ...withStudio(v ? baseStudio : p.studio) })} />
       ${p.custom ? html`<div class="perm-grid">
         ${features.map((f) => html`<${Toggle} key=${f.key} id=${`${id}-${f.key}`} checked=${p.features[f.key]} label=${f.label}
           onChange=${(v) => onChange({ features: { ...p.features, [f.key]: v } })} />`)}
-      </div>` : null}
+      </div>
+      ${p.studio && studioFeatures.length ? html`<p class="small dm-studio-head">Xưởng tạo sản phẩm</p><div class="perm-grid">
+        ${studioFeatures.map((f) => (lockedByPolicy(f.key, policy)
+          ? html`<${Toggle} key=${f.key} id=${`${id}-${f.key}`} label=${f.label} checked=${false} disabled=${true}
+              hint=${policy.note || 'Máy chủ này chưa chạy được video — video tắt'} onChange=${() => {}} />`
+          : html`<${Toggle} key=${f.key} id=${`${id}-${f.key}`} label=${f.label} checked=${p.studio[f.key]}
+              onChange=${(v) => onChange({ studio: { ...p.studio, [f.key]: v } })} />`))}
+      </div>` : null}` : null}
       <div class="row dm-panel-actions">
         <button type="button" class="btn btn-secondary btn-sm" disabled=${!p.custom}
-          onClick=${() => onChange({ custom: false, features: { ...base } })}>Đặt lại theo chung</button>
+          onClick=${() => onChange({ custom: false, features: { ...base }, ...withStudio(baseStudio) })}>Đặt lại theo chung</button>
         <button type="button" class="btn btn-danger-outline btn-sm" onClick=${onRemove}>Bỏ khỏi danh sách</button>
       </div>
     </div>` : null}
@@ -152,7 +184,7 @@ function Person({ p, known, base, features, open, onToggle, onChange, onRemove }
 /** Lưu được khi có thay đổi, hoặc khi chưa từng lưu (đang theo cài đặt lúc cài bot — thông báo bảo bấm Lưu). */
 export const canSaveDm = (dm, dirty) => dirty || !dm.explicit;
 
-export function DmEditor({ dm, features, admin, onSaved, onBack, onDirty }) {
+export function DmEditor({ dm, features, studioFeatures = [], studioPolicy, admin, onSaved, onBack, onDirty }) {
   const [draft, setDraft] = useState(() => dmDraft(dm));
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState({});
@@ -214,7 +246,7 @@ export function DmEditor({ dm, features, admin, onSaved, onBack, onDirty }) {
     if (busy || !canSave) return;
     setBusy(true); setMsg({});
     try {
-      const r = await api('/api/permissions/dm', { method: 'PUT', body: dmPayload(draft) });
+      const r = await api('/api/permissions/dm', { method: 'PUT', body: dmPayload(draft, studioPolicy) });
       onSaved(r);
       setDraft(dmDraft(r.dm)); setRemoved(null);
       setMsg({ ok: 'Đã lưu — bot áp dụng ngay, không cần khởi động lại.' });
@@ -249,7 +281,7 @@ export function DmEditor({ dm, features, admin, onSaved, onBack, onDirty }) {
       <p id="dm-who-hint" class="muted small">${who?.hint}</p>
     </fieldset>
 
-    ${ownersOnly ? html`<${Notice} kind="info">Chỉ chủ nhân nhắn riêng được, nên Tính năng chung và Danh sách người chưa dùng tới. Chọn lựa chọn khác ở trên để chỉnh.<//>` : null}
+    ${ownersOnly ? html`<${Notice} kind="info">Chỉ chủ nhân nhắn riêng được, nên Tính năng chung, Xưởng tạo sản phẩm và Danh sách người chưa dùng tới. Chọn lựa chọn khác ở trên để chỉnh.<//>` : null}
     <details class="perm-box" open=${!ownersOnly}>
       <summary><span>Tính năng chung</span><span class="muted perm-box-sum">· ${onText(draft.features, features)}</span></summary>
       <fieldset class="perm-grid" disabled=${ownersOnly}>
@@ -258,6 +290,9 @@ export function DmEditor({ dm, features, admin, onSaved, onBack, onDirty }) {
           onChange=${(v) => update({ features: { ...draft.features, [f.key]: v } })} label=${f.label} hint=${f.hint} />`)}
       </fieldset>
     </details>
+
+    <${StudioBox} id="dm-studio" studio=${draft.studio} features=${studioFeatures} disabled=${ownersOnly} policy=${studioPolicy}
+      onChange=${(studio) => update({ studio })} />
 
     <fieldset class="perm-box" disabled=${ownersOnly}>
       <legend>Danh sách người (${draft.people.length})</legend>
@@ -293,6 +328,7 @@ export function DmEditor({ dm, features, admin, onSaved, onBack, onDirty }) {
       </div>` : null}
       ${draft.people.length ? html`<ul class="dm-people">
         ${visible.map((p) => html`<${Person} key=${p.uid} p=${p} known=${names.get(p.uid)} base=${draft.features} features=${features}
+          baseStudio=${draft.studio} studioFeatures=${studioFeatures} policy=${studioPolicy}
           open=${openUid === p.uid} onToggle=${() => setOpenUid(openUid === p.uid ? null : p.uid)}
           onChange=${(patch) => setPerson(p.uid, patch)} onRemove=${() => remove(p)} />`)}
       </ul>

@@ -11,8 +11,13 @@ Plugin ``standalone`` nạp ngay lúc khám phá, nên đặt công cụ ở đ�
 Adapter nền tảng vẫn nằm bên ``platforms/zalo`` và import lại từ đây.
 """
 
+import logging
+
+from .group_permissions import publish_video_policy
 from .tools import (define_cron_member_toolset, define_platform_composite,
-                    guard_member_tool_call, register_tools)
+                    guard_member_tool_call, register_tools, set_studio_context)
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["register"]
 
@@ -20,6 +25,13 @@ __all__ = ["register"]
 def register(ctx) -> None:
     """Điểm vào plugin — Hermes gọi lúc khám phá."""
     register_tools(ctx)
+    # Xưởng tạo sản phẩm gọi AI qua ctx.llm (không công cụ) — giữ ctx để lấy lúc cần.
+    set_studio_context(ctx)
+    # Dashboard đọc studio-policy.json để khoá nút video: ghi ngay lúc nạp, không đợi lời gọi zalo_studio đầu tiên.
+    try:
+        publish_video_policy()
+    except Exception:  # cố hết sức — không được làm hỏng việc nạp plugin
+        logger.warning("[zalo] không ghi được studio-policy.json lúc nạp plugin", exc_info=True)
     # Rào chắn tại điểm thực thi: Hermes cấp lại công cụ đã ghim của phiên nhóm
     # cho mọi lượt, kể cả lượt của người ngoài. Xem guard_member_tool_call().
     ctx.register_hook("pre_tool_call", guard_member_tool_call)
