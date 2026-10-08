@@ -14,6 +14,7 @@ import { createStoreReader } from './lib/store-reader.js';
 import { createThreadNames } from './lib/thread-names.js';
 import { createPermissionsStore } from './lib/permissions.js';
 import { createBrandStore } from './lib/brand.js';
+import { createPeopleStore } from './lib/people-store.js';
 import { createOwnersStore } from './lib/owners.js';
 
 const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
@@ -121,6 +122,7 @@ export function makeDeps(t, overrides = {}) {
     brand: createBrandStore({ file: join(dir, 'brand.json'), logoFile: join(dir, 'brand', 'logo.png') }),
     health: fakeHealth(),
     studioUsageFile: join(dir, 'zalo', 'studio-usage.json'),
+    people: createPeopleStore({ file: join(dir, 'zalo', 'people.json') }),
     publicDir: join(dir, 'public'),
     dir,
     ...overrides,

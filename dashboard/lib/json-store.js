@@ -1,5 +1,5 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 
 export function readJson(path, fallback) {
   if (!existsSync(path)) return structuredClone(fallback);
@@ -25,9 +25,10 @@ export function writeJsonAtomic(path, value, opts) {
 }
 
 /** Ghi tệp tạm quyền 600 cạnh tệp đích rồi đổi tên đè lên — `data` là chuỗi (UTF-8) hoặc Buffer. */
-export function writeFileAtomic(path, data, { rename = renameSync, platform = process.platform, mode = 0o600, afterWrite } = {}) {
+export function writeFileAtomic(path, data, { rename = renameSync, platform = process.platform, mode = 0o600, afterWrite, tmpName } = {}) {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const tmp = `${path}.tmp`;
+  // tmpName: tệp mà tiến trình khác (plugin Python) cũng ghi bằng `<tệp>.tmp` thì dashboard dùng tên tạm riêng.
+  const tmp = tmpName ? join(dirname(path), tmpName) : `${path}.tmp`;
   rmSync(tmp, { force: true }); // tệp tạm cũ còn sót giữ nguyên quyền cũ — xoá để tạo mới đúng 600
   writeFileSync(tmp, data, { mode });
   try { chmodSync(tmp, mode); } catch { /* Windows */ }

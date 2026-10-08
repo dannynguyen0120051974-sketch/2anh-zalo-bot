@@ -24,6 +24,8 @@ import { createWatchdog } from './lib/watchdog.js';
 import { makeRestartSidecar } from './lib/restart.js';
 import { makeRestartAssistant } from './lib/restart-assistant.js';
 import { createBrandStore } from './lib/brand.js';
+import { readEnvKey } from './lib/env-file.js';
+import { createPeopleStore } from './lib/people-store.js';
 import { createOwnersStore } from './lib/owners.js';
 import { createServiceChecker } from './lib/services.js';
 import { createHealthMonitor } from './lib/health-monitor.js';
@@ -83,6 +85,8 @@ export function buildDeps({ env = process.env, sidecarRoot = join(here, '..'), i
     restartSidecar,
     owners: createOwnersStore({ envFile: paths.hermesEnvFile, sidecarEnvFile: paths.sidecarEnvFile, pendingFile: paths.pendingRestartFile, inheritedValue: inheritedOwners }),
     brand: createBrandStore({ file: paths.brandFile, logoFile: paths.brandLogoFile }),
+    // Cùng tệp plugin đọc: ZALO_PEOPLE_FILE trong .env của Hermes (nếu đặt) thắng đường mặc định.
+    people: createPeopleStore({ file: readEnvKey(paths.hermesEnvFile, 'ZALO_PEOPLE_FILE') || paths.peopleFile }),
     studioUsageFile: paths.studioUsageFile,
     studioPolicyFile: paths.studioPolicyFile,
     publicDir: join(here, 'public'),
