@@ -23,6 +23,7 @@ import { createPermissionsStore, makeDmEnv, makeGlobalReplyOnlyTagged } from './
 import { createWatchdog } from './lib/watchdog.js';
 import { makeRestartSidecar } from './lib/restart.js';
 import { makeRestartAssistant } from './lib/restart-assistant.js';
+import { createRestartFlags } from './lib/restart-flags.js';
 import { createBrandStore } from './lib/brand.js';
 import { readEnvKey } from './lib/env-file.js';
 import { createSecondBrain } from './lib/second-brain.js';
@@ -88,6 +89,7 @@ export function buildDeps({ env = process.env, sidecarRoot = join(here, '..'), i
     }),
     restartAssistant: makeRestartAssistant({ cmd: config.assistantRestartCmd, hermesHome: paths.hermesHome }),
     restartSidecar,
+    restartFlags: createRestartFlags({ file: paths.restartFlagsFile }),
     owners: createOwnersStore({ envFile: paths.hermesEnvFile, sidecarEnvFile: paths.sidecarEnvFile, pendingFile: paths.pendingRestartFile, inheritedValue: inheritedOwners }),
     brand: createBrandStore({ file: paths.brandFile, logoFile: paths.brandLogoFile }),
     // Cùng tệp plugin đọc: ZALO_PEOPLE_FILE trong .env của Hermes (nếu đặt) thắng đường mặc định.

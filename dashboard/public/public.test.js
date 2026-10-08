@@ -855,3 +855,12 @@ test('Second brain: tên ngắn của mục, lên một cấp không vượt kh�
   assert.equal(parentUri(`${root}/knowledge/a`, root), `${root}/knowledge`);
   assert.equal(parentUri(`${root}/knowledge`, root), root);
 });
+
+// --- Giai đoạn 7B (spec §18.6): trang Hệ thống của Quản trị ---
+
+test('dải chờ khởi động lại: gộp lý do; có cờ kết nối Zalo thì nói cả hai; không có gì thì rỗng', async () => {
+  const { restartText } = await import('./views/restart-banner.js');
+  assert.equal(restartText({ assistant: null, sidecar: null }), '');
+  assert.equal(restartText({ assistant: { reasons: ['Đổi model'] }, sidecar: null }), 'Đã đổi: Đổi model. Cần khởi động lại trợ lý để áp dụng (bot im khoảng 1–3 phút).');
+  assert.match(restartText({ assistant: null, sidecar: { reasons: ['Cấu hình: kết bạn'] } }), /trợ lý và kết nối Zalo/);
+});
