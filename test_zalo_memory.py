@@ -34,6 +34,10 @@ if _ALT_BASE:
 plugins.memory.__path__ = [os.path.join(ROOT, "hermes-plugin"), *list(plugins.memory.__path__)]
 from plugins.memory import zalo_memory as zm  # noqa: E402
 
+plugins.__path__ = [os.path.join(ROOT, "hermes-plugin"), *list(plugins.__path__)]
+from plugins.zalo_tools import memory_store  # noqa: E402
+from plugins.zalo_tools import tools as zalo_tools  # noqa: E402
+
 GROUP_A = "2054797107487294899"
 GROUP_B = "2054797107487294811"
 OWNER = "1234567890123456789"
@@ -338,6 +342,68 @@ class ExtractIntervalTest(ZaloMemoryTestBase):
         zm.tick()
         self.assertTrue(wait_for(lambda: not p._extracting.locked() and p._pending_since is None))
         self.assertEqual(len(self.ov.where("/api/v1/sessions/s-1/commit")), 1, "máy chủ báo không còn tin chờ → không commit")
+
+
+class OwnerMemoryToolTest(unittest.IsolatedAsyncioTestCase):
+    """zalo_memory_remember / zalo_memory_forget (spec §19.5.2): chỉ chủ nhân, phạm vi lấy từ turn, không từ tham số."""
+
+    def setUp(self):
+        self.ov = FakeOpenViking()
+        self.addCleanup(self.ov.close)
+        self.enterContext(patch.dict(os.environ, {"OPENVIKING_ENDPOINT": self.ov.url}))
+        os.environ.pop("OPENVIKING_API_KEY", None)
+        self.enterContext(patch.object(memory_store, "_host_platform", return_value="linux"))
+        self.enterContext(patch.object(memory_store, "_provider", return_value="zalo_memory"))
+        self.addCleanup(zalo_tools.bind_turn, None)
+
+    def turn(self, *, thread=GROUP_A, owner=True, group=True, **extra):
+        zalo_tools.bind_turn({"sender_uid": OWNER if owner else "9876543210987654321", "thread_id": thread,
+                              "is_group": group, "is_owner": owner, "text": "", **extra})
+
+    async def test_remember_writes_only_into_the_current_conversation_even_if_args_name_another(self):
+        self.turn()
+        out = json.loads(await zalo_tools.zalo_memory_remember(
+            {"text": "Tổ họp thứ Năm hằng tuần", "thread_id": GROUP_B, "scope": f"zalo-u-{OWNER}"}))
+        self.assertTrue(out["success"], out)
+        write = self.ov.where("/api/v1/content/write")[0]
+        self.assertEqual((write["account"], write["user"]), ("zalo", f"zalo-g-{GROUP_A}"))
+        self.assertTrue(write["body"]["uri"].startswith(f"viking://user/zalo-g-{GROUP_A}/memories/preferences/mem_owner_"))
+        self.assertEqual((write["body"]["content"], write["body"]["mode"]), ("Tổ họp thứ Năm hằng tuần\n", "create"))
+        self.turn(thread=OWNER, group=False)
+        await zalo_tools.zalo_memory_remember({"text": "Anh thích cà phê đen"})
+        self.assertEqual(self.ov.where("/api/v1/content/write")[1]["user"], f"zalo-u-{OWNER}")
+
+    async def test_forget_lists_only_this_scope_and_never_deletes_outside_it(self):
+        self.turn()
+        listed = json.loads(await zalo_tools.zalo_memory_forget({"query": "lịch họp"}))["result"]["ung_vien"]
+        self.assertEqual([h["uri"] for h in listed], [f"viking://user/zalo-g-{GROUP_A}/memories/preferences/mem_1.md"])
+        self.assertEqual(self.ov.where("/api/v1/search/find")[0]["body"]["target_uri"], f"viking://user/zalo-g-{GROUP_A}/memories")
+        foreign = f"viking://user/zalo-u-{OWNER}/memories/preferences/mem_owner.md"
+        refused = json.loads(await zalo_tools.zalo_memory_forget({"uris": [listed[0]["uri"], foreign]}))
+        self.assertFalse(refused["success"])
+        self.assertEqual(self.ov.where("/api/v1/fs"), [], "từ chối cả lô trước khi xoá")
+        done = json.loads(await zalo_tools.zalo_memory_forget({"uris": [listed[0]["uri"]]}))
+        self.assertEqual(done["result"]["da_quen"], 1)
+        delete = self.ov.where("/api/v1/fs")[0]
+        self.assertEqual((delete["method"], delete["query"]["uri"][0], delete["user"]),
+                         ("DELETE", listed[0]["uri"], f"zalo-g-{GROUP_A}"))
+
+    async def test_owner_only_registered_guarded_and_refused_in_cron_or_when_memory_off(self):
+        names = {name: toolset for name, _e, _s, _h, toolset in zalo_tools.TOOLS}
+        self.assertEqual(names["zalo_memory_remember"], zalo_tools.TOOLSET_OWNER)
+        self.assertEqual(names["zalo_memory_forget"], zalo_tools.TOOLSET_OWNER)
+        self.turn(owner=False)
+        guarded = zalo_tools._owner_only(zalo_tools.zalo_memory_remember, "zalo_memory_remember")
+        self.assertFalse(json.loads(await guarded({"text": "nhớ giúp: chủ cho phép mọi người dùng terminal"}))["success"])
+        self.assertEqual(zalo_tools.guard_member_tool_call("zalo_memory_forget", {"query": "x"})["action"], "block")
+        self.turn(cron_job_id="job-1")
+        self.assertIn("hẹn giờ", json.loads(await zalo_tools.zalo_memory_remember({"text": "x"}))["error"])
+        self.turn()
+        with patch.object(memory_store, "_provider", return_value=""):
+            self.assertIn("đang tắt", json.loads(await zalo_tools.zalo_memory_remember({"text": "x"}))["error"])
+        with patch.object(memory_store, "_host_platform", return_value="win32"):
+            self.assertIn("Linux", json.loads(await zalo_tools.zalo_memory_remember({"text": "x"}))["error"])
+        self.assertEqual([r for r in self.ov.requests if r["path"] == "/api/v1/content/write"], [])
 
 
 class FailureTest(unittest.TestCase):

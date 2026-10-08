@@ -1054,6 +1054,54 @@ async def zalo_thread_history(args: Dict[str, Any], **_kw) -> str:
     })
 
 
+def _memory_scope_or_error(turn: Dict[str, Any]):
+    """Phạm vi trí nhớ của lượt này (spec §19.5.2) — từ turn, không từ tham số. Cron không có cuộc trò chuyện để nhớ."""
+    from . import memory_store
+
+    if turn.get("cron_job_id"):
+        return None, _err("việc hẹn giờ không ghi/xoá trí nhớ — chủ nhân dặn trực tiếp trong cuộc trò chuyện")
+    scope = memory_store.scope_of_turn(turn)
+    if not scope:
+        return None, _err("không xác định được cuộc trò chuyện hiện tại")
+    return scope, None
+
+
+async def zalo_memory_remember(args: Dict[str, Any], **_kw) -> str:
+    """Chủ nhân dặn "nhớ giúp…": ghi vào trí nhớ dài hạn của CHÍNH cuộc trò chuyện này."""
+    from . import memory_store
+
+    scope, err = _memory_scope_or_error(_turn())
+    if err:
+        return err
+    try:
+        uri = await asyncio.to_thread(memory_store.remember, scope, str(args.get("text") or ""))
+    except (ValueError, memory_store.MemoryUnavailable) as exc:
+        return _err(str(exc))
+    return _ok({"da_nho": True, "uri": uri,
+                "huong_dan": "Báo ngắn gọn là đã nhớ cho cuộc trò chuyện này (nhóm/người khác không thấy)."})
+
+
+async def zalo_memory_forget(args: Dict[str, Any], **_kw) -> str:
+    """Chủ nhân dặn "quên chuyện X": lần 1 gọi với `query` để xem mục khớp, lần 2 gọi với `uris` để xoá."""
+    from . import memory_store
+
+    scope, err = _memory_scope_or_error(_turn())
+    if err:
+        return err
+    try:
+        if args.get("uris"):
+            uris = args.get("uris") if isinstance(args.get("uris"), list) else [args.get("uris")]
+            gone = await asyncio.to_thread(memory_store.forget, scope, uris)
+            return _ok({"da_quen": len(gone), "uris": gone})
+        hits = await asyncio.to_thread(memory_store.find, scope, str(args.get("query") or ""))
+    except (ValueError, memory_store.MemoryUnavailable) as exc:
+        return _err(str(exc))
+    return _ok({"ung_vien": hits, "huong_dan": (
+        "Chọn đúng những mục nói về chuyện chủ nhân muốn quên rồi gọi lại zalo_memory_forget với `uris`. "
+        "Không có mục nào khớp thì báo là trong trí nhớ của cuộc trò chuyện này không có chuyện đó."
+        if hits else "Không thấy mục nào khớp trong trí nhớ của cuộc trò chuyện này.")})
+
+
 async def zalo_list_groups(args: Dict[str, Any], **_kw) -> str:
     """Liệt kê nhóm kèm TÊN, không phải chỉ dãy ID.
 
@@ -3100,6 +3148,25 @@ TOOLS = [
         },
         [],
     ), zalo_thread_history, TOOLSET_PUBLIC),
+
+    ("zalo_memory_remember", "🧠", _schema(
+        "zalo_memory_remember",
+        "CHỈ CHỦ NHÂN: khi chủ nhân dặn \"nhớ giúp…\", ghi điều đó vào trí nhớ dài hạn của CHÍNH cuộc trò chuyện "
+        "này (nhóm này, hoặc tin nhắn riêng này). Nhóm/người khác không thấy. Viết `text` thành một câu rõ nghĩa.",
+        {"text": {"type": "string", "description": "Điều cần nhớ, một câu đầy đủ (tối đa 1000 ký tự)."}},
+        ["text"],
+    ), zalo_memory_remember, TOOLSET_OWNER),
+
+    ("zalo_memory_forget", "🧽", _schema(
+        "zalo_memory_forget",
+        "CHỈ CHỦ NHÂN: khi chủ nhân dặn \"quên chuyện X đi\", xoá khỏi trí nhớ dài hạn của CHÍNH cuộc trò chuyện "
+        "này. Gọi lần 1 với `query` để xem tối đa 5 mục khớp; gọi lần 2 với `uris` (lấy từ kết quả lần 1) để xoá.",
+        {
+            "query": {"type": "string", "description": "Chuyện cần quên, ví dụ 'mã tủ đồ'."},
+            "uris": {"type": "array", "items": {"type": "string"}, "description": "URI các mục cần xoá (từ lần gọi trước)."},
+        },
+        [],
+    ), zalo_memory_forget, TOOLSET_OWNER),
 
     ("zalo_group_members", "🧑‍🤝‍🧑", _schema(
         "zalo_group_members",
