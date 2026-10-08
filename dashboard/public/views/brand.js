@@ -8,6 +8,7 @@ export const LOGO_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 export const LOGO_MAX_INPUT = 5 * 1024 * 1024;
 export const LOGO_SIDE = 256;
 const DEFAULT_NAME = 'Dashboard Zalo';
+const DEFAULT_SUBTITLE = 'Không gian làm việc';
 export const LEAVE_MSG = 'Bạn có thay đổi chưa lưu ở trang Thương hiệu. Bỏ thay đổi và rời trang?';
 
 /** Cỡ mới giữ tỉ lệ, cạnh dài nhất ≤ max; ảnh nhỏ hơn thì giữ nguyên. */
@@ -72,7 +73,8 @@ function Preview({ brand, hex }) {
   useCssVars(ref, brandVars(hex || DEFAULT_COLOR));
   return html`<div class="brand-preview" ref=${ref} aria-hidden="true">
     <div class="pv-side">
-      <div class="side-brand"><${BrandMark} brand=${brand} /><span>${brand.name}</span></div>
+      <div class="side-brand"><${BrandMark} brand=${brand} />
+        <span class="side-brand-text"><span>${brand.name}</span><small>${brand.subtitle}</small></span></div>
       <span class="nav-item active"><${Icon} name="home" /><span>Tổng quan</span></span>
       <span class="nav-item"><${Icon} name="chat" /><span>Phiên chat</span></span>
       <${PoweredBy} brand=${brand} />
@@ -86,7 +88,7 @@ function Preview({ brand, hex }) {
   </div>`;
 }
 
-const formOf = (b) => ({ name: b.name, color: b.color, poweredBy: b.poweredBy });
+const formOf = (b) => ({ name: b.name, subtitle: b.subtitle || '', color: b.color, poweredBy: b.poweredBy });
 
 export function Brand() {
   const [saved, setSaved] = useState(null);
@@ -102,7 +104,7 @@ export function Brand() {
 
   const info = contrastInfo(form?.color);
   const dirty = Boolean(form && saved)
-    && (form.name.trim() !== saved.name || info.hex !== saved.color || form.poweredBy !== saved.poweredBy);
+    && (form.name.trim() !== saved.name || form.subtitle.trim() !== (saved.subtitle || '') || info.hex !== saved.color || form.poweredBy !== saved.poweredBy);
 
   // Như trang Phân quyền: còn thay đổi chưa lưu thì hỏi trước khi đóng/tải lại trang hoặc chuyển trang.
   useEffect(() => {
@@ -122,7 +124,7 @@ export function Brand() {
   if (loadError) return html`${head}<${Live} error=${loadError} />`;
   if (!form) return html`${head}<${Spinner} />`;
 
-  const preview = { name: form.name.trim() || DEFAULT_NAME, poweredBy: form.poweredBy, logoUrl: saved.logoUrl };
+  const preview = { name: form.name.trim() || DEFAULT_NAME, subtitle: form.subtitle.trim() || DEFAULT_SUBTITLE, poweredBy: form.poweredBy, logoUrl: saved.logoUrl };
 
   // keepForm: đổi logo không được xoá phần tên/màu đang sửa dở.
   async function run(key, fn, okText, { keepForm = false } = {}) {
@@ -139,7 +141,7 @@ export function Brand() {
     e.preventDefault();
     if (!form.name.trim()) { setMsg({ error: 'Tên hiển thị đang trống — nhập tên rồi lưu lại.' }); return; }
     if (!info.ok) { setMsg({ error: info.text }); return; }
-    run('save', () => api('/api/brand', { method: 'PUT', body: { name: form.name, color: info.hex, poweredBy: form.poweredBy } }),
+    run('save', () => api('/api/brand', { method: 'PUT', body: { name: form.name, subtitle: form.subtitle, color: info.hex, poweredBy: form.poweredBy } }),
       'Đã lưu — thanh bên và trang đăng nhập đã đổi theo.');
   };
   const upload = (e) => {
@@ -188,6 +190,12 @@ export function Brand() {
             <input id="brand-name" maxlength="40" value=${form.name} aria-describedby="brand-name-help"
               onInput=${(e) => set('name')(e.currentTarget.value)} />
             <small id="brand-name-help">Hiện trên thanh bên, trang đăng nhập và tab trình duyệt. Tối đa 40 ký tự.</small>
+          </div>
+          <div class="field">
+            <label for="brand-subtitle">Dòng phụ dưới tên</label>
+            <input id="brand-subtitle" maxlength="40" value=${form.subtitle} placeholder=${DEFAULT_SUBTITLE} aria-describedby="brand-subtitle-help"
+              onInput=${(e) => set('subtitle')(e.currentTarget.value)} />
+            <small id="brand-subtitle-help">Chữ nhỏ dưới tên ở thanh bên, vd. tên trường hoặc đơn vị. Để trống = "${DEFAULT_SUBTITLE}".</small>
           </div>
           <fieldset class="field brand-colors">
             <legend>Màu chủ đạo</legend>

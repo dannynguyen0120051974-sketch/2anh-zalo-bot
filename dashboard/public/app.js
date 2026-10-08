@@ -6,8 +6,11 @@ import { Login } from './views/login.js';
 import { Setup } from './views/setup.js';
 import { Shell } from './views/shell.js';
 
-const DEFAULT_BRAND = { name: 'Dashboard Zalo', poweredBy: true, logoUrl: null };
-const pickBrand = (r) => ({ name: String(r?.name || DEFAULT_BRAND.name), poweredBy: r?.poweredBy !== false, logoUrl: r?.logoUrl || null });
+const DEFAULT_BRAND = { name: 'Dashboard Zalo', subtitle: 'Không gian làm việc', poweredBy: true, logoUrl: null };
+const pickBrand = (r) => ({
+  name: String(r?.name || DEFAULT_BRAND.name), subtitle: String(r?.subtitle || DEFAULT_BRAND.subtitle),
+  poweredBy: r?.poweredBy !== false, logoUrl: r?.logoUrl || null,
+});
 const route = () => location.hash.replace(/^#/, '') || '/';
 
 /** Tải lại /brand.css sau khi đổi màu (đổi ?v= để trình duyệt không dùng bản cũ). */
