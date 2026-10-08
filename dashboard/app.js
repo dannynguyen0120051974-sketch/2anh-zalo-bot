@@ -14,6 +14,7 @@ import { brandRoutes } from './routes/brand.js';
 import { healthRoutes } from './routes/health.js';
 import { studioRoutes } from './routes/studio.js';
 import { peopleRoutes } from './routes/people.js';
+import { contactRoutes } from './routes/contacts.js';
 
 export function createDashboardApp(deps) {
   const app = express();
@@ -34,6 +35,7 @@ export function createDashboardApp(deps) {
   if (deps.health) app.use('/api', healthRoutes(deps));
   if (deps.studioUsageFile) app.use('/api', studioRoutes(deps));
   if (deps.people) app.use('/api', peopleRoutes(deps));
+  app.use('/api', contactRoutes(deps));
   app.use('/api', adminRoutes(deps));
   // Gắn ở gốc: router này có cả /api/brand lẫn /brand.css, /brand/logo.png (công khai, trước giao diện tĩnh).
   app.use(brandRoutes(deps));

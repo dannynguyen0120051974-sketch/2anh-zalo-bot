@@ -777,3 +777,11 @@ test('mọi trang trong thanh bên đều có route; mục/nhóm Quản trị th
     }
   }
 });
+
+test('Liên hệ: nhãn nguồn theo thứ tự chủ nhân → bạn bè → nhắn riêng → hồ sơ; bộ lọc dùng nút chip', async () => {
+  const { contactBadges, KINDS } = await import('./views/contacts.js');
+  assert.deepEqual(contactBadges({ owner: true, friend: true, lastDmAt: 5, profile: { name: 'x' } }), ['Chủ nhân', 'Bạn bè', 'Đã nhắn riêng', 'Có hồ sơ']);
+  assert.deepEqual(contactBadges({ owner: false, friend: false, lastDmAt: null, profile: null }), []);
+  assert.deepEqual(KINDS.map((k) => k.value), ['all', 'friend', 'dm', 'profile']);
+  assert.match(readFileSync(join(root, 'views', 'contacts.js'), 'utf8'), /class="btn btn-secondary btn-sm chip"/);
+});
