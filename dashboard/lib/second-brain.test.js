@@ -75,3 +75,10 @@ test('địa chỉ không phải loopback → tắt (404); dịch vụ tắt →
   await assert.rejects(createSecondBrain({ settings: settings(), fetchImpl: async () => ({ ok: false, json: async () => ({ status: 'error', error: { message: 'secret path' } }) }), ...linux }).search('abc'),
     (e) => e.statusCode === 502 && !/secret/.test(e.message));
 });
+
+test('tìm (spec §19.6): luôn gửi target_uri = các gốc cho phép, kho trí nhớ theo nhóm/người không chen vào', async () => {
+  const ov = fakeOv({ '/api/v1/search/find': { memories: [{ uri: 'viking://user/zalo-g-1/memories/a.md', score: 0.99 }], resources: [] } });
+  const sb = createSecondBrain({ settings: settings(), fetchImpl: ov.fetchImpl, ...linux });
+  assert.deepEqual(await sb.search('lịch họp'), []);
+  assert.deepEqual(ov.calls[0].body.target_uri, ['viking://resources', 'viking://user/default/memories', 'viking://user/default/peers']);
+});
