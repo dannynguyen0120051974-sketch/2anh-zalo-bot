@@ -36,7 +36,10 @@ test('Lịch hẹn: lỗi lệnh Hermes ghi Nhật ký thất bại và trả c�
   const r = await call('/api/schedules/cron/aa11bb22cc33/remove', { method: 'POST', cookie: admin });
   assert.equal(r.status, 502);
   assert.equal(deps.activity.list()[0].ok, false);
-  assert.equal((await call('/api/schedules/reminders?threadId=200&threadType=1', { cookie: admin })).json.reminders[0].title, 'Họp tổ');
+  const rem = (await call('/api/schedules/reminders?threadId=200&threadType=1', { cookie: admin })).json.reminders[0];
+  assert.equal(rem.title, 'Họp tổ');
+  assert.equal(rem.mine, true);
+  assert.equal('creatorUid' in rem, false);
   assert.equal((await call('/api/schedules/reminders?threadId=abc&threadType=1', { cookie: admin })).status, 400);
   await call('/api/schedules/reminders/remove', { method: 'POST', cookie: admin, body: { reminderId: '77', threadId: '200', threadType: 1 } });
   assert.deepEqual(deps.sidecar.calls.at(-1), ['remove-reminder', { reminderId: '77', threadId: '200', threadType: 1, actor: 'anh' }]);

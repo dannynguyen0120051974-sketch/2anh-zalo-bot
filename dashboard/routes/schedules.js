@@ -40,7 +40,11 @@ export function scheduleRoutes({ schedules, sidecar, threadNames, activity }) {
     const threadId = String(req.query.threadId ?? '');
     const threadType = Number(req.query.threadType);
     if (!/^\d{1,32}$/.test(threadId) || (threadType !== 0 && threadType !== 1)) return res.status(400).json({ ok: false, error: 'Chọn lại hội thoại.' });
-    try { res.json({ ok: true, reminders: await sidecar.reminders({ threadId, threadType }) }); } catch (err) { failSidecar(res, err); }
+    try { {
+      // Không đưa uid người tạo ra trình duyệt: giao diện chỉ cần `mine` (bot tạo hay không).
+      const reminders = (await sidecar.reminders({ threadId, threadType })).map(({ creatorUid, ...rest }) => rest);
+      res.json({ ok: true, reminders });
+    } } catch (err) { failSidecar(res, err); }
   });
 
   r.post('/schedules/reminders/remove', requireAuth, async (req, res) => {

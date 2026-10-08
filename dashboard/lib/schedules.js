@@ -37,7 +37,7 @@ export function zaloJobs(data) {
       lastRunAt: j.last_run_at ? Date.parse(j.last_run_at) || null : null,
       lastStatus: short(j.last_status, 20), target: cronTarget(j),
       kind: group ? 'group' : 'owner',
-      creatorUid: group ? String(o.zalo_creator_uid ?? '') : '', creatorName: group ? short(o.zalo_creator_name, 80) : '',
+      creatorName: group ? short(o.zalo_creator_name, 80) : '',
     };
   });
 }
@@ -67,11 +67,25 @@ export function createSchedules({ hermesHome, bin, execImpl = defaultExec, env =
       if (!CRON_ACTIONS.includes(action)) throw Object.assign(new Error('Thao tác không hợp lệ — tải lại trang.'), { statusCode: 400 });
       const job = readZaloJobs(hermesHome).find((j) => j.id === id);
       if (!JOB_ID.test(String(id)) || !job) throw Object.assign(new Error('Không tìm thấy việc hẹn giờ này — tải lại trang.'), { statusCode: 404 });
+      const fail = () => Object.assign(new Error('Trợ lý chưa làm được việc này — tải lại trang xem trạng thái, rồi thử lại sau ít phút; nếu vẫn lỗi hãy báo người cài đặt.'), { statusCode: 502 });
+      let out;
       try {
-        await execImpl(bin, ['cron', action, id], { windowsHide: true, timeout: 30_000, env: { ...env, HERMES_HOME: hermesHome } });
+        out = await execImpl(bin, ['cron', action, id], { windowsHide: true, timeout: 30_000, env: { ...env, HERMES_HOME: hermesHome } });
       } catch (e) {
         console.error('[dashboard] hermes cron', action, id, 'lỗi:', e.message, e.stderr?.slice(0, 300));
-        throw Object.assign(new Error('Trợ lý chưa làm được việc này — thử lại sau ít phút, nếu vẫn lỗi hãy báo người cài đặt.'), { statusCode: 502 });
+        throw fail();
+      }
+      // `hermes cron` thoát 0 cả khi thất bại (cmd_cron bỏ mã trả về) → kiểm lại chữ báo lỗi và trạng thái thật trong jobs.json.
+      if (/Failed to/i.test(String(out?.stdout ?? ''))) {
+        console.error('[dashboard] hermes cron', action, id, 'báo lỗi:', String(out.stdout).slice(0, 300));
+        throw fail();
+      }
+      let after;
+      try { after = readZaloJobs(hermesHome).find((j) => j.id === id); } catch { after = undefined; }
+      const ok = action === 'remove' ? !after : Boolean(after) && after.paused === (action === 'pause');
+      if (!ok) {
+        console.error('[dashboard] hermes cron', action, id, 'thoát 0 nhưng jobs.json không đổi như mong đợi');
+        throw fail();
       }
       return job;
     },
