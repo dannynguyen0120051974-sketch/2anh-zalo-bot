@@ -2,6 +2,20 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [2.1.1] — 2026-10-09
+
+Bản lớn **Dashboard v2**: gom toàn bộ các bản 1.19.0 → 1.28.1 thành một mốc phiên bản mới. Không đổi mã so với 1.28.1; chi tiết từng phần xem các mục bên dưới.
+
+### Điểm chính
+- **Dashboard v2** (tiến trình riêng, 127.0.0.1:3880, đăng nhập bằng mã Zalo, vai trò Quản trị / Chủ bot): Tổng quan, Phiên chat (tìm trong phiên, Ảnh/Video·Tệp·Link), Nhật ký, Liên hệ, Lịch hẹn, Insight nhóm, Sức khoẻ máy chủ + cảnh báo Telegram, Mức dùng AI, thương hiệu, quét QR.
+- **Phân quyền** theo từng nhóm và từng người (nhắn riêng), bật/tắt công cụ, studio sản phẩm (slide, tài liệu, đề/trò chơi, video) cho người ngoài với hạn mức mỗi ngày.
+- **Trang quản trị**: Agent, Công cụ, Theo dõi agent, Kết nối MCP, Cấu hình (sửa config.yaml an toàn, có bản .bak).
+- **Trí nhớ**: Kho tri thức, Second brain, và trí nhớ dài hạn OpenViking tách riêng từng nhóm/người (`zalo_memory`, chỉ Linux) + công cụ tra lịch sử trò chuyện `zalo_thread_history`; Kho tri thức tự học trên dashboard.
+
+### Nâng cấp từ 1.x
+- Không có thay đổi phá vỡ cho bản cài 1.28.x: cập nhật mã, chép lại plugin (`zalo`, `zalo_tools`, `memory/zalo_memory`) rồi khởi động lại sidecar, gateway và dashboard.
+- Từ 1.18.x trở về trước: làm theo các mục "Thêm"/"Sửa" của từng bản 1.19.0 → 1.28.1 (permissions.json, dịch vụ dashboard, `ZALO_DASHBOARD_URL`).
+
 ## [1.28.1] — 2026-10-09
 
 ### Sửa
