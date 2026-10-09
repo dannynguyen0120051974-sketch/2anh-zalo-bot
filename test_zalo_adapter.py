@@ -3031,6 +3031,17 @@ class ZaloMemberToolGuardTest(unittest.TestCase):
         with patch("tools.tool_search.resolve_underlying_call", return_value=(public, {}, None)):
             self.assertIsNone(zalo_tools.guard_member_tool_call(tool_name="tool_call", args={"name": public}))
 
+    def test_member_malformed_tool_call_gets_the_real_error_not_owner_only(self):
+        # Sự cố 09/10 (Uyển Nhi): model gộp zalo_kb_list + zalo_web_search trong một tool_call → bị báo "chỉ chủ nhân".
+        self.bind_member()
+        err = "Local tools require one entry per tool_call; mixed and multi-local batches are not supported."
+        with patch("tools.tool_search.resolve_underlying_call", return_value=(None, {}, err)):
+            verdict = zalo_tools.guard_member_tool_call(
+                tool_name="tool_call", args={"calls": [{"name": "zalo_kb_list"}, {"name": "zalo_web_search"}]})
+        self.assertEqual(verdict["action"], "block")
+        self.assertIn("mỗi tool_call chỉ một công cụ", verdict["message"])
+        self.assertNotIn("chủ nhân", verdict["message"])
+
     def test_owner_turn_without_a_matching_message_keeps_core_tools_only_in_a_dm(self):
         adapter = ZaloAdapterMediaContextTest.make_adapter(self)
         bound = []

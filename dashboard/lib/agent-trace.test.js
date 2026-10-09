@@ -121,3 +121,13 @@ test('lỗi công cụ AI trong N ngày: mỗi lượt có công cụ lỗi mộ
   assert.deepEqual(errs.map((e) => [e.key, e.chatId, e.who, e.user, e.tools]), [['zalo:200', '200', 'Lan', 'đọc tài liệu Đoàn', ['zalo_kb_read']]]);
   assert.deepEqual(trace.errors({ days: 1, now: (2003 + 2 * 86400) * 1000 }), [], 'ngoài khoảng ngày thì không tính');
 });
+
+test('cầu nối tool_call của Hermes: hiện tên công cụ thật bên trong (đơn lẻ hoặc gói)', async () => {
+  const { toolOf } = await import('./agent-trace.js');
+  assert.deepEqual(toolOf('tool_call', JSON.stringify({ name: 'zalo_kb_list', arguments: { query: 'nội quy' } })),
+    { name: 'zalo_kb_list', args: [{ key: 'query', kind: 'chữ, 7 ký tự' }] });
+  assert.deepEqual(toolOf('tool_call', JSON.stringify({ calls: [{ name: 'zalo_kb_list' }, { name: 'zalo_web_search' }] })),
+    { name: 'zalo_kb_list + zalo_web_search', args: [] });
+  assert.equal(toolOf('tool_call', 'hỏng').name, 'tool_call');
+  assert.equal(toolOf('zalo_web_search', '{}').name, 'zalo_web_search');
+});

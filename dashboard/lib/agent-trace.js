@@ -45,6 +45,21 @@ export function redactArgs(raw) {
   }));
 }
 
+/**
+ * Tên + tham số đã che của một lời gọi. "tool_call" là cầu nối của Hermes (công cụ tìm qua tool_search): hiện tên công cụ
+ * thật bên trong — dạng `{name, arguments}` hoặc gói `{calls: [{name, arguments}…]}`.
+ */
+export function toolOf(name, rawArgs) {
+  const n = clip(name, 64);
+  if (n !== 'tool_call') return { name: n, args: redactArgs(rawArgs) };
+  let a;
+  try { a = typeof rawArgs === 'string' ? JSON.parse(rawArgs) : rawArgs; } catch { a = null; }
+  const inner = Array.isArray(a?.calls) ? a.calls : a && typeof a === 'object' ? [a] : [];
+  const names = inner.map((x) => clip(x?.name, 64)).filter(Boolean);
+  if (!names.length) return { name: n, args: redactArgs(rawArgs) };
+  return { name: names.join(' + '), args: inner.length === 1 ? redactArgs(inner[0]?.arguments ?? {}) : [] };
+}
+
 /** Kết quả công cụ có phải lỗi không (JSON `success: false` hoặc có khoá `error`). */
 export function toolFailed(content) {
   try { const j = JSON.parse(String(content ?? '')); return Boolean(j && typeof j === 'object' && (j.success === false || (j.error != null && j.error !== ''))); } catch { return /^(error|lỗi)\b/i.test(String(content ?? '').trim()); }
@@ -82,7 +97,7 @@ export function buildTurns(rows) {
       let calls = [];
       try { calls = JSON.parse(m.tool_calls || '[]'); } catch { calls = []; }
       for (const c of Array.isArray(calls) ? calls : []) {
-        const t = { name: clip(c?.function?.name, 64), args: redactArgs(c?.function?.arguments), status: 'đang chạy', ms: null };
+        const t = { ...toolOf(c?.function?.name, c?.function?.arguments), status: 'đang chạy', ms: null };
         cur.tools.push(t);
         if (c?.id) pending.set(String(c.id), { t, at });
         if (c?.call_id) pending.set(String(c.call_id), { t, at });

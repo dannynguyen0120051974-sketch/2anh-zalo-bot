@@ -4046,6 +4046,18 @@ def guard_member_tool_call(tool_name: str = "", args: Any = None, **_kw) -> Opti
         return blocked
     if _member_may_call(name, args):
         return None
+    # tool_call hỏng (vd. gộp nhiều công cụ thường trong một lần — Hermes không nhận) thì nói đúng lỗi để model gọi lại
+    # cho đúng, đừng báo "chỉ chủ nhân" làm nó bỏ cuộc. Vẫn chặn: Hermes cũng sẽ từ chối, không có gì chạy.
+    if name == "tool_call":
+        try:
+            from tools.tool_search import resolve_underlying_call
+
+            _real, _args, error = resolve_underlying_call(args if isinstance(args, dict) else {})
+        except Exception:
+            error = ""
+        if error:
+            return {"action": "block", "message": (f"tool_call không hợp lệ: {error} "
+                                                   "Gọi lại từng công cụ một: mỗi tool_call chỉ một công cụ.")}
     logger.warning("[zalo] chặn %s — lượt của %s không phải của riêng chủ nhân", name, turn.get("sender_uid"))
     reason = ("lượt của chủ nhân nhưng có tin người khác chen vào"
               if turn.get("is_owner") or turn.get("core_tools")

@@ -2,6 +2,12 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [2.3.1] — 2026-10-09
+
+### Sửa
+- Nhật ký (Có lỗi, Hoạt động AI): lời gọi qua cầu nối `tool_call` của Hermes hiện đúng tên công cụ thật bên trong (vd. `zalo_kb_list`, hoặc `zalo_kb_list + zalo_web_search` khi gói nhiều), thay vì chỉ "tool_call".
+- Thành viên nhóm: khi model gói nhiều công cụ thường trong một `tool_call` (Hermes không nhận), bot báo đúng lỗi "gọi lại từng công cụ một" thay vì "chỉ dùng được trong lượt của chủ nhân" — model gọi lại được thay vì bỏ cuộc.
+
 ## [2.3.0] — 2026-10-09
 
 ### Thay đổi
