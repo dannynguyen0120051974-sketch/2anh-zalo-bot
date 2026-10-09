@@ -2985,7 +2985,11 @@ class ZaloMemberToolGuardTest(unittest.TestCase):
         with patch.object(plugin, "define_platform_composite"), \
                 patch.object(plugin, "define_cron_member_toolset"):
             plugin.register(ctx)
-        self.assertEqual(ctx.hooks.get("pre_tool_call"), [zalo_tools.guard_member_tool_call])
+        from plugins.zalo_tools import key_pool
+
+        # Rào chắn quyền luôn đứng đầu; đồng bộ kho khoá dự phòng chạy sau (không bao giờ chặn).
+        self.assertEqual(ctx.hooks.get("pre_tool_call"), [zalo_tools.guard_member_tool_call, key_pool.before_tool_call])
+        self.assertEqual(ctx.hooks.get("transform_tool_result"), [key_pool.on_tool_result])
 
     def test_owner_turn_loses_core_tools_once_an_outsider_tags_the_bot_in_the_same_thread(self):
         class FakeAdapter:

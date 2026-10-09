@@ -867,3 +867,11 @@ button.flow-node:hover { border-color: var(--brand); }
 .ai-result.is-ok { background: var(--ok-soft); color: var(--ok); }
 .ai-result.is-bad { background: var(--danger-soft); color: var(--danger); }
 .row-full { flex: 1 1 100%; }
+
+/* Khoá API: danh sách khoá dự phòng của một dịch vụ. */
+.key-pool { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.key-entry { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; }
+.key-main { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.key-err { flex: 1 1 100%; }
+.key-actions { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.key-events { margin: 0; padding-left: 18px; }

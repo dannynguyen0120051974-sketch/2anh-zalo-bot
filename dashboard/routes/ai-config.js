@@ -42,12 +42,25 @@ export function aiConfigRoutes({ aiKeys, aiModels, agentConfig, restartFlags, ac
       const key = String(req.params.key);
       const value = String(req.body?.value ?? '');
       if (aiKeys.set(key, value)) {
-        restartFlags?.mark('assistant', 'Khoá API');
+        if (aiKeys.needsRestart(key)) restartFlags?.mark('assistant', 'Khoá API');
         log(req, value ? 'ai_key_set' : 'ai_key_remove', key);
       }
       res.json({ ok: true, ...aiKeys.list() });
     } catch (err) { fail(res, err, 'Chưa lưu được khoá — thử lại.'); }
   });
+  // Kho khoá dự phòng: thêm / dùng / đổi thứ tự / xoá / kiểm tra từng khoá. Plugin tự đổi khi khoá đang dùng lỗi.
+  const poolAction = (path, action, fn) => r.post(path, ...guard, async (req, res) => {
+    try {
+      const out = await fn(req);
+      if (action) log(req, action, String(req.params.key));
+      res.json({ ok: true, ...(out && typeof out === 'object' ? out : {}), ...aiKeys.list() });
+    } catch (err) { fail(res, err, 'Chưa làm được — thử lại.'); }
+  });
+  poolAction('/admin/ai/keys/:key/pool', 'ai_key_add', (req) => aiKeys.addBackup(String(req.params.key), req.body?.value, req.body?.label));
+  poolAction('/admin/ai/keys/:key/pool/:id/activate', 'ai_key_activate', (req) => aiKeys.activate(String(req.params.key), String(req.params.id)));
+  poolAction('/admin/ai/keys/:key/pool/:id/move', null, (req) => aiKeys.move(String(req.params.key), String(req.params.id), req.body?.dir));
+  poolAction('/admin/ai/keys/:key/pool/:id/remove', 'ai_key_remove_backup', (req) => aiKeys.removeEntry(String(req.params.key), String(req.params.id)));
+  poolAction('/admin/ai/keys/:key/pool/:id/test', null, async (req) => ({ result: await aiKeys.testEntry(String(req.params.key), String(req.params.id)) }));
   r.post('/admin/ai/keys/:key/test', ...guard, async (req, res) => {
     try { res.json({ ok: true, ...(await aiKeys.test(String(req.params.key))) }); } catch (err) { fail(res, err, 'Chưa kiểm tra được khoá.'); }
   });

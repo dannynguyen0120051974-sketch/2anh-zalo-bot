@@ -111,7 +111,7 @@ export function buildDeps({ env = process.env, sidecarRoot = join(here, '..'), i
       allowedRoots: () => readEnvKey(paths.hermesEnvFile, 'ZALO_KB_ALLOWED_ROOTS'), envFile: paths.hermesEnvFile }),
     insightAi: createInsightAi({ dir: paths.insightDir }),
     agentConfig: createAgentConfig({ configFile: paths.hermesConfigFile, envValue: (k) => readEnvKey(paths.hermesEnvFile, k) }),
-    aiKeys: createAiKeys({ envFile: paths.hermesEnvFile, configFile: paths.hermesConfigFile }),
+    aiKeys: createAiKeys({ envFile: paths.hermesEnvFile, configFile: paths.hermesConfigFile, poolFile: join(paths.hermesHome, 'zalo', 'key-pool.json') }),
     aiModels: createAiModels({ configFile: paths.hermesConfigFile, envValue: (k) => readEnvKey(paths.hermesEnvFile, k) }),
     soul: createSoul({ hermesHome: paths.hermesHome, historyDir: paths.soulHistoryDir }),
     toolsManifestFile: paths.toolsManifestFile,

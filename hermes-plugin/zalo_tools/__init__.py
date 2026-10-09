@@ -41,6 +41,15 @@ def register(ctx) -> None:
     # Rào chắn tại điểm thực thi: Hermes cấp lại công cụ đã ghim của phiên nhóm
     # cho mọi lượt, kể cả lượt của người ngoài. Xem guard_member_tool_call().
     ctx.register_hook("pre_tool_call", guard_member_tool_call)
+    # Kho khoá dự phòng (trang Khoá API & Model): đồng bộ khoá đang dùng vào os.environ trước mỗi lời gọi công cụ,
+    # và đổi sang khoá kế khi kết quả công cụ báo lỗi khoá / hết lượt — không cần khởi động lại.
+    try:
+        from . import key_pool
+        key_pool.sync()
+        ctx.register_hook("pre_tool_call", key_pool.before_tool_call)
+        ctx.register_hook("transform_tool_result", key_pool.on_tool_result)
+    except Exception:  # cố hết sức — thiếu kho khoá thì công cụ vẫn chạy với khoá trong .env
+        logger.warning("[zalo] không bật được kho khoá dự phòng", exc_info=True)
     # Phải chạy sau register_tools: định nghĩa dựa trên bộ công cụ lõi và
     # cần dọn bộ nhớ đệm của resolve_toolset sau khi registry đã đổi.
     define_platform_composite()

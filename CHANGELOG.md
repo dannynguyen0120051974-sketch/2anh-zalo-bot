@@ -2,6 +2,15 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [2.7.0] — 2026-10-09
+
+### Thêm
+- **Khoá dự phòng tự đổi** (Khoá API & Model › Khoá API › Quản lý khoá): mỗi dịch vụ (Tavily, Exa, CORE, Apify, Vbee, ảnh xưởng…) có thể có tới 10 khoá xếp theo thứ tự ưu tiên.
+  - Khi công cụ báo lỗi khoá / hết lượt / hết tiền (401/402/403/429, "quota", "insufficient credits"…), plugin **tự chuyển sang khoá kế** ngay trong lượt trả lời và dặn model gọi lại — **không cần khởi động lại**. Khoá lỗi nghỉ 1 giờ (hết lượt) hoặc 1 ngày (khoá sai) rồi mới được dùng lại.
+  - Quản lý trên dashboard: thêm khoá dự phòng (kèm ghi chú), dùng khoá này, đổi thứ tự (↑↓), kiểm tra từng khoá, xoá; xem khoá nào đang dùng / đang nghỉ và các lần tự đổi gần đây.
+  - Đổi khoá của công cụ trên dashboard có hiệu lực ngay (plugin đồng bộ trước mỗi lần gọi công cụ); chỉ khoá Telegram/Discord/cổng AI còn cần khởi động lại.
+- Plugin: mô-đun `zalo_tools/key_pool.py` (móc `pre_tool_call` + `transform_tool_result`), kho `<HERMES_HOME>/zalo/key-pool.json` (quyền 600), nhật ký `key-events.jsonl`.
+
 ## [2.6.1] — 2026-10-09
 
 ### Sửa

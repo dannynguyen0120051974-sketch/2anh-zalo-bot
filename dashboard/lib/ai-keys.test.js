@@ -81,3 +81,40 @@ ANH_AI_KEY=${MODEL_SECRET}
   assert.deepEqual([r.ok, r.detail], [true, 'Khoá hoạt động (dùng qua cổng AI chính).']);
   assert.deepEqual(seen, ['http://127.0.0.1:20128/v1/models']);
 });
+
+test('kho khoá dự phòng: thêm (giữ khoá đang dùng làm khoá đầu), dùng khoá khác, đổi thứ tự, xoá; .env luôn khớp khoá đang dùng; không lộ khoá', (t) => {
+  const { envFile } = setup(t);
+  const poolFile = join(envFile, '..', 'key-pool.json');
+  const { keys: base } = setup(t);
+  const keys = createAiKeys({ envFile, configFile: join(envFile, '..', 'config.yaml'), poolFile, now: () => 1_800_000_000_000 });
+  const B2 = 'tvly-backup-two-000000000000ABCD';
+  const B3 = 'tvly-backup-three-00000000000EFGH';
+  keys.addBackup('TAVILY_API_KEY', B2, 'tài khoản 2');
+  keys.addBackup('TAVILY_API_KEY', B3);
+  assert.throws(() => keys.addBackup('TAVILY_API_KEY', B2), (e) => e.statusCode === 409);
+  let row = keys.list().keys.find((r) => r.key === 'TAVILY_API_KEY');
+  assert.deepEqual(row.pool.map((e) => [e.id, e.hint, e.active]), [['k1', '••••3456', true], ['k2', '••••ABCD', false], ['k3', '••••EFGH', false]]);
+  assert.equal(row.pool[1].label, 'tài khoản 2');
+  assert.ok(!JSON.stringify(keys.list()).includes(B2), 'không lộ khoá dự phòng');
+  keys.activate('TAVILY_API_KEY', 'k3');
+  assert.match(readFileSync(envFile, 'utf8'), new RegExp(`^TAVILY_API_KEY=${B3}$`, 'm'));
+  keys.move('TAVILY_API_KEY', 'k3', -1);
+  assert.deepEqual(keys.list().keys.find((r) => r.key === 'TAVILY_API_KEY').pool.map((e) => e.id), ['k1', 'k3', 'k2']);
+  keys.removeEntry('TAVILY_API_KEY', 'k3');
+  row = keys.list().keys.find((r) => r.key === 'TAVILY_API_KEY');
+  assert.equal(row.pool.find((e) => e.active).id, 'k2', 'xoá khoá đang dùng → chuyển sang khoá kế');
+  assert.match(readFileSync(envFile, 'utf8'), new RegExp(`^TAVILY_API_KEY=${B2}$`, 'm'));
+  // Plugin cho khoá nghỉ → dashboard hiện "nghỉ đến".
+  const data = JSON.parse(readFileSync(poolFile, 'utf8'));
+  data.keys.TAVILY_API_KEY.list[0].cool_until = 1_800_000_000 + 3600;
+  writeFileSync(poolFile, JSON.stringify(data));
+  assert.equal(keys.list().keys.find((r) => r.key === 'TAVILY_API_KEY').pool[0].coolUntil, (1_800_000_000 + 3600) * 1000);
+  keys.removeEntry('TAVILY_API_KEY', 'k1');
+  assert.throws(() => keys.removeEntry('TAVILY_API_KEY', 'k2'), /khoá cuối cùng/);
+  assert.throws(() => keys.addBackup('model.api_key', B2), /9router/);
+  keys.set('TAVILY_API_KEY', '');
+  assert.equal(JSON.parse(readFileSync(poolFile, 'utf8')).keys.TAVILY_API_KEY, undefined, 'gỡ khoá = bỏ cả kho');
+  assert.equal(keys.needsRestart('TELEGRAM_BOT_TOKEN'), true);
+  assert.equal(keys.needsRestart('TAVILY_API_KEY'), false);
+  void base;
+});

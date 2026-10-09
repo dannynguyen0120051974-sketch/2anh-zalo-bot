@@ -21,7 +21,7 @@ function withAi(t) {
     return { ok: true, status: 200 };
   };
   deps.agentConfig = createAgentConfig({ configFile, fetchImpl });
-  deps.aiKeys = createAiKeys({ envFile, configFile, fetchImpl });
+  deps.aiKeys = createAiKeys({ envFile, configFile, fetchImpl, poolFile: join(deps.dir, 'key-pool.json') });
   deps.aiModels = createAiModels({ configFile, fetchImpl, ovConf: join(deps.dir, 'khong-co.conf') });
   return { deps, envFile, configFile };
 }
@@ -46,9 +46,26 @@ test('Khoá API & Model: chỉ Quản trị; thẻ theo chức năng; đổi mod
   const put = await call('/api/admin/ai/keys/CORE_API_KEY', { method: 'PUT', cookie: admin, body: { value: 'core-moi-1234567890abcd' } });
   assert.equal(put.status, 200);
   assert.match(readFileSync(envFile, 'utf8'), /CORE_API_KEY=core-moi-1234567890abcd/);
-  assert.ok(deps.restartFlags.get().assistant, 'nhắc khởi động lại');
+  assert.equal(deps.restartFlags.get().assistant, null, 'khoá công cụ có hiệu lực ngay, không cần khởi động lại');
   const log = deps.activity.list().filter((e) => e.action.startsWith('ai_key'));
   assert.deepEqual(log.map((e) => [e.action, e.detail]), [['ai_key_set', 'CORE_API_KEY']]);
   assert.ok(!JSON.stringify(deps.activity.list()).includes('core-moi'), 'Nhật ký không ghi giá trị khoá');
   assert.equal((await call('/api/admin/ai/keys/ZALO_ALLOWED_USERS', { method: 'PUT', cookie: admin, body: { value: 'abcdefgh12345678' } })).status, 400);
+});
+
+test('Khoá API: danh sách khoá dự phòng qua API — thêm, dùng khoá khác; đổi khoá công cụ không bật cờ khởi động lại', async (t) => {
+  const { deps, envFile } = withAi(t);
+  const { call } = await startApp(t, deps);
+  const admin = await loginAs(t, deps, call);
+  const B = 'core-backup-zzzzzzzzzzzz7777';
+  const add = await call('/api/admin/ai/keys/CORE_API_KEY/pool', { method: 'POST', cookie: admin, body: { value: B, label: 'dự phòng' } });
+  assert.equal(add.status, 200);
+  const row = add.json.keys.find((k) => k.key === 'CORE_API_KEY');
+  assert.deepEqual(row.pool.map((e) => [e.id, e.active]), [['k1', true], ['k2', false]]);
+  assert.ok(!JSON.stringify(add.json).includes(B) && !JSON.stringify(add.json).includes(SECRET));
+  assert.equal((await call('/api/admin/ai/keys/CORE_API_KEY/pool/k2/activate', { method: 'POST', cookie: admin })).status, 200);
+  assert.match(readFileSync(envFile, 'utf8'), new RegExp(`CORE_API_KEY=${B}`));
+  assert.equal(deps.restartFlags.get().assistant, null, 'khoá công cụ có hiệu lực ngay — không cần khởi động lại');
+  assert.deepEqual(deps.activity.list().filter((e) => e.action.startsWith('ai_key')).map((e) => e.action).sort(), ['ai_key_activate', 'ai_key_add']);
+  assert.ok(!JSON.stringify(deps.activity.list()).includes(B));
 });
