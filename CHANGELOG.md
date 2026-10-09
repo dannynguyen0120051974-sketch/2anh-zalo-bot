@@ -2,6 +2,11 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [1.28.1] — 2026-10-09
+
+### Sửa
+- Trí nhớ dài hạn: recall và "quên" bỏ nhầm mọi mục có dấu cách trong tên tệp — OpenViking đặt tên tệp trí nhớ bằng tiếng Việt có dấu cách (`…/events/2026/10/09/thiết lập mã bí mật.md`). Nay cho phép dấu cách thường; vẫn chặn `..`, `%`, `\`, `?`, `#`, ký tự điều khiển và các khoảng trắng khác (tab, xuống dòng, NBSP…).
+
 ## [1.28.0] — 2026-10-09
 
 ### Thêm

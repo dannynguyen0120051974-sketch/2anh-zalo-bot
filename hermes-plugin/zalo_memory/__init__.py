@@ -175,11 +175,12 @@ def scope_root(user: str) -> str:
     return f"viking://user/{user}/memories"
 
 
-_UNSAFE_URI = re.compile(r"[%\\?#\s]")
+# Tên tệp trí nhớ OpenViking là tiếng Việt có dấu cách thường → cho phép " "; chặn khoảng trắng khác và ký tự điều khiển.
+_UNSAFE_URI = re.compile(r"[%\\?#\x00-\x1f\x7f]|[^\S ]")
 
 
 def in_scope_uri(uri: Any, root: str) -> bool:
-    """URI nằm hẳn dưới ``root`` — cùng luật với ``memory_store._deletable``: không "..", "%", "\\", "?", "#", khoảng trắng."""
+    """URI nằm hẳn dưới ``root`` — cùng luật với ``memory_store._deletable``: không "..", "%", "\\", "?", "#", ký tự điều khiển, khoảng trắng lạ (dấu cách thường thì được)."""
     s = str(uri or "")
     return s.startswith(root + "/") and ".." not in s and not _UNSAFE_URI.search(s)
 

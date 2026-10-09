@@ -249,9 +249,12 @@ class IsolationTest(ZaloMemoryTestBase):
         root = f"viking://user/zalo-g-{GROUP_A}/memories"
         good = f"{root}/preferences/mem_1.md"
         self.assertTrue(zm.in_scope_uri(good, root))
+        # OpenViking đặt tên tệp trí nhớ bằng tiếng Việt có dấu cách thường — phải giữ.
+        self.assertTrue(zm.in_scope_uri(f"{root}/events/2026/10/09/thiết lập mã bí mật cuộc trò chuyện.md", root))
         for bad in [f"{root}/../../zalo-u-{OWNER}/memories/a.md", f"{root}/%2e%2e/%2e%2e/zalo-u-{OWNER}/a.md",
-                    f"{root}/a%2fb.md", f"{root}\\..\\x.md", f"{root}/a.md?uri=x", f"{root}/a.md#x", f"{root}/a b.md",
-                    f"{root}/a\n.md", root, f"{root}X/a.md", "", None]:
+                    f"{root}/a%2fb.md", f"{root}\\..\\x.md", f"{root}/a.md?uri=x", f"{root}/a.md#x",
+                    f"{root}/a\tb.md", f"{root}/a b.md", f"{root}/a b.md", f"{root}/a\x00b.md",
+                    f"{root}/a\n.md", f"{root}/a\r.md", root, f"{root}X/a.md", "", None]:
             with self.subTest(uri=bad):
                 self.assertFalse(zm.in_scope_uri(bad, root))
         p = self.provider()
@@ -555,6 +558,15 @@ class OwnerMemoryToolTest(unittest.IsolatedAsyncioTestCase):
         done = json.loads(await zalo_tools.zalo_memory_forget({"uris": mine + [mine[0]]}))
         self.assertEqual(done["result"]["da_quen"], 5)
         self.assertEqual(sorted(r["query"]["uri"][0] for r in self.ov.where("/api/v1/fs")), sorted(mine))
+
+    def test_deletable_allows_vietnamese_names_with_plain_spaces_only(self):
+        scope = f"zalo-g-{GROUP_A}"
+        root = f"viking://user/{scope}/memories"
+        self.assertTrue(memory_store._deletable(f"{root}/events/2026/10/09/thiết lập mã bí mật cuộc trò chuyện.md", scope))
+        for bad in [f"{root}/a\tb.md", f"{root}/a b.md", f"{root}/a\nb.md", f"{root}/a\x00b.md",
+                    f"{root}/a%20b.md", f"{root}/../x.md", f"{root}/.abstract.md"]:
+            with self.subTest(uri=bad):
+                self.assertFalse(memory_store._deletable(bad, scope))
 
     async def test_owner_only_registered_guarded_and_refused_in_cron_or_when_memory_off(self):
         names = {name: toolset for name, _e, _s, _h, toolset in zalo_tools.TOOLS}

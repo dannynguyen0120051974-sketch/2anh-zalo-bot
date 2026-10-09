@@ -116,7 +116,7 @@ def remember(scope: str, text: str) -> str:
 def _deletable(uri: Any, scope: str) -> bool:
     s = str(uri or "")
     root = root_of(scope) + "/"
-    return (s.startswith(root) and s.endswith(".md") and ".." not in s and not re.search(r"[%\\?#\s]", s)
+    return (s.startswith(root) and s.endswith(".md") and ".." not in s and not re.search(r"[%\\?#\x00-\x1f\x7f]|[^\S ]", s)
             and s.rsplit("/", 1)[-1] not in _GENERATED)
 
 
