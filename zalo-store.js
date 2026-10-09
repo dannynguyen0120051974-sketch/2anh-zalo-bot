@@ -172,6 +172,16 @@ export function openZaloStore({ path, retentionDays = 365, now = Date.now } = {}
     CREATE INDEX IF NOT EXISTS idx_audit_request ON audit_log(request_id, id);
     CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_log(created_at_ms DESC);
 
+    -- Dấu tin bot đã thu hồi (băm đầu nội dung, không lưu chữ): bản sao nhập lại từ Hermes cũ vào trắng luôn.
+    CREATE TABLE IF NOT EXISTS recalled_heads (
+      account_id TEXT NOT NULL,
+      thread_id TEXT NOT NULL,
+      thread_type INTEGER NOT NULL,
+      head_hash TEXT NOT NULL,
+      timestamp_ms INTEGER NOT NULL,
+      PRIMARY KEY(account_id, thread_id, thread_type, head_hash)
+    );
+
     CREATE TABLE IF NOT EXISTS backfill_state (
       account_id TEXT NOT NULL,
       thread_type INTEGER NOT NULL,
@@ -198,8 +208,13 @@ export function openZaloStore({ path, retentionDays = 365, now = Date.now } = {}
       sender_uid = excluded.sender_uid,
       sender_name = excluded.sender_name,
       -- Tin đã thu hồi giữ nguyên trạng thái: backfill/nhập lại không được khôi phục nội dung.
-      text = CASE WHEN messages.msg_type = 'chat.undo' THEN messages.text ELSE excluded.text END,
-      msg_type = CASE WHEN messages.msg_type = 'chat.undo' THEN messages.msg_type ELSE excluded.msg_type END,
+      -- Bản nhập từ Hermes cũ (prompt đã kẹp ngữ cảnh, trích dẫn) không bao giờ đè tin bắt trực tiếp từ Zalo.
+      text = CASE WHEN messages.msg_type = 'chat.undo' THEN messages.text
+        WHEN excluded.source = 'legacy-hermes' AND messages.source <> 'legacy-hermes' THEN messages.text
+        ELSE excluded.text END,
+      msg_type = CASE WHEN messages.msg_type = 'chat.undo' THEN messages.msg_type
+        WHEN excluded.source = 'legacy-hermes' AND messages.source <> 'legacy-hermes' THEN messages.msg_type
+        ELSE excluded.msg_type END,
       timestamp_ms = excluded.timestamp_ms,
       is_self = excluded.is_self,
       source = CASE WHEN messages.source = 'live' THEN messages.source ELSE excluded.source END,
@@ -223,6 +238,9 @@ export function openZaloStore({ path, retentionDays = 365, now = Date.now } = {}
       String(accountId), String(message.threadId), Number(message.threadType),
       msgId, msgId, cliMsgId, cliMsgId,
     );
+    if (String(source) === 'legacy-hermes' && message.isSelf && isRecalledCopy(accountId, message.threadId, message.threadType, message.text, timestamp)) {
+      message = { ...message, text: '', msgType: 'chat.undo' };
+    }
     const generatedIdentityKey = messageKey(String(accountId), message);
     const identityKey = alias?.identity_key || generatedIdentityKey;
     const existed = Boolean(alias || db.prepare('SELECT 1 FROM messages WHERE identity_key = ?').get(identityKey));
@@ -356,10 +374,25 @@ export function openZaloStore({ path, retentionDays = 365, now = Date.now } = {}
     return row ? mapMessage(row) : null;
   }
 
+  const RECALL_WINDOW_MS = 1_800_000;
+  const recallHead = (value) => String(value || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '').slice(0, 40);
+  // "<độ dài>:<sha256>" — tin trực tiếp có thể chỉ là mảnh đầu, ngắn hơn bản Hermes đầy đủ: so theo tiền tố cùng độ dài.
+  const headHash = (head) => `${head.length}:${createHash('sha256').update(head).digest('hex')}`;
+
+  function isRecalledCopy(accountId, threadId, threadType, value, timestamp) {
+    const head = recallHead(value);
+    if (head.length < 12) return false;
+    const marks = db.prepare(`SELECT head_hash FROM recalled_heads WHERE account_id = ? AND thread_id = ? AND thread_type = ?
+      AND timestamp_ms BETWEEN ? AND ?`).all(String(accountId), String(threadId), Number(threadType),
+      timestamp - RECALL_WINDOW_MS, timestamp + RECALL_WINDOW_MS);
+    return marks.some(({ head_hash: mark }) => headHash(head.slice(0, Number(String(mark).split(':')[0]))) === mark);
+  }
+
   /**
    * Bot vừa thu hồi tin của chính nó: xoá nội dung khỏi lịch sử (tra lịch sử, dashboard không còn đọc được).
    * Cùng câu trả lời còn có bản sao không msgId do nhập lịch sử Hermes cũ (legacy-hermes, nguyên văn Markdown) —
-   * khớp theo đầu nội dung đã bỏ dấu câu/định dạng, trong ±30 phút, rồi xoá luôn. Trạng thái giữ khi nhập lại (upsert).
+   * khớp theo đầu nội dung đã bỏ dấu câu/định dạng, trong ±30 phút: xoá bản đang có và lưu dấu (băm) để bản nhập
+   * về sau cũng vào trắng. Trạng thái thu hồi giữ khi nhập lại/backfill (upsert).
    */
   function markRecalled(accountId, threadId, threadType, { msgId, cliMsgId }) {
     const key = [String(accountId), String(threadId), Number(threadType)];
@@ -369,14 +402,15 @@ export function openZaloStore({ path, retentionDays = 365, now = Date.now } = {}
     let changed = Number(db.prepare(`UPDATE messages SET text = '', msg_type = 'chat.undo', updated_at_ms = ?
       WHERE account_id = ? AND thread_id = ? AND thread_type = ? AND is_self = 1 AND msg_id = ? AND cli_msg_id = ?`)
       .run(Number(now()), ...key, String(msgId), String(cliMsgId)).changes);
-    const head = (value) => String(value || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '').slice(0, 40);
-    const want = head(target?.text);
+    const want = recallHead(target?.text);
     if (want.length >= 12) {
+      const ts = Number(target.timestamp_ms);
+      db.prepare('INSERT OR IGNORE INTO recalled_heads VALUES (?, ?, ?, ?, ?)').run(...key, headHash(want), ts);
       const near = db.prepare(`SELECT rowid, text FROM messages WHERE account_id = ? AND thread_id = ? AND thread_type = ?
         AND is_self = 1 AND msg_type = 'legacy-hermes' AND timestamp_ms BETWEEN ? AND ?`)
-        .all(...key, Number(target.timestamp_ms) - 1_800_000, Number(target.timestamp_ms) + 1_800_000);
+        .all(...key, ts - RECALL_WINDOW_MS, ts + RECALL_WINDOW_MS);
       for (const row of near) {
-        if (head(row.text).startsWith(want)) changed += Number(blank.run(Number(now()), row.rowid).changes);
+        if (recallHead(row.text).startsWith(want)) changed += Number(blank.run(Number(now()), row.rowid).changes);
       }
     }
     return changed;

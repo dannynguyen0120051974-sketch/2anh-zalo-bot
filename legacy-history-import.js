@@ -18,6 +18,9 @@ function normalizeInboundContent(value) {
   const marker = '[New message]';
   const markerIndex = text.lastIndexOf(marker);
   if (markerIndex >= 0) text = text.slice(markerIndex + marker.length).trim();
+  // Hermes chèn nguyên văn tin được trả lời ("[Replying to …: "…"]") — đã có trong lịch sử ở đúng chỗ của nó,
+  // và nếu tin đó đã bị thu hồi thì chép lại là làm lộ lần nữa.
+  text = text.replace(/^\[Replying to[^\n"]*"[\s\S]*?"\]\s*/, '').trim();
   const speaker = text.match(/^\[([^\]\n]+)\]\s*([\s\S]*)$/);
   if (!speaker) return { senderName: '', text };
   return { senderName: speaker[1].trim(), text: speaker[2].trim() };

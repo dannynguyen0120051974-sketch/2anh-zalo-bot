@@ -2,6 +2,12 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [2.1.4] — 2026-10-09
+
+### Bảo mật
+- Lịch sử trò chuyện: bản nhập từ phiên Hermes cũ không bao giờ ghi đè tin đã bắt trực tiếp từ Zalo (trước đây ghi đè bằng prompt đã kẹp ngữ cảnh/trích dẫn), và bỏ đoạn trích dẫn "[Replying to …]" khi nhập.
+- Tin bot đã thu hồi để lại dấu (băm phần đầu nội dung, không lưu chữ): bản sao nhập về sau từ Hermes cũ vào lịch sử ở dạng trống — sửa trường hợp bản sao xuất hiện sau khi đã thu hồi.
+
 ## [2.1.3] — 2026-10-09
 
 ### Bảo mật

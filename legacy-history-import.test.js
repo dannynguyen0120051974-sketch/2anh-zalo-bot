@@ -87,7 +87,7 @@ test('legacy import strips the injected sender profile card', (t) => {
   assert.equal(texts.length, 3);
   assert.deepEqual(texts.slice(0, 2), ['@Bot giá vàng', 'hôm nay']);
   assert.ok(texts.every((x) => !x.includes('Người nhắn') && !x.includes('14 chỉ')), JSON.stringify(texts));
-  assert.ok(texts[2].endsWith('lãi bao nhiêu'));
+  assert.equal(texts[2], 'lãi bao nhiêu', 'bỏ cả đoạn trích dẫn trả lời');
 });
 
 test('legacy import applies the 365-day retention boundary', (t) => {

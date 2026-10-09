@@ -70,6 +70,28 @@ test('recalling an own message also blanks its legacy-hermes copy without msgId 
   assert.ok(texts.includes('Một câu trả lời khác của bot'));
 });
 
+test('legacy copy of a recalled answer imported AFTER the recall is stored blank (tombstone)', (t) => {
+  const { store } = withStore(t);
+  const ts = 1_700_000_000_000;
+  // Tin trực tiếp chỉ là mảnh đầu, ngắn hơn bản Hermes đầy đủ.
+  store.upsertMessage('account-1', { ...baseMessage, senderUid: 'account-1', isSelf: true, msgType: 'webchat', text: 'Dạ em gửi sếp bảng giá vàng', ts }, 'live');
+  store.markRecalled('account-1', 'group-1', 1, { msgId: 'm-1', cliMsgId: 'c-1' });
+  const copy = { ...baseMessage, msgId: null, cliMsgId: null, senderUid: 'account-1', isSelf: true, msgType: 'legacy-hermes',
+    text: 'Dạ em gửi sếp **bảng giá vàng** hôm nay và định giá tài sản', ts: ts - 5_000 };
+  store.insertMessages('account-1', [copy], 'legacy-hermes');
+  const texts = store.getHistory('account-1', 'group-1', 1, 20).map((m) => m.text);
+  assert.deepEqual(texts, ['', '']);
+});
+
+test('legacy import never overwrites a message captured live', (t) => {
+  const { store } = withStore(t);
+  store.upsertMessage('account-1', { ...baseMessage, text: 'thu hồi đi em' }, 'live');
+  store.insertMessages('account-1', [{ ...baseMessage, msgType: 'legacy-hermes', text: '[Replying to: "bí mật"]\nthu hồi đi em' }], 'legacy-hermes');
+  const [row] = store.getHistory('account-1', 'group-1', 1, 20);
+  assert.equal(row.text, 'thu hồi đi em');
+  assert.equal(row.msgType, 'chat.text');
+});
+
 test('message upsert merges a legacy msgId with a later backfill cliMsgId', (t) => {
   const { store } = withStore(t);
   store.upsertMessage('bot', {
