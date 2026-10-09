@@ -2,6 +2,13 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [2.6.1] — 2026-10-09
+
+### Sửa
+- Khoá API › Kiểm tra: CORE báo "không gọi được" do địa chỉ kiểm tra bị chuyển hướng — dùng đúng địa chỉ cuối.
+- Khoá dùng qua cổng AI (vd. `GEMINI_API_KEY`, `ANH_AI_KEY` trùng khoá 9router) được kiểm qua cổng AI thay vì gọi thẳng Google (trước báo lỗi 400 sai).
+- Ẩn khoá nội bộ (`VBEE_WEBHOOK_SECRET`…) khỏi danh sách; `CUSTOM_API_KEY` có tên dễ hiểu.
+
 ## [2.6.0] — 2026-10-09
 
 ### Thêm

@@ -28,7 +28,7 @@ test('danh sách khoá: chỉ 4 ký tự cuối, không bao giờ có giá trị
   assert.equal(rows.find((r) => r.key === 'CORE_API_KEY').set, false, 'khoá quen thuộc hay dùng hiện cả khi chưa đặt');
   assert.ok(!rows.some((r) => r.key === 'ZALO_BRIDGE_TOKEN'));
   assert.equal(rows.find((r) => r.key === 'MY_SERVICE_TOKEN').known, false);
-  assert.equal(rows.find((r) => r.key === 'VBEE_WEBHOOK_SECRET').editable, false, 'khoá nội bộ không sửa ở đây');
+  assert.ok(!rows.some((r) => r.key === 'VBEE_WEBHOOK_SECRET'), 'khoá nội bộ không hiện');
   assert.ok(available.some((a) => a.key === 'APIFY_TOKEN'));
   assert.equal(maskTail('ngan'), '••••');
 });
@@ -68,4 +68,16 @@ test('kiểm tra khoá: gọi địa chỉ cố định của dịch vụ bằng
   assert.ok(!JSON.stringify([bad, good]).includes(SECRET));
   await assert.rejects(keys.test('CORE_API_KEY'), (e) => e.statusCode === 400, 'chưa đặt');
   await assert.rejects(keys.test('MY_SERVICE_TOKEN'), /chưa có cách kiểm tra/);
+});
+
+test('khoá trùng khoá cổng AI (vd. GEMINI_API_KEY dùng qua 9router) → kiểm qua cổng AI, không gọi Google', async (t) => {
+  const seen = [];
+  const { keys, envFile } = setup(t, async (url) => { seen.push(url); return { ok: true, status: 200 }; });
+  writeFileSync(envFile, `GEMINI_API_KEY=${MODEL_SECRET}
+ANH_AI_KEY=${MODEL_SECRET}
+`);
+  assert.equal(keys.list().keys.find((r) => r.key === 'ANH_AI_KEY').testable, true);
+  const r = await keys.test('GEMINI_API_KEY');
+  assert.deepEqual([r.ok, r.detail], [true, 'Khoá hoạt động (dùng qua cổng AI chính).']);
+  assert.deepEqual(seen, ['http://127.0.0.1:20128/v1/models']);
 });
