@@ -953,3 +953,13 @@ test('Lịch hẹn: thêm giờ cùng số phút không trùng; việc một l�
   assert.equal(pastProblem({ repeat: 'once', date: '2026-10-09', times: ['15:01'] }, now), '');
   assert.equal(pastProblem({ repeat: 'daily', times: ['01:00'] }, now), '');
 });
+
+test('Lịch hẹn › Luồng: thêm/bỏ nơi gửi — không trùng, tối đa 10, luôn còn ít nhất một nơi', async () => {
+  const { flowTargetsChange } = await import('./views/schedules.js');
+  const job = { targets: ['1', '2'] };
+  assert.deepEqual(flowTargetsChange(job, 'add', '3'), ['1', '2', '3']);
+  assert.equal(flowTargetsChange(job, 'add', '2'), null);
+  assert.equal(flowTargetsChange({ targets: Array.from({ length: 10 }, (_, i) => String(i)) }, 'add', '99'), null);
+  assert.deepEqual(flowTargetsChange(job, 'remove', '1'), ['2']);
+  assert.equal(flowTargetsChange({ targets: ['1'] }, 'remove', '1'), null, 'không bỏ nơi gửi cuối cùng');
+});

@@ -819,3 +819,40 @@ fieldset.field { border: 0; padding: 0; margin: 0; }
 .job-card.is-busy { cursor: progress; opacity: .6; }
 /* Màn cảm ứng không kéo thả được: bỏ câu hướng dẫn kéo, mọi việc làm qua cửa sổ sửa. */
 @media (hover: none) { .drag-hint { display: none; } }
+
+/* Lịch hẹn › Luồng: mỗi lịch hẹn một làn node Khi nào → Bot làm gì → Gửi vào; bảng nhóm để kéo vào. */
+.flow-board { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 12px; align-items: start; }
+.flow-board.is-busy { cursor: progress; }
+.flow-lanes { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.flow-lane { display: grid; grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1.3fr) 28px minmax(0, 1.2fr); align-items: center; padding: 10px; border: 1px solid var(--border); border-left: 4px solid var(--ok); border-radius: var(--radius); background: var(--bg); }
+.flow-lane.lane-warn { border-left-color: var(--warn); }
+.flow-lane.lane-danger { border-left-color: var(--danger); }
+.flow-lane.lane-idle { border-left-color: var(--muted); opacity: .7; }
+.flow-node { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: inherit; font: inherit; font-size: 13px; text-align: left; overflow-wrap: anywhere; box-shadow: var(--shadow); }
+button.flow-node { cursor: pointer; }
+button.flow-node:hover { border-color: var(--brand); }
+.flow-node:focus-visible { outline: none; box-shadow: var(--focus); }
+.flow-node small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.node-head { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+.node-when { border-top: 3px solid #6366f1; }
+.node-do { border-top: 3px solid var(--brand); }
+.flow-edge { position: relative; height: 2px; background: var(--muted); margin: 0 2px; }
+.flow-edge::after { content: ""; position: absolute; right: -2px; top: -4px; border: 5px solid transparent; border-left: 7px solid var(--muted); border-right: 0; }
+.flow-targets { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 6px; border: 1px dashed transparent; border-radius: 10px; transition: background .15s, border-color .15s; }
+.flow-targets.is-over { background: var(--brand-soft); border-color: var(--brand); }
+.node-to { flex-direction: row; align-items: center; justify-content: space-between; border-top: 3px solid #f59e0b; cursor: grab; }
+.node-to[draggable="false"] { cursor: default; }
+.flow-add { font-size: 13px; min-height: 34px; }
+.tag-x { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; min-height: 24px; margin-left: 4px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
+.tag-x:hover { color: var(--danger); background: var(--danger-soft); }
+.target-tag { display: inline-flex; align-items: center; }
+.flow-palette { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); max-height: 70vh; overflow: auto; }
+.flow-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.flow-chip { cursor: grab; user-select: none; }
+@media (max-width: 900px) {
+  .flow-board { grid-template-columns: 1fr; }
+  .flow-palette { display: none; }
+  .flow-lane { grid-template-columns: 1fr; gap: 0; }
+  .flow-edge { width: 2px; height: 16px; margin: 0 auto; }
+  .flow-edge::after { right: -4px; top: auto; bottom: -2px; border: 5px solid transparent; border-top: 7px solid var(--muted); border-bottom: 0; }
+}

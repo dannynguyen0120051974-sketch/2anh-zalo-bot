@@ -112,11 +112,17 @@ test('tạo/sửa bằng lời thường: đúng lệnh hermes cron, chỉ gửi
   const calls = [];
   const s = createSchedules({ hermesHome: h, bin: 'hermes', env: {}, execImpl: fakeHermes(h, calls) });
   const input = parseJobInput({ name: ' Nhắc  nộp bài ', prompt: '-rm nhắc lớp\nnộp bài', target: '555', spec: { repeat: 'weekly', times: ['20:00'], days: [2, 4] } });
-  assert.deepEqual(input, { name: 'Nhắc nộp bài', prompt: '-rm nhắc lớp\nnộp bài', target: '555', schedule: '0 20 * * 2,4' });
+  assert.deepEqual(input, { name: 'Nhắc nộp bài', prompt: '-rm nhắc lớp\nnộp bài', targets: ['555'], schedule: '0 20 * * 2,4' });
   const made = await s.create(input);
   assert.deepEqual(calls[0], ['cron', 'create', '--name=Nhắc nộp bài', '--deliver=zalo:555', '--', '0 20 * * 2,4', '-rm nhắc lớp\nnộp bài']);
   assert.equal(made.id, 'abcdef123456');
   assert.equal(made.prompt, '-rm nhắc lớp\nnộp bài', 'prompt trả nguyên văn, không gộp dòng');
+  // Luồng: thêm nơi gửi (gửi cùng kết quả tới nhiều nhóm).
+  await s.update('abcdef123456', parseJobInput({ targets: ['555', '888'] }, { partial: true }));
+  assert.deepEqual(calls.at(-1), ['cron', 'edit', 'abcdef123456', '--deliver=zalo:555,zalo:888']);
+  assert.deepEqual(s.list().find((j) => j.id === 'abcdef123456').targets, ['555', '888']);
+  await s.update('abcdef123456', parseJobInput({ targets: ['555'] }, { partial: true }));
+  calls.splice(1);
   // Kéo thả: chỉ lịch.
   await s.update('abcdef123456', parseJobInput({ spec: { repeat: 'weekly', times: ['20:00'], days: [4, 5] } }, { partial: true }));
   assert.deepEqual(calls[1], ['cron', 'edit', 'abcdef123456', '--schedule=0 20 * * 4,5']);
@@ -161,4 +167,14 @@ test('Hermes từ chối → 400 kèm lý do (không 502); lệnh lỗi mà vi�
   const flaky = createSchedules({ hermesHome: h, bin: 'hermes', env: {}, execImpl: async (f, a) => { await inner(f, a); throw new Error('timeout'); } });
   const made = await flaky.create(parseJobInput({ name: 'Tin sáng mới', prompt: 'x', target: '555', spec: { repeat: 'daily', times: ['06:30'] } }));
   assert.equal(made.name, 'Tin sáng mới');
+});
+
+test('nơi gửi: đọc mọi đích Zalo (kể cả "origin"), dựng lại deliver giữ đích không phải Zalo; tối đa 10', async () => {
+  const { cronTargets, rebuildDeliver, parseJobInput } = await import('./schedules.js');
+  const job = { deliver: 'telegram,origin,zalo:777:1,zalo:777', origin: { platform: 'zalo', chat_id: '555' } };
+  assert.deepEqual(cronTargets(job), ['555', '777']);
+  assert.equal(rebuildDeliver(job, ['777', '999']), 'telegram,zalo:777,zalo:999');
+  assert.deepEqual(cronTargets({ deliver: 'origin', origin: { platform: 'telegram', chat_id: '1' } }), []);
+  assert.throws(() => parseJobInput({ targets: Array.from({ length: 11 }, (_, i) => String(i + 1)) }, { partial: true }), /tối đa 10/);
+  assert.deepEqual(parseJobInput({ targets: ['5', '5', '6'] }, { partial: true }).targets, ['5', '6']);
 });

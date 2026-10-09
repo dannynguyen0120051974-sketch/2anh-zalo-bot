@@ -24,6 +24,30 @@ export function cronTarget(job) {
   return o && typeof o === 'object' && o.platform === 'zalo' ? String(o.chat_id ?? '') : '';
 }
 
+/**
+ * Mọi hội thoại Zalo việc gửi kết quả tới (Hermes nhận nhiều nơi gửi cách nhau bằng dấu phẩy và gửi cùng một kết
+ * quả tới tất cả). "origin" của việc tạo từ Zalo = hội thoại gốc. Không trùng, giữ thứ tự.
+ */
+export function cronTargets(job) {
+  const out = [];
+  const o = job?.origin && typeof job.origin === 'object' ? job.origin : {};
+  for (const part of String(job?.deliver ?? '').split(',')) {
+    const p = part.trim();
+    const id = p.startsWith('zalo:') ? p.slice(5).split(':')[0] : p === 'origin' && o.platform === 'zalo' ? String(o.chat_id ?? '') : '';
+    if (/^\d{1,32}$/.test(id) && !out.includes(id)) out.push(id);
+  }
+  if (!out.length && o.platform === 'zalo' && /^\d{1,32}$/.test(String(o.chat_id ?? ''))) out.push(String(o.chat_id));
+  return out;
+}
+
+/** deliver mới: giữ nơi gửi không thuộc Zalo (telegram…), thay toàn bộ phần Zalo bằng `targets`. */
+export function rebuildDeliver(job, targets) {
+  const o = job?.origin && typeof job.origin === 'object' ? job.origin : {};
+  const keep = String(job?.deliver ?? '').split(',').map((p) => p.trim())
+    .filter((p) => p && !p.startsWith('zalo:') && !(p === 'origin' && o.platform === 'zalo'));
+  return [...keep, ...targets.map((t) => `zalo:${t}`)].join(',');
+}
+
 // Việc hẹn giờ nhóm (plugin `_group_cron_prompt`): "<chỉ dẫn hệ thống>\n---\n<nội dung thành viên viết>".
 // Dashboard chỉ cho sửa phần sau dấu tách; khi ghi tự bọc lại phần chỉ dẫn cũ.
 export const GROUP_PROMPT_SEPARATOR = '\n---\n';
@@ -52,7 +76,7 @@ export function zaloJobs(data) {
       enabled: j.enabled !== false, paused: j.state === 'paused' || Boolean(j.paused_at),
       nextRunAt: j.next_run_at ? Date.parse(j.next_run_at) || null : null,
       lastRunAt: j.last_run_at ? Date.parse(j.last_run_at) || null : null,
-      lastStatus: short(j.last_status, 20), target: cronTarget(j),
+      lastStatus: short(j.last_status, 20), target: cronTarget(j), targets: cronTargets(j),
       kind: group ? 'group' : 'owner',
       creatorName: group ? short(o.zalo_creator_name, 80) : '',
     };
@@ -102,9 +126,12 @@ export function parseJobInput(body, { admin = false, partial = false } = {}) {
     if (!out.prompt || out.prompt.length > MAX_PROMPT) throw bad(`Ghi việc bot cần làm (tối đa ${MAX_PROMPT} ký tự).`);
     if (BAD_CHARS.test(out.prompt)) throw bad('Nội dung có ký tự ẩn (thường do dán từ nơi khác) — gõ lại hoặc dán dạng chữ thường.');
   }
-  if (!partial || b.target !== undefined) {
-    out.target = String(b.target ?? '').trim();
-    if (!/^\d{1,32}$/.test(out.target)) throw bad('Chọn nhóm hoặc người nhận.');
+  // Nơi gửi: `targets` (nhiều nơi, tối đa 10) hoặc `target` (một nơi — bản cũ).
+  if (!partial || b.targets !== undefined || b.target !== undefined) {
+    const list = Array.isArray(b.targets) ? b.targets : b.target !== undefined && b.target !== '' ? [b.target] : [];
+    out.targets = [...new Set(list.map((x) => String(x ?? '').trim()))];
+    if (!out.targets.length || out.targets.some((x) => !/^\d{1,32}$/.test(x))) throw bad('Chọn nhóm hoặc người nhận.');
+    if (out.targets.length > 10) throw bad('Gửi tối đa 10 nơi cho một lịch hẹn.');
   }
   if (b.spec) {
     try { out.schedule = toSchedule(b.spec); } catch (e) { throw bad(e.message); }
@@ -154,7 +181,7 @@ export function createSchedules({ hermesHome, bin, execImpl = defaultExec, env =
     async create(input) {
       const before = new Set((readRaw(hermesHome).jobs || []).map((j) => String(j?.id)));
       // "--" trước đối số vị trí: việc bot làm bắt đầu bằng "-" không bị hiểu thành tuỳ chọn.
-      const ran = await run(['create', `--name=${input.name}`, `--deliver=zalo:${input.target}`, '--', input.schedule, input.prompt], 'create');
+      const ran = await run(['create', `--name=${input.name}`, `--deliver=${input.targets.map((t) => `zalo:${t}`).join(',')}`, '--', input.schedule, input.prompt], 'create');
       const raw = (readRaw(hermesHome).jobs || []).find((j) => !before.has(String(j?.id)) && j.name === input.name && sameSchedule(j, input.schedule));
       const made = raw && readZaloJobs(hermesHome).find((j) => j.id === String(raw.id));
       if (!made) { console.error('[dashboard] hermes cron create', ran ? 'thoát 0 nhưng không thấy việc mới' : 'lỗi'); throw fail(); }
@@ -186,9 +213,10 @@ export function createSchedules({ hermesHome, bin, execImpl = defaultExec, env =
         if (wasOnce && !isOnce(input.schedule)) args.push('--repeat=0');            // lặp mãi
         else if (!wasOnce && isOnce(input.schedule)) args.push(`--repeat=${completed + 1}`); // chạy đúng một lần nữa
       }
-      if (input.target !== undefined && input.target !== job.target) {
+      const sameTargets = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+      if (input.targets !== undefined && !sameTargets(input.targets, job.targets)) {
         if (group) throw bad('Việc do thành viên nhóm tạo chỉ gửi vào chính nhóm đó — muốn gửi nơi khác hãy tạo lịch hẹn mới.');
-        args.push(`--deliver=zalo:${input.target}`);
+        args.push(`--deliver=${rebuildDeliver(raw, input.targets)}`);
       }
       if (args.length === 2) return job; // không có gì đổi
       if (!(await run(args, `edit ${id}`))) throw fail();
@@ -197,7 +225,7 @@ export function createSchedules({ hermesHome, bin, execImpl = defaultExec, env =
       const ok = after && view && (input.name === undefined || view.name === input.name)
         && (input.schedule === undefined || sameSchedule(after, input.schedule))
         && (prompt === undefined || String(after.prompt) === prompt)
-        && (input.target === undefined || view.target === input.target);
+        && (input.targets === undefined || sameTargets(view.targets, input.targets));
       if (!ok) { console.error('[dashboard] hermes cron edit', id, 'thoát 0 nhưng jobs.json không đổi như mong đợi'); throw fail(); }
       return view;
     },

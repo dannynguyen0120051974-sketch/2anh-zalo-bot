@@ -2,6 +2,15 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [2.5.0] — 2026-10-09
+
+### Thêm
+- **Lịch hẹn › Luồng** (kiểu node như n8n), bên cạnh Lịch tuần:
+  - Mỗi lịch hẹn là một làn **Khi nào → Bot làm gì → Gửi vào**; bấm khối để sửa.
+  - Kéo nhóm/người từ bảng bên phải thả vào cột "Gửi vào" để **gửi cùng một kết quả tới nhiều nơi** (tối đa 10); kéo khối nơi nhận sang luồng khác để chuyển; × để bỏ. Màn cảm ứng/bàn phím dùng ô "+ Thêm nơi gửi".
+  - Cửa sổ sửa cũng chọn được nhiều nơi gửi. Nơi gửi không thuộc Zalo (nếu có) được giữ nguyên; việc do thành viên nhóm tạo vẫn chỉ gửi vào chính nhóm đó.
+- API: `targets` (danh sách) cho tạo/sửa lịch hẹn; `/api/schedules` trả `targets`, `targetNames`.
+
 ## [2.4.0] — 2026-10-09
 
 ### Thêm

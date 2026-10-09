@@ -19,7 +19,12 @@ export function scheduleRoutes({ schedules, sidecar, threadNames, activity }) {
     }
     let names = new Map();
     try { names = await threadNames.load(); } catch { /* không có tên nhóm: dùng tên dự phòng */ }
-    res.json({ ok: true, cronError, jobs: jobs.map((j) => ({ ...j, targetName: names.get(j.target) || fallbackName(j.target, j.kind === 'group' ? 1 : 0) })) });
+    const nameOf = (id, kind) => names.get(id) || fallbackName(id, kind === 'group' ? 1 : 0);
+    res.json({ ok: true, cronError, jobs: jobs.map((j) => {
+      const targetNames = (Array.isArray(j.targets) && j.targets.length ? j.targets : [j.target]).filter(Boolean).map((t) => nameOf(t, j.kind));
+      // Thẻ ngắn: "Nhóm A + 2 nơi" khi gửi nhiều nơi.
+      return { ...j, targetNames, targetName: targetNames.length > 1 ? `${targetNames[0]} + ${targetNames.length - 1} nơi` : targetNames[0] || nameOf(j.target, j.kind) };
+    }) });
   });
 
   // Tạo / sửa bằng lời thường (spec) — cả hai vai trò; lịch cron gốc (expr) chỉ Quản trị.
