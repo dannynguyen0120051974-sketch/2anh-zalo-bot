@@ -20,6 +20,16 @@ export function agentMemoryRoutes({ agentMemory, activity }) {
   r.get('/admin/agent-memory', ...guard, (req, res) => {
     try { res.json({ ok: true, ...agentMemory.view() }); } catch (err) { fail(res, err, 'Chưa đọc được bộ nhớ của trợ lý — tải lại trang.'); }
   });
+  r.post('/admin/agent-memory/:target', ...guard, (req, res) => {
+    const t = target(req);
+    if (!t) return res.status(400).json({ ok: false, error: 'Không có mục bộ nhớ này — tải lại trang.' });
+    try {
+      agentMemory.add(t, req.body?.text);
+      const v = agentMemory.view();
+      log(req, 'agent_memory_add', t, v[t].entries.length - 1);
+      res.json({ ok: true, ...v });
+    } catch (err) { fail(res, err, 'Chưa thêm được — thử lại.'); }
+  });
   r.put('/admin/agent-memory/:target/:index', ...guard, (req, res) => {
     const t = target(req); const i = Number(req.params.index);
     if (!t) return res.status(400).json({ ok: false, error: 'Không có mục bộ nhớ này — tải lại trang.' });

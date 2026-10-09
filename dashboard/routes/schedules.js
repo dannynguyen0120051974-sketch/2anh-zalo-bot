@@ -2,7 +2,7 @@
 // qua kết nối Zalo (ghi audit_log ở đó). Tên nhóm lấy từ danh bạ nhóm như Phiên chat.
 import express from 'express';
 import { requireAuth } from '../lib/http-guards.js';
-import { CRON_ACTIONS } from '../lib/schedules.js';
+import { CRON_ACTIONS, parseJobInput } from '../lib/schedules.js';
 import { fallbackName } from '../lib/thread-names.js';
 import { failSidecar } from '../lib/route-errors.js';
 
@@ -20,6 +20,29 @@ export function scheduleRoutes({ schedules, sidecar, threadNames, activity }) {
     let names = new Map();
     try { names = await threadNames.load(); } catch { /* không có tên nhóm: dùng tên dự phòng */ }
     res.json({ ok: true, cronError, jobs: jobs.map((j) => ({ ...j, targetName: names.get(j.target) || fallbackName(j.target, j.kind === 'group' ? 1 : 0) })) });
+  });
+
+  // Tạo / sửa bằng lời thường (spec) — cả hai vai trò; lịch cron gốc (expr) chỉ Quản trị.
+  const saveFail = (res, err) => {
+    const status = Number.isInteger(err?.statusCode) ? err.statusCode : 500;
+    if (status === 500) console.error('[dashboard]', err);
+    res.status(status).json({ ok: false, error: status === 500 ? 'Lỗi bên trong dashboard — xem nhật ký dịch vụ.' : err.message });
+  };
+  r.post('/schedules/cron', requireAuth, async (req, res) => {
+    try {
+      const input = parseJobInput(req.body, { admin: req.user.role === 'admin' });
+      const job = await schedules.create(input);
+      try { activity.append({ actor: req.user.username, action: 'cron_create', detail: job.name }); } catch (e) { console.error('[dashboard] không ghi được Nhật ký:', e); }
+      res.json({ ok: true, id: job.id });
+    } catch (err) { saveFail(res, err); }
+  });
+  r.put('/schedules/cron/:id', requireAuth, async (req, res) => {
+    try {
+      const input = parseJobInput(req.body, { admin: req.user.role === 'admin', partial: true });
+      const job = await schedules.update(String(req.params.id), input);
+      try { activity.append({ actor: req.user.username, action: 'cron_edit', detail: job.name }); } catch (e) { console.error('[dashboard] không ghi được Nhật ký:', e); }
+      res.json({ ok: true });
+    } catch (err) { saveFail(res, err); }
   });
 
   r.post('/schedules/cron/:id/:action', requireAuth, async (req, res) => {

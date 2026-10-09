@@ -2,6 +2,18 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [2.4.0] — 2026-10-09
+
+### Thêm
+- **Lịch hẹn dễ dùng cho người không rành kỹ thuật**:
+  - Lịch tuần 7 cột (điện thoại xếp dọc): mỗi việc một thẻ giờ · tên · gửi vào đâu, viền màu theo trạng thái. **Kéo thẻ sang ngày khác để dời lịch** (một lần: đổi ngày; các thứ: đổi thứ; hằng tháng: đổi ngày trong tháng).
+  - **Tạo / sửa bằng lời thường**: tên, bot sẽ làm gì, gửi vào (chọn nhóm/người), lặp lại (Một lần / Hằng ngày / Các thứ T2…CN / Hằng tháng), giờ (thêm nhiều giờ). Tạm dừng, chạy lại, xoá ngay trong cửa sổ.
+  - Lịch phức tạp nằm ở "Lịch nâng cao"; cron gốc chỉ Quản trị sửa. Mọi thay đổi đi qua `hermes cron create/edit` và chỉ gửi phần thật sự đổi; việc hẹn giờ nhóm giữ nguyên chỉ dẫn hệ thống và nơi gửi.
+- **Trí nhớ dạng thẻ**:
+  - Sổ người quen: mỗi người một thẻ, thông tin dạng nhãn ("Lớp: 12A1") kèm nơi bot được dùng; sửa trong cửa sổ có nút gợi ý (Xưng hô, Chức vụ, Lớp, Môn dạy…).
+  - Bộ nhớ của trợ lý (Quản trị): danh sách câu thường, thêm/sửa/xoá trong cửa sổ, thanh dung lượng.
+- API: `POST/PUT /api/schedules/cron`, `POST /api/admin/agent-memory/:target`; `/api/people` kèm nơi dùng từng mục.
+
 ## [2.3.1] — 2026-10-09
 
 ### Sửa

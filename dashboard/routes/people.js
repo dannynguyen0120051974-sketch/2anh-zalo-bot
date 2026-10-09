@@ -7,7 +7,7 @@ import { ZALO_UID } from '../lib/users.js';
 
 const MAX_LIST = 500;
 
-export function peopleRoutes({ people, activity }) {
+export function peopleRoutes({ people, activity, threadNames }) {
   const r = express.Router();
   const fail = (res, err, fallback) => {
     const status = Number.isInteger(err?.statusCode) ? err.statusCode : 500;
@@ -26,10 +26,23 @@ export function peopleRoutes({ people, activity }) {
     return b.updatedAt === null || Number.isFinite(b.updatedAt) ? b.updatedAt : NaN;
   };
 
-  r.get('/people', requireAuth, (req, res) => {
+  r.get('/people', requireAuth, async (req, res) => {
     try {
       const q = fold(String(req.query.q ?? '')).trim().slice(0, 100);
       const all = people.list();
+      // Nơi dùng mục hồ sơ → chữ dễ hiểu: tên nhóm, "Nhắn riêng" (với chính người đó) hoặc "Nhắn riêng của <tên>".
+      let groups = new Map();
+      try { groups = await threadNames.load(); } catch { /* tên dự phòng */ }
+      const byUid = new Map(all.map((p) => [p.uid, p.name]));
+      const label = (uid, place) => {
+        const id = place.slice(2);
+        if (place.startsWith('g:')) return groups.get(id) || `Nhóm …${id.slice(-4)}`;
+        return id === uid ? 'Nhắn riêng' : `Nhắn riêng của ${byUid.get(id) || `…${id.slice(-4)}`}`;
+      };
+      for (const p of all) {
+        for (const f of p.fields) f.places = f.places.map((x) => label(p.uid, x));
+        p.notePlaces = p.notePlaces.map((x) => label(p.uid, x));
+      }
       const hits = q ? all.filter((p) => fold(`${p.name} ${p.note} ${p.uid} ${p.fields.map((f) => `${f.key} ${f.value}`).join(' ')}`).includes(q)) : all;
       res.json({ ok: true, total: all.length, people: hits.slice(0, MAX_LIST), truncated: hits.length > MAX_LIST });
     } catch (err) { fail(res, err, 'Chưa đọc được sổ người quen — tải lại trang, nếu vẫn lỗi hãy báo người cài đặt.'); }

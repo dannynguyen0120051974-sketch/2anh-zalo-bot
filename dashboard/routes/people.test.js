@@ -61,3 +61,16 @@ test('sổ người quen: gửi updatedAt cũ (bot vừa sửa) → 409 cho cả
   assert.equal((await call(`/api/people/${B}`, { method: 'PUT', cookie: owner, body: { name: 'Minh', updatedAt: 7 } })).status, 409);
   assert.equal((await call(`/api/people/${B}`, { method: 'PUT', cookie: owner, body: { name: 'Minh', updatedAt: null } })).status, 200);
 });
+
+test('sổ người quen: nơi dùng từng mục thành chữ dễ hiểu (tên nhóm, nhắn riêng)', async (t) => {
+  const deps = makeDeps(t);
+  const B = '2222222222222222222';
+  seed(deps, { [A]: { name: 'Cô Lan', fields: { lop: '12A1', mon: 'Hoá' }, note: 'Tổ Hoá', updated_at: 1,
+    scopes: { fields: { lop: ['g:555', `u:${A}`] }, note: [`u:${B}`] } }, [B]: { name: 'Chủ', updated_at: 2 } });
+  deps.threadNames = { load: async () => new Map([['555', 'Nhóm 12A1']]), cached: () => new Map() };
+  const { call } = await startApp(t, deps);
+  const admin = await loginAs(t, deps, call);
+  const lan = (await call('/api/people', { cookie: admin })).json.people.find((p) => p.uid === A);
+  assert.deepEqual(lan.fields.map((f) => [f.key, f.places]), [['lop', ['Nhóm 12A1', 'Nhắn riêng']], ['mon', []]]);
+  assert.deepEqual(lan.notePlaces, ['Nhắn riêng của Chủ']);
+});

@@ -776,3 +776,46 @@ fieldset.field { border: 0; padding: 0; margin: 0; }
 /* Nhật ký: tab "Có lỗi" không có lỗi; tab "Hoạt động AI" nhúng Theo dõi agent. */
 .audit-clean { display: flex; align-items: center; gap: 8px; margin: 8px 0; padding: 12px 14px; border: 1px solid var(--ok-border); border-radius: 10px; background: var(--ok-soft); color: var(--ok); font-weight: 600; }
 .trace-embedded > .toolbar { margin-bottom: 4px; }
+
+/* Lịch hẹn: lịch tuần kéo thả (7 cột; điện thoại xếp dọc theo ngày). */
+.week-nav strong { min-width: 110px; text-align: center; }
+.week-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; margin: 8px 0 14px; }
+.week-col { display: flex; flex-direction: column; gap: 6px; min-height: 140px; padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); transition: background .15s, border-color .15s; }
+.week-col.is-today { border-color: var(--brand); }
+.week-col.is-over { background: var(--brand-soft); border-color: var(--brand); border-style: dashed; }
+.week-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; }
+.week-empty { margin: 4px 0; text-align: center; }
+.job-card { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-left: 4px solid var(--ok); border-radius: 8px; background: var(--card); color: inherit; font: inherit; text-align: left; cursor: grab; overflow-wrap: anywhere; }
+.job-card:hover { box-shadow: var(--shadow); }
+.job-card:focus-visible { outline: none; box-shadow: var(--focus); }
+.job-card:active { cursor: grabbing; }
+.job-card.job-warn { border-left-color: var(--warn); opacity: .75; }
+.job-card.job-danger { border-left-color: var(--danger); }
+.job-card.job-idle { border-left-color: var(--muted); opacity: .6; }
+.job-time { font-weight: 700; font-size: 13px; }
+.job-name { font-size: 13px; line-height: 1.3; }
+.time-list { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.time-item { display: inline-flex; align-items: center; gap: 2px; }
+@media (max-width: 900px) {
+  .week-grid { grid-template-columns: 1fr; }
+  .week-col { min-height: 0; }
+}
+
+/* Trí nhớ: thẻ người + bộ nhớ trợ lý dạng câu (bấm để sửa trong cửa sổ). */
+.person-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; margin-top: 8px; }
+.person-card { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); color: inherit; font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.person-card:hover { box-shadow: var(--shadow); border-color: var(--brand); }
+.person-card:focus-visible { outline: none; box-shadow: var(--focus); }
+.person-note { font-size: 14px; color: var(--text); }
+.person-card .chips { gap: 4px; }
+.mem-field { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto; gap: 6px; align-items: center; margin-bottom: 8px; }
+.mem-place { grid-column: 1 / -1; margin-top: -4px; }
+.mem-usage { width: 100%; height: 6px; margin: 2px 0 8px; accent-color: var(--brand); }
+.mem-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.mem-line { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: inherit; font: inherit; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; cursor: pointer; }
+.mem-line:hover { border-color: var(--brand); }
+.mem-line:focus-visible { outline: none; box-shadow: var(--focus); }
+
+.job-card.is-busy { cursor: progress; opacity: .6; }
+/* Màn cảm ứng không kéo thả được: bỏ câu hướng dẫn kéo, mọi việc làm qua cửa sổ sửa. */
+@media (hover: none) { .drag-hint { display: none; } }

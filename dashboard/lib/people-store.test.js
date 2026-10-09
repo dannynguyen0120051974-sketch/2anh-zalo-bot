@@ -27,9 +27,11 @@ test('parsePerson: làm sạch chữ, bỏ dòng trống, kiểm giới hạn c�
 });
 
 test('liệt kê mới sửa trước; không có tệp = rỗng; tệp hỏng = 503, không ghi đè', (t) => {
-  const { store } = setup(t, { [A]: { name: 'Lan', updated_at: 10, fields: { 'môn': 'Hoá' } }, [B]: { name: 'Minh', updated_at: 20 } });
+  const { store } = setup(t, { [A]: { name: 'Lan', updated_at: 10, fields: { 'môn': 'Hoá', lop: '12A1' }, note: 'x',
+    scopes: { fields: { 'môn': ['g:555', 'u:../x', 7] }, note: ['u:1111111111111111111'] } }, [B]: { name: 'Minh', updated_at: 20 } });
   assert.deepEqual(store.list().map((p) => [p.uid, p.updatedAt]), [[B, 20_000], [A, 10_000]]);
-  assert.deepEqual(store.list()[1].fields, [{ key: 'môn', value: 'Hoá' }]);
+  assert.deepEqual(store.list()[1].fields, [{ key: 'môn', value: 'Hoá', places: ['g:555'] }, { key: 'lop', value: '12A1', places: [] }], 'nơi dùng hợp lệ; mục cũ không có nơi');
+  assert.deepEqual(store.list()[1].notePlaces, ['u:1111111111111111111']);
   assert.deepEqual(setup(t).store.list(), []);
   const broken = setup(t, '{hỏng');
   assert.throws(() => broken.store.list(), (e) => e.statusCode === 503);

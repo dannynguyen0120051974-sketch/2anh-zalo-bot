@@ -1,8 +1,11 @@
 // Lịch hẹn (spec §18.4): việc hẹn giờ của trợ lý gửi về Zalo (của chủ nhân và "hẹn giờ cho nhóm"), lời nhắc Zalo.
+// Việc hẹn giờ hiện thành LỊCH TUẦN: kéo thẻ sang ngày khác để dời lịch; bấm thẻ để sửa bằng lời thường (tên, việc bot
+// làm, gửi vào đâu, lặp lại, giờ). Lịch phức tạp (khoảng lặp, cron lạ) nằm ở "Lịch nâng cao" — cron gốc chỉ Quản trị sửa.
 import { useEffect, useState } from '../vendor/hooks.mjs';
 import { api } from '../api.js';
-import { html, fmtTime, Icon, Live, Notice, PageHead, Spinner } from '../ui.js';
+import { Dialog, html, fmtTime, Icon, Live, Notice, PageHead, Spinner } from '../ui.js';
 import { fold } from '../fold.js';
+import { DAY_LABELS, DAY_NAMES, REPEATS, describeSpec, mondayOf, moveSpec, specProblem, weekOccurrences } from '../schedule-spec.js';
 
 export const REPEAT_LABELS = { 0: 'Một lần', 1: 'Hằng ngày', 2: 'Hằng tuần', 3: 'Hằng tháng' };
 
@@ -20,44 +23,182 @@ export function filterJobs(jobs, q) {
   return n ? jobs.filter((j) => fold(`${j.name} ${j.prompt} ${j.targetName} ${j.creatorName}`).includes(n)) : jobs;
 }
 
-function Jobs() {
-  const [data, setData] = useState(null);
-  const [q, setQ] = useState('');
-  const [msg, setMsg] = useState({});
-  const [busy, setBusy] = useState('');
-  const load = () => api('/api/schedules').then(setData).catch((e) => setMsg({ error: e.message }));
-  useEffect(() => { load(); }, []);
-  async function act(j, action) {
-    const ask = { remove: `Xoá hẳn việc "${j.name}"? Không hoàn tác được.`, pause: `Tạm dừng "${j.name}"?` }[action];
-    if (ask && !confirm(ask)) return;
-    setBusy(j.id); setMsg({});
-    try { await api(`/api/schedules/cron/${j.id}/${action}`, { method: 'POST' }); setMsg({ ok: { pause: 'Đã tạm dừng.', resume: 'Đã chạy lại.', remove: 'Đã xoá.' }[action] }); await load(); } catch (e) { setMsg({ error: e.message }); } finally { setBusy(''); }
+const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10);
+const todayVN = () => isoDay(Date.now() + 7 * 3_600_000); // giờ Việt Nam: lịch của trợ lý chạy theo giờ VN
+const shiftDays = (date, n) => isoDay(Date.parse(`${date}T00:00:00Z`) + n * 86_400_000);
+const ddmm = (date) => `${date.slice(8, 10)}/${date.slice(5, 7)}`;
+
+/** Thẻ của tuần: [{ day, date, items: [{ job, time }] }] — 7 ngày từ thứ Hai `week`. */
+export function weekBoard(jobs, week) {
+  const days = DAY_LABELS.map((label, i) => ({ day: i + 1, label, date: shiftDays(week, i), items: [] }));
+  for (const job of jobs) for (const o of weekOccurrences(job.spec, week)) days[o.day - 1].items.push({ job, time: o.time });
+  for (const d of days) d.items.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
+  return days;
+}
+
+const blankSpec = () => ({ repeat: 'daily', times: ['07:00'], days: [1], dayOfMonth: 1, date: shiftDays(todayVN(), 1) });
+
+/** Giờ kế tiếp chưa dùng, cùng số phút (cron chỉ cho một số phút chung): 08:00 → 09:00 … */
+export function nextTime(times) {
+  const minute = (times[0] || '07:00').slice(3);
+  const used = new Set(times.map((t) => Number(t.slice(0, 2))));
+  const last = Number((times[times.length - 1] || '07:00').slice(0, 2));
+  for (let i = 1; i <= 24; i += 1) { const h = (last + i) % 24; if (!used.has(h)) return `${String(h).padStart(2, '0')}:${minute}`; }
+  return null;
+}
+
+/** Việc một lần mà thời điểm đã qua (theo giờ VN) → câu lỗi. */
+export function pastProblem(spec, nowMs = Date.now()) {
+  if (spec.repeat !== 'once' || !spec.date || !spec.times[0]) return '';
+  return Date.parse(`${spec.date}T${spec.times[0]}:00+07:00`) <= nowMs ? 'Thời điểm này đã qua — chọn ngày giờ sau bây giờ.' : '';
+}
+
+/** Cửa sổ tạo/sửa một lịch hẹn bằng lời thường. */
+function JobDialog({ job, convs, admin, onDone, onClose }) {
+  const advanced = Boolean(job) && !job.spec;
+  const [name, setName] = useState(job?.name || '');
+  const [prompt, setPrompt] = useState(job?.prompt || '');
+  const [target, setTarget] = useState(job?.target || '');
+  const [spec, setSpec] = useState(() => ({ ...blankSpec(), ...(job?.spec || {}) }));
+  const [expr, setExpr] = useState(job?.expr || '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const set = (patch) => setSpec((s) => ({ ...s, ...patch }));
+  const times = spec.repeat === 'once' ? spec.times.slice(0, 1) : spec.times;
+  const clean = { ...spec, times };
+  const scheduleChanged = !job || JSON.stringify(clean) !== JSON.stringify({ ...blankSpec(), ...job.spec, times: job.spec?.repeat === 'once' ? job.spec.times.slice(0, 1) : job.spec?.times });
+  const problem = advanced ? '' : specProblem(clean) || (scheduleChanged ? pastProblem(clean) : '');
+  const snapshot = () => JSON.stringify([name, prompt, target, advanced ? expr : clean]);
+  const [initial] = useState(snapshot);
+  // Đang lưu cũng coi là "chưa xong" → đóng sẽ hỏi, không lặng lẽ mất lỗi lưu.
+  const dirty = () => busy || snapshot() !== initial;
+  const group = job?.kind === 'group';
+  async function save(e) {
+    e.preventDefault();
+    if (problem) { setError(problem); return; }
+    if (!target) { setError('Chọn nhóm hoặc người nhận.'); return; }
+    setBusy(true); setError('');
+    const body = { name, prompt, target, ...(advanced ? (admin ? { expr } : {}) : { spec: clean }) };
+    try {
+      await api(job ? `/api/schedules/cron/${job.id}` : '/api/schedules/cron', { method: job ? 'PUT' : 'POST', body });
+      onDone(job ? `Đã lưu "${name}".` : `Đã tạo lịch hẹn "${name}".`);
+    } catch (err) { setError(err.message); setBusy(false); }
   }
+  async function act(action) {
+    const ask = { remove: `Xoá hẳn "${job.name}"? Không hoàn tác được.`, pause: `Tạm dừng "${job.name}"?` }[action];
+    if (ask && !confirm(ask)) return;
+    setBusy(true); setError('');
+    try { await api(`/api/schedules/cron/${job.id}/${action}`, { method: 'POST' }); onDone({ pause: 'Đã tạm dừng.', resume: 'Đã chạy lại.', remove: 'Đã xoá.' }[action]); } catch (err) { setError(err.message); setBusy(false); }
+  }
+  const st = job ? jobState(job) : null;
+  const known = convs.some((c) => c.threadId === target);
+  return html`<${Dialog} title=${job ? 'Sửa lịch hẹn' : 'Tạo lịch hẹn'} onClose=${onClose} dirty=${dirty} wide>
+    <form class="stack" onSubmit=${save}>
+      ${st ? html`<p><span class=${`badge badge-${st.kind}`}>${st.text}</span> <small class="muted">Lần tới: ${fmtTime(job.nextRunAt)} · Lần trước: ${fmtTime(job.lastRunAt)}${job.creatorName ? ` · ${job.creatorName} tạo` : ''}</small></p>` : null}
+      <label class="field"><span>Tên</span><input value=${name} maxlength="120" required placeholder="Ví dụ: Nhắc nộp bài" onInput=${(e) => setName(e.currentTarget.value)} /></label>
+      <label class="field"><span>Bot sẽ làm gì</span>
+        <textarea rows="3" maxlength="2000" required value=${prompt} placeholder="Ví dụ: Nhắc lớp 12A1 nộp bài tập Hoá trước 21h, kèm lời động viên ngắn." onInput=${(e) => setPrompt(e.currentTarget.value)}></textarea></label>
+      <label class="field"><span>Gửi vào</span>
+        <select value=${target} disabled=${group} onChange=${(e) => setTarget(e.currentTarget.value)}>
+          <option value="">— Chọn nhóm hoặc người —</option>
+          ${known || !target ? null : html`<option value=${target}>${job?.targetName || target}</option>`}
+          ${convs.map((c) => html`<option key=${c.threadId} value=${c.threadId}>${c.threadType === 1 ? 'Nhóm' : 'Riêng'} · ${c.name}</option>`)}
+        </select>${group ? html`<small class="muted">Việc do thành viên tạo trong nhóm này — chỉ gửi vào chính nhóm đó.</small>` : null}</label>
+      ${advanced ? html`<${Notice} kind="info">Lịch này đặt bằng cách nâng cao (${job.schedule}). ${admin ? 'Quản trị sửa được cron gốc bên dưới; còn lại sửa tên, việc, nơi gửi như thường.' : 'Bạn sửa được tên, việc và nơi gửi; muốn đổi giờ chạy hãy nhờ Quản trị.'}<//>
+        ${admin ? html`<label class="field"><span>Cron gốc</span><input class="mono" value=${expr} onInput=${(e) => setExpr(e.currentTarget.value)} /><small class="muted">5 trường: phút giờ ngày tháng thứ — vd. */30 * * * * (mỗi 30 phút).</small></label>` : null}`
+      : html`<fieldset class="field"><legend>Lặp lại</legend>
+          <div class="chips" role="group" aria-label="Lặp lại">${REPEATS.map((r) => html`<button type="button" key=${r.value}
+            class="btn btn-secondary btn-sm chip" aria-pressed=${spec.repeat === r.value ? 'true' : 'false'} onClick=${() => set({ repeat: r.value })}>${r.label}</button>`)}</div></fieldset>
+        ${spec.repeat === 'weekly' ? html`<fieldset class="field"><legend>Vào các thứ</legend>
+          <div class="chips">${DAY_LABELS.map((d, i) => html`<button type="button" key=${d} class="btn btn-secondary btn-sm chip" aria-label=${DAY_NAMES[i]}
+            aria-pressed=${spec.days.includes(i + 1) ? 'true' : 'false'} onClick=${() => set({ days: spec.days.includes(i + 1) ? spec.days.filter((x) => x !== i + 1) : [...spec.days, i + 1] })}>${d}</button>`)}</div></fieldset>` : null}
+        ${spec.repeat === 'monthly' ? html`<label class="field"><span>Vào ngày</span><input type="number" min="1" max="31" value=${spec.dayOfMonth} onInput=${(e) => set({ dayOfMonth: Number(e.currentTarget.value) })} /><small class="muted">Tháng nào không có ngày này (vd. 31) thì không chạy.</small></label>` : null}
+        ${spec.repeat === 'once' ? html`<label class="field"><span>Ngày</span><input type="date" value=${spec.date} onInput=${(e) => set({ date: e.currentTarget.value })} /></label>` : null}
+        <fieldset class="field"><legend>Giờ chạy</legend>
+          <div class="time-list">${times.map((t, i) => html`<span key=${i} class="time-item"><input type="time" value=${t} required aria-label=${`Giờ ${i + 1}`}
+            onInput=${(e) => set({ times: times.map((x, k) => (k === i ? e.currentTarget.value : x)) })} />
+            ${times.length > 1 ? html`<button type="button" class="btn btn-ghost btn-sm" aria-label="Bỏ giờ này" onClick=${() => set({ times: times.filter((_, k) => k !== i) })}><${Icon} name="close" size=${14} /></button>` : null}</span>`)}
+            ${spec.repeat === 'once' || times.length >= 6 || !nextTime(times) ? null : html`<button type="button" class="btn btn-secondary btn-sm" onClick=${() => set({ times: [...times, nextTime(times)] })}><${Icon} name="plus" size=${14} /> Thêm giờ</button>`}</div>
+          <small class="muted">${problem || describeSpec(clean)} · giờ Việt Nam</small></fieldset>`}
+      <${Live} error=${error} />
+      <div class="dialog-actions">
+        <button class="btn btn-primary" disabled=${busy}>${busy ? 'Đang lưu…' : job ? 'Lưu' : 'Tạo lịch hẹn'}</button>
+        ${job ? (job.paused ? html`<button type="button" class="btn btn-secondary" disabled=${busy} onClick=${() => act('resume')}>Chạy lại</button>`
+          : html`<button type="button" class="btn btn-secondary" disabled=${busy} onClick=${() => act('pause')}>Tạm dừng</button>`) : null}
+        ${job ? html`<button type="button" class="btn btn-danger-outline" disabled=${busy} onClick=${() => act('remove')}>Xoá</button>` : null}
+      </div>
+    </form>
+  <//>`;
+}
+
+function Jobs({ admin }) {
+  const [data, setData] = useState(null);
+  const [convs, setConvs] = useState([]);
+  const [q, setQ] = useState('');
+  const [week, setWeek] = useState(() => mondayOf(todayVN()));
+  const [open, setOpen] = useState(null); // { job } | { job: null } (tạo mới)
+  const [drag, setDrag] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [over, setOver] = useState(0);
+  const [msg, setMsg] = useState({});
+  const load = () => api('/api/schedules').then(setData).catch((e) => setMsg({ error: e.message }));
+  useEffect(() => { load(); api('/api/chats').then((r) => setConvs(r.conversations || [])).catch(() => {}); }, []);
+  const done = (text) => { setOpen(null); setMsg({ ok: text }); load(); };
   const jobs = filterJobs(data?.jobs || [], q);
-  const section = (kind, title, hint) => {
-    const list = jobs.filter((j) => j.kind === kind);
-    return html`<div class="mem-block"><h3>${title} <small class="muted">${list.length}</small></h3><p class="muted small">${hint}</p>
-      ${list.length ? null : html`<p class="muted">Không có việc nào.</p>`}
-      <ul class="row-list">${list.map((j) => { const st = jobState(j); return html`<li key=${j.id} class="row-item">
-        <span class="row-main"><strong>${j.name || j.id}</strong>
-          <small class="muted">${j.schedule} · gửi vào ${j.targetName}${j.creatorName ? ` · ${j.creatorName} tạo` : ''}</small>
-          ${j.prompt ? html`<small>${j.prompt}</small>` : null}
-          <small class="muted">Lần tới: ${fmtTime(j.nextRunAt)} · Lần trước: ${fmtTime(j.lastRunAt)}</small></span>
-        <span class=${`badge badge-${st.kind}`}>${st.text}</span>
-        ${j.paused ? html`<button class="btn btn-secondary btn-sm" disabled=${busy !== ''} onClick=${() => act(j, 'resume')}>Chạy lại</button>`
-          : html`<button class="btn btn-secondary btn-sm" disabled=${busy !== ''} onClick=${() => act(j, 'pause')}>Tạm dừng</button>`}
-        <button class="btn btn-secondary btn-sm" disabled=${busy !== ''} onClick=${() => act(j, 'remove')}>Xoá</button>
-      </li>`; })}</ul></div>`;
-  };
+  const board = weekBoard(jobs, week);
+  const advanced = jobs.filter((j) => !j.spec);
+  const today = todayVN();
+  async function drop(day) {
+    setOver(0);
+    const d = drag; setDrag(null);
+    if (!d || d.fromDay === day.day) return;
+    if (saving) return;
+    if (d.job.spec.repeat === 'weekly' && d.job.spec.days.includes(day.day)) { setMsg({ error: `"${d.job.name}" đã chạy vào ${DAY_NAMES[day.day - 1]} rồi.` }); return; }
+    const next = moveSpec(d.job.spec, d.fromDay, day.day, day.date);
+    if (!next) { setMsg({ error: `"${d.job.name}" chạy hằng ngày nên không cần dời ngày — bấm vào thẻ để đổi giờ.` }); return; }
+    const past = pastProblem(next);
+    if (past) { setMsg({ error: past }); return; }
+    setMsg({}); setSaving(true);
+    try {
+      // Chỉ gửi lịch — tên, nội dung, nơi gửi giữ nguyên trên máy chủ.
+      await api(`/api/schedules/cron/${d.job.id}`, { method: 'PUT', body: { spec: next } });
+      done(`Đã dời "${d.job.name}" sang ${DAY_NAMES[day.day - 1]} (${describeSpec(next)}).`);
+    } catch (e) { setMsg({ error: e.message }); } finally { setSaving(false); }
+  }
   return html`<section class="card">
-    <h2>Việc hẹn giờ của trợ lý</h2>
-    <div class="toolbar"><label class="sr-only" for="job-q">Tìm việc hẹn giờ</label>
-      <input id="job-q" type="search" placeholder="Tìm theo tên, nhóm, người tạo…" value=${q} onInput=${(e) => setQ(e.currentTarget.value)} /></div>
+    <div class="toolbar"><h2>Việc hẹn giờ của trợ lý</h2>
+      <button type="button" class="btn btn-primary btn-sm" disabled=${!data} onClick=${() => setOpen({ job: null })}><${Icon} name="plus" size=${16} /> Tạo lịch hẹn</button></div>
+    <div class="toolbar week-nav">
+      <button type="button" class="btn btn-secondary btn-sm" aria-label="Tuần trước" onClick=${() => setWeek(shiftDays(week, -7))}>‹</button>
+      <strong>${ddmm(week)} – ${ddmm(shiftDays(week, 6))}</strong>
+      <button type="button" class="btn btn-secondary btn-sm" aria-label="Tuần sau" onClick=${() => setWeek(shiftDays(week, 7))}>›</button>
+      ${week !== mondayOf(today) ? html`<button type="button" class="btn btn-ghost btn-sm" onClick=${() => setWeek(mondayOf(today))}>Tuần này</button>` : null}
+      <label class="sr-only" for="job-q">Tìm lịch hẹn</label>
+      <input id="job-q" type="search" placeholder="Tìm theo tên, nhóm, người tạo…" value=${q} onInput=${(e) => setQ(e.currentTarget.value)} />
+    </div>
     <${Live} error=${msg.error} ok=${msg.ok} />
     ${data?.cronError ? html`<${Notice} kind="warn">${data.cronError}<//>` : null}
     ${!data && !msg.error ? html`<${Spinner} />` : null}
-    ${data ? section('group', 'Hẹn giờ cho nhóm', 'Thành viên tạo bằng câu "nhắc nhóm mỗi…". Tắt nút "Hẹn giờ cho nhóm" ở Phân quyền Bot chỉ chặn tạo mới — việc đã có vẫn chạy cho tới khi tạm dừng hoặc xoá ở đây.') : null}
-    ${data ? section('owner', 'Việc của chủ nhân', 'Chủ nhân nhờ trợ lý làm định kỳ và gửi kết quả về Zalo.') : null}
+    ${data ? html`<p class="muted small"><span class="drag-hint">Kéo thẻ sang ngày khác để dời lịch; </span>Bấm vào thẻ để sửa, tạm dừng hoặc xoá.</p>
+      <div class="week-grid">${board.map((d) => html`<div key=${d.day} class=${`week-col${d.date === today ? ' is-today' : ''}${over === d.day ? ' is-over' : ''}`}
+        onDragOver=${(e) => { if (drag) { e.preventDefault(); setOver(d.day); } }} onDragLeave=${(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setOver(0); }} onDrop=${(e) => { e.preventDefault(); drop(d); }}>
+        <div class="week-head"><strong>${d.label}</strong> <small class="muted">${ddmm(d.date)}</small></div>
+        ${d.items.length ? d.items.map((it) => { const st = jobState(it.job); return html`<div role="button" tabindex="0" key=${`${it.job.id}-${it.time}`}
+          class=${`job-card job-${st.kind}${saving ? ' is-busy' : ''}`} draggable=${saving ? 'false' : 'true'} title=${it.job.promptPreview}
+          aria-label=${`${it.time} ${it.job.name}, gửi vào ${it.job.targetName}. Bấm để sửa.`}
+          onKeyDown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen({ job: it.job }); } }}
+          onDragStart=${(e) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', it.job.id); setDrag({ job: it.job, fromDay: d.day }); }}
+          onDragEnd=${() => { setDrag(null); setOver(0); }} onClick=${() => setOpen({ job: it.job })}>
+          <span class="job-time">${it.time}</span><span class="job-name">${it.job.name}</span><small class="muted">${it.job.targetName}</small></div>`; })
+          : html`<p class="muted small week-empty">—</p>`}
+      </div>`)}</div>
+      ${advanced.length ? html`<h3>Lịch nâng cao <small class="muted">${advanced.length}</small></h3>
+        <ul class="row-list">${advanced.map((j) => { const st = jobState(j); return html`<li key=${j.id} class="row-item">
+          <span class="row-main"><strong>${j.name || j.id}</strong><small class="muted">${j.schedule} · gửi vào ${j.targetName}</small></span>
+          <span class=${`badge badge-${st.kind}`}>${st.text}</span>
+          <button type="button" class="btn btn-secondary btn-sm" aria-label=${`Sửa ${j.name}`} onClick=${() => setOpen({ job: j })}>Sửa</button></li>`; })}</ul>` : null}
+      ${!jobs.length ? html`<p class="muted">${q ? 'Không có lịch hẹn nào khớp.' : 'Chưa có lịch hẹn nào — bấm "Tạo lịch hẹn".'}</p>` : null}` : null}
+    ${open ? html`<${JobDialog} job=${open.job} convs=${convs} admin=${admin} onDone=${done} onClose=${() => setOpen(null)} />` : null}
   </section>`;
 }
 
@@ -94,7 +235,7 @@ function Reminders() {
   </section>`;
 }
 
-export function Schedules() {
+export function Schedules({ me }) {
   return html`<${PageHead} title="Lịch hẹn" sub="Việc trợ lý làm theo giờ và lời nhắc trong các nhóm Zalo." />
-    <${Jobs} /><${Reminders} />`;
+    <${Jobs} admin=${me?.role === 'admin'} /><${Reminders} />`;
 }

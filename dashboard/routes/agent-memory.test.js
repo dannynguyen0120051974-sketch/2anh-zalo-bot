@@ -25,3 +25,20 @@ test('bộ nhớ trợ lý: chỉ Quản trị; sửa/xoá ghi Nhật ký không
   assert.deepEqual(log.map((e) => e.detail), ['Ghi chú của trợ lý, mục 2', 'Ghi chú của trợ lý, mục 1']);
   assert.doesNotMatch(JSON.stringify(log), /Bí mật/);
 });
+
+test('bộ nhớ trợ lý: thêm điều cần nhớ (chỉ Quản trị), trùng → 409, trống → 400, ghi Nhật ký', async (t) => {
+  const deps = makeDeps(t);
+  mkdirSync(join(deps.dir, 'memories'), { recursive: true });
+  writeFileSync(join(deps.dir, 'memories', 'USER.md'), 'Anh dạy Hoá');
+  const { call } = await startApp(t, deps);
+  const owner = await loginAs(t, deps, call, { username: 'khach', role: 'owner' });
+  assert.equal((await call('/api/admin/agent-memory/user', { method: 'POST', cookie: owner, body: { text: 'x' } })).status, 403);
+  const admin = await loginAs(t, deps, call);
+  const add = await call('/api/admin/agent-memory/user', { method: 'POST', cookie: admin, body: { text: 'Thích trả lời ngắn' } });
+  assert.equal(add.status, 200);
+  assert.deepEqual(add.json.user.entries, ['Anh dạy Hoá', 'Thích trả lời ngắn']);
+  assert.equal(readFileSync(join(deps.dir, 'memories', 'USER.md'), 'utf8'), 'Anh dạy Hoá\n§\nThích trả lời ngắn');
+  assert.equal((await call('/api/admin/agent-memory/user', { method: 'POST', cookie: admin, body: { text: 'Thích trả lời ngắn' } })).status, 409);
+  assert.equal((await call('/api/admin/agent-memory/user', { method: 'POST', cookie: admin, body: { text: '  ' } })).status, 400);
+  assert.ok(deps.activity.list().some((e) => e.action === 'agent_memory_add'));
+});

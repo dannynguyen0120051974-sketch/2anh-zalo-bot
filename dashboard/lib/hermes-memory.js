@@ -80,6 +80,15 @@ export function createHermesMemory({ hermesHome, configFile }) {
       entries[index] = next;
       save(target, file, stamp, entries);
     },
+    /** Thêm một mục mới (cuối danh sách), cùng luật như sửa. */
+    add(target, text) {
+      const next = String(text ?? '').replace(/\r\n/g, '\n').trim();
+      if (!next) throw err(400, 'Nội dung trống — gõ điều trợ lý cần nhớ.');
+      if (next.includes(DELIMITER) || /^§$/m.test(next)) throw err(400, 'Nội dung không được có dòng chỉ gồm dấu § — bỏ dòng đó rồi lưu.');
+      const { file, stamp, entries } = load(target);
+      if (entries.includes(next)) throw err(409, 'Trợ lý đã nhớ đúng điều này rồi.');
+      save(target, file, stamp, [...entries, next]);
+    },
     remove(target, index, old) {
       const { file, stamp, entries } = load(target);
       checkEntry(entries, index, old);

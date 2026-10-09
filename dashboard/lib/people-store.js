@@ -43,6 +43,16 @@ export function parsePerson(body) {
 
 const stampOf = (file) => { try { const s = statSync(file); return `${s.mtimeMs}:${s.size}`; } catch { return 'none'; } };
 
+/**
+ * Nơi bot được dùng một mục hồ sơ (Sổ người quen theo nơi ghi — plugin people.py): ["g:<nhóm>", "u:<uid>"]; rỗng = mục
+ * cũ/sửa trên dashboard → chỉ khi nhắn riêng với chính người đó. `key` null = ghi chú.
+ */
+function placesOf(p, key) {
+  const sc = p?.scopes && typeof p.scopes === 'object' ? p.scopes : {};
+  const list = key === null ? sc.note : (sc.fields && typeof sc.fields === 'object' ? sc.fields[key] : null);
+  return Array.isArray(list) ? list.filter((x) => typeof x === 'string' && /^[gu]:\d{1,32}$/.test(x)) : [];
+}
+
 export function createPeopleStore({ file, now = Date.now }) {
   function load() {
     const stamp = stampOf(file);
@@ -63,7 +73,8 @@ export function createPeopleStore({ file, now = Date.now }) {
   }
   const view = (uid, p) => ({
     uid, name: clean(p?.name), note: clean(p?.note),
-    fields: Object.entries(p?.fields && typeof p.fields === 'object' ? p.fields : {}).map(([key, value]) => ({ key: String(key), value: String(value ?? '') })),
+    fields: Object.entries(p?.fields && typeof p.fields === 'object' ? p.fields : {}).map(([key, value]) => ({ key: String(key), value: String(value ?? ''), places: placesOf(p, key) })),
+    notePlaces: placesOf(p, null),
     updatedAt: Number.isFinite(p?.updated_at) ? p.updated_at * 1000 : null,
     updatedBy: String(p?.updated_by ?? ''),
   });
@@ -94,9 +105,9 @@ export function createPeopleStore({ file, now = Date.now }) {
       const oldFieldScopes = oldScopes.fields && typeof oldScopes.fields === 'object' ? oldScopes.fields : {};
       const scopes = { fields: {} };
       for (const [k, v] of Object.entries(person.fields)) {
-        if (Object.hasOwn(oldFields, k) && String(oldFields[k]) === v && Array.isArray(oldFieldScopes[k])) scopes.fields[k] = oldFieldScopes[k];
+        if (Object.hasOwn(oldFields, k) && clean(String(oldFields[k])) === v && Array.isArray(oldFieldScopes[k])) scopes.fields[k] = oldFieldScopes[k];
       }
-      if (person.note && person.note === entry.note && Array.isArray(oldScopes.note)) scopes.note = oldScopes.note;
+      if (person.note && person.note === clean(entry.note) && Array.isArray(oldScopes.note)) scopes.note = oldScopes.note;
       entry.scopes = scopes;
       for (const k of ['name', 'note']) { if (person[k]) entry[k] = person[k]; else delete entry[k]; }
       if (Object.keys(person.fields).length) entry.fields = person.fields; else delete entry.fields;

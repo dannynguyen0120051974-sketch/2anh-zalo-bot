@@ -1,17 +1,22 @@
-// Trí nhớ (spec §18.5): sổ người quen của bot (cả hai vai trò) và bộ nhớ của trợ lý Hermes (chỉ Quản trị).
+// Trí nhớ (spec §18.5) cho người không rành kỹ thuật: Sổ người quen thành THẺ NGƯỜI (thông tin dạng nhãn "Lớp: 12A1",
+// kèm nơi bot được dùng — Sổ người quen theo nơi ghi), bấm thẻ để sửa trong cửa sổ có nút gợi ý; bộ nhớ của trợ lý
+// (chỉ Quản trị) là danh sách câu thường, có nút thêm/sửa/xoá. Kho tri thức tự học ở cuối.
 import { useEffect, useState } from '../vendor/hooks.mjs';
 import { api } from '../api.js';
-import { html, fmtTime, Icon, Live, PageHead, Spinner } from '../ui.js';
+import { Dialog, html, fmtTime, Icon, Live, PageHead, Spinner } from '../ui.js';
 import { LearnedMemory } from './learned-memory.js';
 
-/** Bản nháp sửa hồ sơ: luôn có ít nhất một dòng "thông tin thêm" trống để gõ tiếp. */
+/** Gợi ý tên mục hay dùng — bấm là thêm dòng, khỏi nghĩ tên. */
+export const FIELD_PRESETS = ['Xưng hô', 'Chức vụ', 'Lớp', 'Môn dạy', 'Đơn vị', 'Sở thích', 'Ngày sinh'];
+
+/** Bản nháp sửa hồ sơ (không còn dòng trống thừa — thêm bằng nút). */
 export function personDraft(p) {
-  return { name: p?.name || '', note: p?.note || '', fields: [...(p?.fields || []), { key: '', value: '' }] };
+  return { name: p?.name || '', note: p?.note || '', fields: (p?.fields || []).map((f) => ({ key: f.key, value: f.value, places: f.places || [] })) };
 }
 
 /** Thân PUT /api/people/:uid — bỏ dòng thông tin thêm trống hoàn toàn. */
 export function personPayload(d, updatedAt) {
-  const out = { name: d.name, note: d.note, fields: d.fields.filter((f) => f.key.trim() || f.value.trim()) };
+  const out = { name: d.name, note: d.note, fields: d.fields.filter((f) => f.key.trim() || f.value.trim()).map(({ key, value }) => ({ key, value })) };
   if (updatedAt !== undefined) out.updatedAt = updatedAt;   // mốc sửa khách đã thấy: bot sửa sau đó thì server trả 409
   return out;
 }
@@ -22,102 +27,138 @@ export function usageText(used, limit) {
   return `${n.format(used)}/${n.format(limit)} ký tự (${limit ? Math.min(100, Math.round((used / limit) * 100)) : 0} %)`;
 }
 
-function PersonEditor({ person, onDone, onStale }) {
+/** Nhãn "dùng ở đâu" của một mục: danh sách nơi, rỗng = chỉ khi nhắn riêng với chính người đó. */
+export const placesText = (places) => (places && places.length ? places.join(', ') : 'Chỉ khi nhắn riêng');
+
+function PersonDialog({ person, onDone, onStale, onClose }) {
   const [d, setD] = useState(personDraft(person));
-  const [msg, setMsg] = useState({});
+  const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
-  const setField = (i, k, v) => { const fields = d.fields.map((f, j) => (j === i ? { ...f, [k]: v } : f)); if (i === fields.length - 1 && v) fields.push({ key: '', value: '' }); setD({ ...d, fields }); };
+  const original = JSON.stringify(personPayload(personDraft(person)));
+  const dirty = () => !busy && JSON.stringify(personPayload(d)) !== original;
+  // Đổi tên mục hoặc nội dung → mục đó thành "mới" (máy chủ bỏ nơi dùng cũ, chỉ còn nhắn riêng) — hiện đúng như vậy.
+  const setField = (i, patch) => setD({ ...d, fields: d.fields.map((f, j) => (j === i ? { ...f, ...patch, places: [] } : f)) });
+  const isOriginal = (f) => (person.fields || []).some((o) => o.key === f.key && o.value === f.value);
+  const addField = (key = '') => setD({ ...d, fields: [...d.fields, { key, value: '', places: [] }] });
   async function save(e) {
-    e.preventDefault(); setBusy(true); setMsg({});
-    try { await api(`/api/people/${person.uid}`, { method: 'PUT', body: personPayload(d, person.updatedAt ?? null) }); onDone('Đã lưu hồ sơ.'); } catch (err) { if (err.status === 409) onStale(err.message); else setMsg({ error: err.message }); } finally { setBusy(false); }
+    e.preventDefault(); setBusy(true); setMsg('');
+    try { await api(`/api/people/${person.uid}`, { method: 'PUT', body: personPayload(d, person.updatedAt ?? null) }); onDone('Đã lưu hồ sơ.'); } catch (err) { if (err.status === 409) onStale(err.message); else { setMsg(err.message); setBusy(false); } }
   }
   async function remove() {
     if (!confirm(`Xoá hồ sơ của ${person.name || person.uid}? Bot sẽ không còn nhớ người này.`)) return;
-    setBusy(true); setMsg({});
-    try { await api(`/api/people/${person.uid}`, { method: 'DELETE', body: { updatedAt: person.updatedAt ?? null } }); onDone('Đã xoá hồ sơ.'); } catch (err) { if (err.status === 409) onStale(err.message); else { setMsg({ error: err.message }); setBusy(false); } }
+    setBusy(true); setMsg('');
+    try { await api(`/api/people/${person.uid}`, { method: 'DELETE', body: { updatedAt: person.updatedAt ?? null } }); onDone('Đã xoá hồ sơ.'); } catch (err) { if (err.status === 409) onStale(err.message); else { setMsg(err.message); setBusy(false); } }
   }
-  return html`<form class="mem-editor" onSubmit=${save} novalidate>
-    <div class="field"><label for=${`pn-${person.uid}`}>Tên gọi</label>
-      <input id=${`pn-${person.uid}`} maxlength="80" value=${d.name} onInput=${(e) => setD({ ...d, name: e.currentTarget.value })} /></div>
-    <div class="field"><label for=${`pt-${person.uid}`}>Ghi chú</label>
-      <textarea id=${`pt-${person.uid}`} maxlength="400" rows="2" value=${d.note} onInput=${(e) => setD({ ...d, note: e.currentTarget.value })}></textarea></div>
-    <fieldset class="field"><legend>Thông tin thêm (tối đa 12 mục)</legend>
-      ${d.fields.map((f, i) => html`<div class="mem-field" key=${i}>
-        <input aria-label="Tên mục" placeholder="vd. môn dạy" maxlength="40" value=${f.key} onInput=${(e) => setField(i, 'key', e.currentTarget.value)} />
-        <input aria-label="Nội dung" placeholder="vd. Hoá học" maxlength="120" value=${f.value} onInput=${(e) => setField(i, 'value', e.currentTarget.value)} />
-      </div>`)}
-    </fieldset>
-    <${Live} error=${msg.error} />
-    <div class="row form-end">
-      <button class="btn btn-primary" disabled=${busy}>${busy ? 'Đang lưu…' : 'Lưu'}</button>
-      <button type="button" class="btn btn-secondary" disabled=${busy} onClick=${() => onDone('')}>Huỷ</button>
-      <button type="button" class="btn btn-danger-outline" disabled=${busy} onClick=${remove}>Xoá hồ sơ</button>
-    </div>
-  </form>`;
+  const used = new Set(d.fields.map((f) => f.key.trim().toLowerCase()));
+  const presets = FIELD_PRESETS.filter((p) => !used.has(p.toLowerCase()));
+  return html`<${Dialog} title=${person.name || 'Hồ sơ'} onClose=${onClose} dirty=${dirty} wide>
+    <form class="stack" onSubmit=${save} novalidate>
+      <label class="field"><span>Tên gọi</span><input maxlength="80" value=${d.name} placeholder="Ví dụ: Cô Lan" onInput=${(e) => setD({ ...d, name: e.currentTarget.value })} /></label>
+      <label class="field"><span>Ghi chú</span><textarea maxlength="400" rows="2" value=${d.note} placeholder="Ví dụ: Giáo viên chủ nhiệm 12A1, thích được gọi là cô" onInput=${(e) => setD({ ...d, note: e.currentTarget.value })}></textarea>
+        ${person.note && d.note === person.note ? html`<small class="muted">Bot dùng ghi chú ở: ${placesText(person.notePlaces)}</small>`
+          : d.note ? html`<small class="muted">Ghi chú mới: chỉ dùng khi nhắn riêng với người này.</small>` : null}</label>
+      <fieldset class="field"><legend>Thông tin thêm <small class="muted">(tối đa 12)</small></legend>
+        ${d.fields.length ? null : html`<p class="muted small">Chưa có — bấm một gợi ý bên dưới để thêm.</p>`}
+        ${d.fields.map((f, i) => html`<div class="mem-field" key=${i}>
+          <input aria-label="Tên mục" placeholder="Tên mục" maxlength="40" value=${f.key} onInput=${(e) => setField(i, { key: e.currentTarget.value })} />
+          <input aria-label=${`Nội dung ${f.key || 'mục'}`} placeholder="Nội dung" maxlength="120" value=${f.value} onInput=${(e) => setField(i, { value: e.currentTarget.value })} />
+          <button type="button" class="btn btn-ghost btn-sm" aria-label=${`Bỏ ${f.key || 'mục này'}`} onClick=${() => setD({ ...d, fields: d.fields.filter((_, j) => j !== i) })}><${Icon} name="close" size=${14} /></button>
+          ${f.key || f.value ? html`<small class="muted mem-place">${isOriginal(f) ? `Dùng ở: ${placesText(f.places)}` : 'Mục mới/đã sửa: chỉ dùng khi nhắn riêng với người này'}</small>` : null}
+        </div>`)}
+        ${d.fields.length < 12 ? html`<div class="chips">${presets.map((p) => html`<button type="button" key=${p} class="btn btn-secondary btn-sm chip" onClick=${() => addField(p)}><${Icon} name="plus" size=${12} /> ${p}</button>`)}
+          <button type="button" class="btn btn-secondary btn-sm chip" onClick=${() => addField('')}><${Icon} name="plus" size=${12} /> Mục khác</button></div>` : null}
+      </fieldset>
+      <p class="muted small">Sửa lần cuối ${fmtTime(person.updatedAt)}${person.updatedBy.startsWith('dashboard:') ? ` trên dashboard (${person.updatedBy.slice(10)})` : ' bởi bot'}. Điều nói ở nhóm nào chỉ được bot dùng lại ở nhóm đó và khi nhắn riêng với chính người này.</p>
+      <${Live} error=${msg} />
+      <div class="dialog-actions">
+        <button class="btn btn-primary" disabled=${busy}>${busy ? 'Đang lưu…' : 'Lưu'}</button>
+        <button type="button" class="btn btn-danger-outline" disabled=${busy} onClick=${remove}>Xoá hồ sơ</button>
+      </div>
+    </form>
+  <//>`;
 }
 
 function People() {
   const [q, setQ] = useState('');
   const [data, setData] = useState(null);
   const [msg, setMsg] = useState({});
-  const [open, setOpen] = useState('');
+  const [open, setOpen] = useState(null);
   const load = () => api(`/api/people?${new URLSearchParams({ q })}`).then((r) => setData(r)).catch((e) => setMsg({ error: e.message }));
   useEffect(() => { const id = setTimeout(load, 250); return () => clearTimeout(id); }, [q]);
-  const done = (text) => { setOpen(''); setMsg(text ? { ok: text } : {}); load(); };
-  const stale = (text) => { setOpen(''); setMsg({ error: text }); load(); };   // bot vừa sửa hồ sơ: đóng form, tải lại danh sách
+  const done = (text) => { setOpen(null); setMsg(text ? { ok: text } : {}); load(); };
+  const stale = (text) => { setOpen(null); setMsg({ error: text }); load(); };   // bot vừa sửa hồ sơ: đóng cửa sổ, tải lại
   return html`<section class="card">
-    <h2>Sổ người quen</h2>
-    <p class="muted small">Bot tự ghi khi được dặn "nhớ giúp…" (tự khai — không dùng để cấp quyền). Sửa ở đây có hiệu lực ngay từ tin nhắn sau.</p>
-    <div class="toolbar"><label class="sr-only" for="people-q">Tìm hồ sơ</label>
-      <input id="people-q" type="search" placeholder="Tìm theo tên, ghi chú, UID…" value=${q} onInput=${(e) => setQ(e.currentTarget.value)} />
-      ${data ? html`<small class="muted">${data.total} hồ sơ</small>` : null}</div>
+    <div class="toolbar"><h2>Sổ người quen</h2>
+      <label class="sr-only" for="people-q">Tìm hồ sơ</label>
+      <input id="people-q" type="search" placeholder="Tìm theo tên, lớp, chức vụ…" value=${q} onInput=${(e) => setQ(e.currentTarget.value)} />
+      ${data ? html`<small class="muted">${data.total} người</small>` : null}</div>
+    <p class="muted small">Bot tự ghi khi được dặn "nhớ giúp…" (lời tự khai — không dùng để cấp quyền). Bấm vào thẻ để sửa; có hiệu lực từ tin nhắn sau.</p>
     <${Live} error=${msg.error} ok=${msg.ok} />
     ${!data && !msg.error ? html`<${Spinner} />` : null}
-    ${data && !data.people.length ? html`<p class="muted">${data.total ? 'Không có hồ sơ nào khớp.' : 'Bot chưa nhớ ai.'}</p>` : null}
-    <ul class="row-list">${(data?.people || []).map((p) => html`<li key=${p.uid} class="row-item">
-      <span class="row-main"><strong>${p.name || 'Chưa rõ tên'}</strong><small class="muted mono">${p.uid}</small>
-        ${p.note ? html`<small>${p.note}</small>` : null}
-        ${p.fields.length ? html`<small class="muted">${p.fields.map((f) => `${f.key}: ${f.value}`).join(' · ')}</small>` : null}
-        <small class="muted">Sửa lần cuối ${fmtTime(p.updatedAt)}${p.updatedBy.startsWith('dashboard:') ? ` trên dashboard (${p.updatedBy.slice(10)})` : ''}</small></span>
-      <button type="button" class="btn btn-secondary btn-sm" aria-expanded=${open === p.uid ? 'true' : 'false'} onClick=${() => setOpen(open === p.uid ? '' : p.uid)}>Sửa</button>
-      ${open === p.uid ? html`<${PersonEditor} person=${p} onDone=${done} onStale=${stale} />` : null}
-    </li>`)}</ul>
+    ${data && !data.people.length ? html`<p class="muted">${data.total ? 'Không có ai khớp.' : 'Bot chưa nhớ ai.'}</p>` : null}
+    <div class="person-grid">${(data?.people || []).map((p) => html`<button type="button" key=${p.uid} class="person-card" onClick=${() => setOpen(p)}>
+      <strong>${p.name || 'Chưa rõ tên'}</strong>
+      ${p.note ? html`<span class="person-note">${p.note}</span>` : null}
+      ${p.fields.length ? html`<span class="chips">${p.fields.slice(0, 6).map((f) => html`<span key=${f.key} class="tag" title=${`Dùng ở: ${placesText(f.places)}`}>${f.key}: ${f.value}</span>`)}${p.fields.length > 6 ? html`<span class="tag">+${p.fields.length - 6}</span>` : null}</span>` : null}
+      <small class="muted">Sửa ${fmtTime(p.updatedAt)}</small>
+    </button>`)}</div>
+    ${open ? html`<${PersonDialog} person=${open} onDone=${done} onStale=${stale} onClose=${() => setOpen(null)} />` : null}
   </section>`;
 }
 
-function AgentEntry({ target, index, text, onSaved }) {
-  const [edit, setEdit] = useState(null);
-  const [msg, setMsg] = useState('');
-  async function run(method, body) {
-    setMsg('');
-    try { onSaved(await api(`/api/admin/agent-memory/${target}/${index}`, { method, body })); setEdit(null); } catch (e) { setMsg(e.message); }
+/** Cửa sổ thêm/sửa một điều trợ lý cần nhớ. */
+function EntryDialog({ target, label, entry, onSaved, onClose }) {
+  const [text, setText] = useState(entry?.text || '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function save(e) {
+    e.preventDefault(); setBusy(true); setError('');
+    try {
+      const r = entry ? await api(`/api/admin/agent-memory/${target}/${entry.index}`, { method: 'PUT', body: { old: entry.text, text } })
+        : await api(`/api/admin/agent-memory/${target}`, { method: 'POST', body: { text } });
+      onSaved(r, entry ? 'Đã lưu.' : 'Đã thêm.');
+    } catch (err) { setError(err.message); setBusy(false); }
   }
-  return html`<li class="row-item">
-    ${edit === null ? html`<span class="row-main mem-text">${text}</span>
-      <button type="button" class="btn btn-secondary btn-sm" onClick=${() => setEdit(text)}>Sửa</button>
-      <button type="button" class="btn btn-secondary btn-sm" onClick=${() => confirm('Xoá mục này khỏi bộ nhớ của trợ lý?') && run('DELETE', { old: text })}>Xoá</button>`
-    : html`<span class="row-main"><label class="sr-only" for=${`am-${target}-${index}`}>Nội dung mục</label>
-      <textarea id=${`am-${target}-${index}`} rows="3" value=${edit} onInput=${(e) => setEdit(e.currentTarget.value)}></textarea></span>
-      <button type="button" class="btn btn-primary btn-sm" onClick=${() => run('PUT', { old: text, text: edit })}>Lưu</button>
-      <button type="button" class="btn btn-secondary btn-sm" onClick=${() => setEdit(null)}>Huỷ</button>`}
-    ${msg ? html`<p class="dm-add-error" role="alert">${msg}</p>` : null}
-  </li>`;
+  async function remove() {
+    if (!confirm('Xoá điều này khỏi bộ nhớ của trợ lý?')) return;
+    setBusy(true); setError('');
+    try { onSaved(await api(`/api/admin/agent-memory/${target}/${entry.index}`, { method: 'DELETE', body: { old: entry.text } }), 'Đã xoá.'); } catch (err) { setError(err.message); setBusy(false); }
+  }
+  return html`<${Dialog} title=${entry ? `Sửa — ${label}` : `Thêm vào ${label}`} onClose=${onClose} dirty=${() => !busy && text !== (entry?.text || '')} wide>
+    <form class="stack" onSubmit=${save}>
+      <label class="field"><span>Điều trợ lý cần nhớ</span>
+        <textarea rows="5" required value=${text} placeholder="Ví dụ: Chủ nhân dạy Hoá, thích câu trả lời ngắn gọn có gạch đầu dòng." onInput=${(e) => setText(e.currentTarget.value)}></textarea>
+        <small class="muted">Viết như dặn một người trợ lý: một ý, rõ ràng. Áp dụng từ phiên trò chuyện mới.</small></label>
+      <${Live} error=${error} />
+      <div class="dialog-actions">
+        <button class="btn btn-primary" disabled=${busy || !text.trim()}>${busy ? 'Đang lưu…' : entry ? 'Lưu' : 'Thêm'}</button>
+        ${entry ? html`<button type="button" class="btn btn-danger-outline" disabled=${busy} onClick=${remove}>Xoá</button>` : null}
+      </div>
+    </form>
+  <//>`;
 }
 
 function AgentMemory() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
+  const [ok, setOk] = useState('');
+  const [open, setOpen] = useState(null); // { target, entry|null }
   useEffect(() => { api('/api/admin/agent-memory').then(setData).catch((e) => setError(e.message)); }, []);
+  const saved = (r, text) => { setData(r); setOpen(null); setOk(text); };
   return html`<section class="card">
     <h2>Bộ nhớ của trợ lý <span class="badge">Quản trị</span></h2>
-    <p class="muted small">Trợ lý tự ghi những điều cần nhớ lâu dài. Sửa ở đây áp dụng từ phiên trò chuyện mới.</p>
-    <${Live} error=${error} />
+    <p class="muted small">Những điều trợ lý luôn nhớ ở mọi cuộc trò chuyện. Bấm một dòng để sửa hoặc xoá.</p>
+    <${Live} error=${error} ok=${ok} />
     ${!data && !error ? html`<${Spinner} />` : null}
-    ${data ? ['memory', 'user'].map((t) => html`<div key=${t} class="mem-block">
-      <h3>${data[t].label} <small class="muted">${usageText(data[t].used, data[t].limit)}</small></h3>
-      ${data[t].entries.length ? null : html`<p class="muted">Chưa có mục nào.</p>`}
-      <ul class="row-list">${data[t].entries.map((text, i) => html`<${AgentEntry} key=${`${t}-${i}-${text.length}`} target=${t} index=${i} text=${text} onSaved=${setData} />`)}</ul>
+    ${data ? ['user', 'memory'].map((t) => html`<div key=${t} class="mem-block">
+      <div class="toolbar"><h3>${data[t].label} <small class="muted">${usageText(data[t].used, data[t].limit)}</small></h3>
+        <button type="button" class="btn btn-secondary btn-sm" onClick=${() => setOpen({ target: t, entry: null })}><${Icon} name="plus" size=${14} /> Thêm điều cần nhớ</button></div>
+      <progress class="mem-usage" max=${data[t].limit} value=${Math.min(data[t].used, data[t].limit)} aria-label=${`Dung lượng ${data[t].label}`}></progress>
+      ${data[t].entries.length ? null : html`<p class="muted">Chưa có điều nào.</p>`}
+      <ul class="mem-list">${data[t].entries.map((text, i) => html`<li key=${`${t}-${i}-${text.length}`}>
+        <button type="button" class="mem-line" onClick=${() => setOpen({ target: t, entry: { index: i, text } })}>${text}</button></li>`)}</ul>
     </div>`) : null}
+    ${open ? html`<${EntryDialog} target=${open.target} label=${data[open.target].label} entry=${open.entry} onSaved=${saved} onClose=${() => setOpen(null)} />` : null}
   </section>`;
 }
 

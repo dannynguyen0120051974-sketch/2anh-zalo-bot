@@ -799,11 +799,15 @@ test('Liên hệ: nhãn nguồn theo thứ tự chủ nhân → bạn bè → nh
   assert.match(readFileSync(join(root, 'views', 'contacts.js'), 'utf8'), /class="btn btn-secondary btn-sm chip"/);
 });
 
-test('Trí nhớ: bản nháp hồ sơ luôn có dòng trống, thân gửi bỏ dòng trống; chữ dung lượng bộ nhớ', async () => {
-  const { personDraft, personPayload, usageText } = await import('./views/memory.js');
-  const d = personDraft({ name: 'Lan', note: '', fields: [{ key: 'môn', value: 'Hoá' }] });
-  assert.deepEqual(d.fields, [{ key: 'môn', value: 'Hoá' }, { key: '', value: '' }]);
+test('Trí nhớ: bản nháp hồ sơ giữ nơi dùng, thân gửi bỏ dòng trống và nơi dùng; chữ dung lượng bộ nhớ', async () => {
+  const { personDraft, personPayload, usageText, placesText, FIELD_PRESETS } = await import('./views/memory.js');
+  const d = personDraft({ name: 'Lan', note: '', fields: [{ key: 'môn', value: 'Hoá', places: ['Nhóm Đoàn'] }] });
+  assert.deepEqual(d.fields, [{ key: 'môn', value: 'Hoá', places: ['Nhóm Đoàn'] }]);
+  d.fields.push({ key: '', value: '', places: [] });
   assert.deepEqual(personPayload(d), { name: 'Lan', note: '', fields: [{ key: 'môn', value: 'Hoá' }] });
+  assert.equal(placesText([]), 'Chỉ khi nhắn riêng');
+  assert.equal(placesText(['Nhóm Đoàn', 'Nhắn riêng']), 'Nhóm Đoàn, Nhắn riêng');
+  assert.ok(FIELD_PRESETS.includes('Chức vụ'));
   assert.equal(personPayload(d, 1234).updatedAt, 1234, 'gửi mốc sửa khách đã thấy');
   assert.equal(personPayload(d, null).updatedAt, null);
   assert.equal(usageText(1100, 2200), '1.100/2.200 ký tự (50 %)');
@@ -937,4 +941,15 @@ test('Kho tri thức tự học: nhãn nhóm/người (có chủ nhân), tên m�
   assert.equal(entryLabel('viking://user/zalo-g-1/memories/events/mem_ab12.md'), 'mem_ab12');
   const { intervalText } = await import('./views/learned-memory.js');
   assert.deepEqual([intervalText(120), intervalText(45), intervalText(1440)], ['120 phút (2 giờ)', '45 phút', '1440 phút (24 giờ)']);
+});
+
+test('Lịch hẹn: thêm giờ cùng số phút không trùng; việc một lần đã qua bị chặn', async () => {
+  const { nextTime, pastProblem } = await import('./views/schedules.js');
+  assert.equal(nextTime(['08:30']), '09:30');
+  assert.equal(nextTime(['08:00', '09:00']), '10:00');
+  assert.equal(nextTime(['23:15']), '00:15');
+  const now = Date.parse('2026-10-09T15:00:00+07:00');
+  assert.match(pastProblem({ repeat: 'once', date: '2026-10-09', times: ['14:59'] }, now), /đã qua/);
+  assert.equal(pastProblem({ repeat: 'once', date: '2026-10-09', times: ['15:01'] }, now), '');
+  assert.equal(pastProblem({ repeat: 'daily', times: ['01:00'] }, now), '');
 });
