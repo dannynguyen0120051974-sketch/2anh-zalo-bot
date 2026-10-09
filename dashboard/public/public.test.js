@@ -435,7 +435,7 @@ test('thanh điều hướng điện thoại: 4 mục chính + "Thêm" theo vai 
   const admin = navSplit('admin', '/audit', { secondBrain: true });
   assert.deepEqual(admin.primary.map((i) => [i.path, i.short]), [['/', 'Tổng quan'], ['/chats', 'Phiên chat'], ['/zalo', 'Zalo'], ['/permissions', 'Phân quyền']]);
   assert.deepEqual(admin.more.map((i) => i.path), ['/contacts', '/schedules', '/memory', '/kb', '/insight', '/second-brain', '/mcp',
-    '/agent', '/tools', '/audit', '/brand', '/health', '/settings', '/users', '/owners', '/alerts', '/profile']);
+    '/agent', '/ai', '/tools', '/audit', '/brand', '/health', '/settings', '/users', '/owners', '/alerts', '/profile']);
   assert.equal(admin.activeMore.text, 'Nhật ký');
   const owner = navSplit('owner', '/', { secondBrain: true });
   assert.equal(owner.primary.length, 4);
@@ -755,7 +755,7 @@ test('thanh bên: 5 nhóm theo mẫu; Second brain chỉ Quản trị và chỉ 
   assert.deepEqual(admin.map((g) => g.label), ['Tổng quan', 'Hội thoại', 'Dữ liệu', 'Hệ thống', 'Quản trị']);
   assert.deepEqual(admin[1].items.map((i) => i.text), ['Phiên chat', 'Liên hệ', 'Phân quyền Bot', 'Lịch hẹn']);
   assert.deepEqual(admin[2].items.map((i) => i.text), ['Trí nhớ', 'Kho tri thức', 'Insight nhóm', 'Second brain', 'Kết nối MCP']);
-  assert.deepEqual(admin[3].items.map((i) => i.text), ['Tài khoản Zalo', 'Agent', 'Công cụ', 'Nhật ký', 'Thương hiệu', 'Sức khoẻ máy chủ', 'Cấu hình']);
+  assert.deepEqual(admin[3].items.map((i) => i.text), ['Tài khoản Zalo', 'Agent', 'Khoá API & Model', 'Công cụ', 'Nhật ký', 'Thương hiệu', 'Sức khoẻ máy chủ', 'Cấu hình']);
   const owner = visibleGroups('owner', { secondBrain: true });
   assert.deepEqual(owner.map((g) => g.label), ['Tổng quan', 'Hội thoại', 'Dữ liệu', 'Hệ thống']);
   assert.ok(!owner.flatMap((g) => g.items).some((i) => i.admin), 'Chủ bot không thấy mục admin nào');

@@ -856,3 +856,14 @@ button.flow-node:hover { border-color: var(--brand); }
   .flow-edge { width: 2px; height: 16px; margin: 0 auto; }
   .flow-edge::after { right: -4px; top: auto; bottom: -2px; border: 5px solid transparent; border-top: 7px solid var(--muted); border-bottom: 0; }
 }
+
+/* Khoá API & Model: thẻ theo chức năng, kết quả Thử/Kiểm tra. */
+.ai-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; margin-top: 10px; }
+.ai-card { display: flex; flex-direction: column; gap: 4px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); }
+.ai-card h3 { margin: 0; font-size: 14px; color: var(--muted); }
+.ai-card .field { margin: 6px 0 0; }
+.ai-model { margin: 0; font-size: 16px; font-weight: 700; overflow-wrap: anywhere; }
+.ai-result { margin: 4px 0 0; padding: 6px 10px; border-radius: 8px; font-size: 13px; }
+.ai-result.is-ok { background: var(--ok-soft); color: var(--ok); }
+.ai-result.is-bad { background: var(--danger-soft); color: var(--danger); }
+.row-full { flex: 1 1 100%; }

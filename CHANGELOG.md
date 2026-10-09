@@ -2,6 +2,14 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [2.6.0] — 2026-10-09
+
+### Thêm
+- **Trang "Khoá API & Model"** (Hệ thống, chỉ Quản trị):
+  - **Model AI**: mỗi chức năng dùng AI một thẻ — Trò chuyện chính, Dự phòng, Giọng đọc, Nghe giọng nói, Tạo ảnh, Ảnh cho xưởng, Trí nhớ tự học (OpenViking) — model gì, qua đâu; nút **Thử** gửi một câu ngắn và báo thời gian. Đổi model chính ngay tại đây (danh sách lấy từ cổng AI, gồm combo) — chuyển từ trang Agent sang.
+  - **Khoá API**: mỗi khoá dịch vụ một dòng (Tra web Tavily/Exa, CORE, Gemini, Vbee, Apify, Telegram, Discord, cổng AI chính…) — dùng cho tính năng nào, đã đặt chưa (chỉ 4 ký tự cuối), **Kiểm tra** (gọi thử dịch vụ), **Thay khoá / Gỡ khoá / Thêm khoá dịch vụ**. Khoá cũ không bao giờ hiện ra; Nhật ký chỉ ghi tên khoá; ghi .env / config.yaml có .bak; nhắc khởi động lại trợ lý.
+- Trang Agent chỉ còn mức suy nghĩ và tính cách.
+
 ## [2.5.0] — 2026-10-09
 
 ### Thêm

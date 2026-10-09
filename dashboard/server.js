@@ -34,6 +34,8 @@ import { createSchedules, hermesBin } from './lib/schedules.js';
 import { createKbStore } from './lib/kb-store.js';
 import { createInsightAi } from './lib/insight-ai.js';
 import { createAgentConfig, createSoul } from './lib/agent-config.js';
+import { createAiKeys } from './lib/ai-keys.js';
+import { createAiModels } from './lib/ai-models.js';
 import { createAgentTrace } from './lib/agent-trace.js';
 import { createMcpServers } from './lib/mcp-servers.js';
 import { createSettings } from './lib/settings.js';
@@ -109,6 +111,8 @@ export function buildDeps({ env = process.env, sidecarRoot = join(here, '..'), i
       allowedRoots: () => readEnvKey(paths.hermesEnvFile, 'ZALO_KB_ALLOWED_ROOTS'), envFile: paths.hermesEnvFile }),
     insightAi: createInsightAi({ dir: paths.insightDir }),
     agentConfig: createAgentConfig({ configFile: paths.hermesConfigFile, envValue: (k) => readEnvKey(paths.hermesEnvFile, k) }),
+    aiKeys: createAiKeys({ envFile: paths.hermesEnvFile, configFile: paths.hermesConfigFile }),
+    aiModels: createAiModels({ configFile: paths.hermesConfigFile, envValue: (k) => readEnvKey(paths.hermesEnvFile, k) }),
     soul: createSoul({ hermesHome: paths.hermesHome, historyDir: paths.soulHistoryDir }),
     toolsManifestFile: paths.toolsManifestFile,
     agentTrace: createAgentTrace({ dbPath: paths.hermesStateDb }),

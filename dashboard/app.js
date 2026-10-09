@@ -22,6 +22,7 @@ import { scheduleRoutes } from './routes/schedules.js';
 import { kbRoutes } from './routes/kb.js';
 import { insightRoutes } from './routes/insight.js';
 import { agentRoutes } from './routes/agent.js';
+import { aiConfigRoutes } from './routes/ai-config.js';
 import { toolRoutes } from './routes/tools.js';
 import { traceRoutes } from './routes/trace.js';
 import { mcpRoutes } from './routes/mcp.js';
@@ -54,6 +55,7 @@ export function createDashboardApp(deps) {
   if (deps.secondBrain) app.use('/api', secondBrainRoutes(deps));
   if (deps.learnedMemory) app.use('/api', learnedMemoryRoutes(deps));
   if (deps.agentConfig && deps.soul) app.use('/api', agentRoutes(deps));
+  if (deps.aiKeys && deps.aiModels && deps.agentConfig) app.use('/api', aiConfigRoutes(deps));
   if (deps.toolsManifestFile) app.use('/api', toolRoutes(deps));
   if (deps.agentTrace) app.use('/api', traceRoutes(deps));
   if (deps.mcpServers) app.use('/api', mcpRoutes(deps));

@@ -16,8 +16,6 @@ export function modelOptions({ current, choices, all, q }) {
 
 export function Agent() {
   const [data, setData] = useState(null);
-  const [models, setModels] = useState([]);
-  const [q, setQ] = useState('');
   const [soul, setSoul] = useState('');
   const [msg, setMsg] = useState({});
   const [busy, setBusy] = useState('');
@@ -26,28 +24,19 @@ export function Agent() {
   const take = (r) => { setData(r); setSoul(r.soul.text); setVersion((v) => v + 1); };
   useEffect(() => {
     api('/api/admin/agent').then(take).catch((e) => setMsg({ error: e.message }));
-    api('/api/admin/agent/models').then((r) => setModels(r.models)).catch(() => {});
   }, []);
   async function run(key, path, body, ok) {
     setBusy(key); setMsg({});
     try { take(await api(path, { method: key === 'restore' ? 'POST' : 'PUT', body })); setMsg({ ok }); } catch (e) { setMsg({ error: e.message }); } finally { setBusy(''); }
   }
-  const head = html`<${PageHead} title="Agent" sub="Bộ não của bot: model AI, mức suy nghĩ và tính cách. Chỉ Quản trị." />`;
+  const head = html`<${PageHead} title="Agent" sub="Bot suy nghĩ kỹ đến đâu và tính cách ra sao. Chỉ Quản trị." />`;
   if (!data) return html`${head}<${Live} error=${msg.error} />${msg.error ? null : html`<${Spinner} />`}`;
   const dirty = soul !== data.soul.text;
   return html`${head}<${RestartBanner} version=${version} />
     <${Live} error=${msg.error} ok=${msg.ok} />
     <section class="card">
-      <h2>Model</h2>
-      <p class="muted small">Cổng AI: <span class="mono">${data.endpoint || 'chưa đặt'}</span>. Đổi model có hiệu lực từ tin nhắn tiếp theo ở mọi nhóm (giống lệnh /model trong Zalo).</p>
-      <div class="toolbar">
-        <label class="sr-only" for="ag-q">Lọc model</label>
-        <input id="ag-q" type="search" placeholder="Lọc model, vd. gemini" value=${q} onInput=${(e) => setQ(e.currentTarget.value)} />
-        <label class="sr-only" for="ag-model">Model</label>
-        <select id="ag-model" value=${data.model} disabled=${busy !== ''} onChange=${(e) => run('model', '/api/admin/agent/model', { model: e.currentTarget.value }, 'Đã đổi model.')}>
-          ${modelOptions({ current: data.model, choices: data.choices, all: models, q }).map((m) => html`<option key=${m} value=${m}>${m}${m === data.defaultModel ? ' (mặc định)' : ''}</option>`)}
-        </select>
-      </div>
+      <h2>Mức suy nghĩ</h2>
+      <p class="muted small">Model AI và khoá dịch vụ nằm ở trang <a href="#/ai">Khoá API &amp; Model</a>.</p>
       <div class="field"><label for="ag-reason">Mức suy nghĩ</label>
         <select id="ag-reason" value=${data.reasoning} disabled=${busy !== ''} onChange=${(e) => run('reason', '/api/admin/agent/reasoning', { value: e.currentTarget.value }, 'Đã lưu — khởi động lại trợ lý để áp dụng.')}>
           ${data.reasoningChoices.map((v) => html`<option key=${v} value=${v}>${REASONING_LABELS[v] || v}</option>`)}</select>

@@ -8,6 +8,7 @@ import { Alerts } from './alerts.js';
 import { Profile } from './profile.js';
 import { Chats } from './chats.js';
 import { Audit, AuditAi } from './audit.js';
+import { Ai } from './ai.js';
 import { Permissions } from './permissions.js';
 import { Brand } from './brand.js';
 import { Owners } from './owners.js';
@@ -45,6 +46,7 @@ const ROUTES = {
   '/second-brain': { view: SecondBrain, admin: true },
   '/mcp': { view: Mcp, admin: true },
   '/agent': { view: Agent, admin: true },
+  '/ai': { view: Ai, admin: true },
   '/tools': { view: Tools, admin: true },
   '/trace': { view: AuditAi, admin: true }, // đường cũ Theo dõi agent → Nhật ký › Hoạt động AI
   '/settings': { view: Settings, admin: true },
@@ -69,6 +71,7 @@ export const GROUPS = [
   { label: 'Hệ thống', items: [
     { path: '/zalo', text: 'Tài khoản Zalo', icon: 'phone' },
     { path: '/agent', text: 'Agent', icon: 'bot', admin: true },
+    { path: '/ai', text: 'Khoá API & Model', icon: 'key', admin: true },
     { path: '/tools', text: 'Công cụ', icon: 'tool', admin: true },
     { path: '/audit', text: 'Nhật ký', icon: 'list' },
     { path: '/brand', text: 'Thương hiệu', icon: 'image' },
@@ -140,7 +143,7 @@ function StatusStrip({ status, error, path }) {
 
 // Thanh điều hướng điện thoại: 4 mục chính luôn hiện, còn lại trong "Thêm ▾".
 export const MOBILE_PRIMARY = ['/', '/chats', '/zalo', '/permissions'];
-const SHORT = { '/second-brain': 'Second brain', '/mcp': 'MCP', '/zalo': 'Zalo', '/permissions': 'Phân quyền', '/health': 'Sức khoẻ', '/alerts': 'Cảnh báo', '/owners': 'Chủ nhân', '/profile': 'Tài khoản' };
+const SHORT = { '/ai': 'Khoá & Model', '/second-brain': 'Second brain', '/mcp': 'MCP', '/zalo': 'Zalo', '/permissions': 'Phân quyền', '/health': 'Sức khoẻ', '/alerts': 'Cảnh báo', '/owners': 'Chủ nhân', '/profile': 'Tài khoản' };
 
 /**
  * Nhóm thanh bên vai trò này thấy: bỏ nhóm/mục `admin` với Chủ bot, bỏ mục có `feature` đang tắt

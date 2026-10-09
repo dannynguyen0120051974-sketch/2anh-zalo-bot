@@ -23,7 +23,7 @@ export const READ_ONLY_KEYS = new Set([
   'ZALO_PEOPLE_FILE', 'ZALO_KB_DIR', 'ZALO_KB_PUBLIC_DIRS', 'ZALO_KB_ALLOWED_ROOTS',
   'ZALO_SECOND_BRAIN_URL', 'OPENVIKING_ACCOUNT', 'OPENVIKING_USER', 'OPENVIKING_API_KEY',
   // Giai đoạn 7B: danh sách model chọn nhanh của lệnh /model, công cụ MCP mở cho thành viên.
-  'ZALO_MODEL_CHOICES', 'ZALO_MODEL_DEFAULT', 'ZALO_PUBLIC_MCP',
+  'ZALO_MODEL_CHOICES', 'ZALO_MODEL_DEFAULT', 'ZALO_PUBLIC_MCP', 'ZALO_STUDIO_IMAGE_URL',
   // Giai đoạn 8: Kho tri thức tự học gọi OpenViking của provider zalo_memory.
   'OPENVIKING_ENDPOINT',
 ]);
@@ -64,6 +64,30 @@ export function writeEnvKeys(link, values) {
     }
     rendered.set(key, BARE_VALUE.test(value) ? value : `"${value}"`);
   }
+  writeRendered(link, rendered);
+}
+
+// Khoá bí mật (trang Khoá API & Model): tên như dịch vụ đặt (…_API_KEY, …_TOKEN, …_SECRET), KHÔNG phải khoá hệ thống
+// của bot (ZALO_*, HERMES_*); giá trị chỉ gồm ký tự an toàn — không khoảng trắng, nháy, \, #, xuống dòng — nên không
+// chèn được dòng/khoá khác. Rỗng = gỡ khoá. Không bao giờ trả giá trị ra trình duyệt.
+export const SECRET_NAME = /^(?!ZALO_|HERMES_)[A-Z][A-Z0-9_]{1,63}(_API_KEY|_KEY|_TOKEN|_SECRET)$/;
+export const SECRET_VALUE = /^[A-Za-z0-9_\-.:/+=~]{8,512}$/;
+
+/** Mọi khoá trong .env (tên → giá trị) — CHỈ dùng phía máy chủ để biết đã đặt chưa / gọi kiểm tra. */
+export function readEnvAll(file) {
+  if (!existsSync(file)) return {};
+  try { return parseEnv(readFileSync(file, 'utf8').replace(/^﻿/, '')); } catch { return {}; }
+}
+
+/** Đặt (hoặc gỡ, khi `value` rỗng) một khoá bí mật; có .bak như mọi lần ghi .env. */
+export function writeSecretEnvKey(link, key, value) {
+  if (!SECRET_NAME.test(String(key))) throw new Error('env-file: tên khoá bí mật không hợp lệ');
+  const v = String(value ?? '');
+  if (v && !SECRET_VALUE.test(v)) throw new Error('env-file: khoá có ký tự không cho phép');
+  writeRendered(link, new Map([[key, !v || BARE_VALUE.test(v) ? v : `"${v}"`]]));
+}
+
+function writeRendered(link, rendered) {
   // .env là symlink thì ghi vào tệp đích, không thay symlink bằng tệp thường.
   let file = link;
   try { file = realpathSync(link); } catch { /* chưa có tệp */ }

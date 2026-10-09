@@ -47,6 +47,8 @@ export const ACTION_LABELS = {
   people_delete: 'Xoá người khỏi sổ người quen',
   agent_memory_edit: 'Sửa bộ nhớ của trợ lý',
   agent_memory_add: 'Thêm vào bộ nhớ của trợ lý',
+  ai_key_set: 'Thay khoá API',
+  ai_key_remove: 'Gỡ khoá API',
   agent_memory_delete: 'Xoá mục trong bộ nhớ của trợ lý',
   dashboard_friend_accept: 'Chấp nhận lời mời kết bạn từ dashboard',
   dashboard_friend_reject: 'Từ chối lời mời kết bạn từ dashboard',
