@@ -400,7 +400,7 @@ test('phân quyền nhóm: đếm thay đổi, câu "a/b đang bật", chữ tha
 });
 
 test('Nhật ký: câu tự nhiên từ what/who/where, nhóm theo ngày, lọc theo loại', async () => {
-  const { auditSentence, groupByDay, filterKind, AUDIT_KINDS } = await import('./views/audit.js');
+  const { auditSentence, groupByDay, auditTabs, matches } = await import('./views/audit.js');
   assert.equal(auditSentence({ source: 'zalo', what: 'Bot trả lời tin nhắn', who: 'Chủ nhân Cô Lan', where: 'Tổ Hoá' }),
     'Bot trả lời tin nhắn ở Tổ Hoá, theo yêu cầu của Chủ nhân Cô Lan.');
   assert.equal(auditSentence({ source: 'zalo', what: 'Bot trả lời tin nhắn', who: 'Thành viên Cô Lan', where: 'Cô Lan' }),
@@ -421,12 +421,13 @@ test('Nhật ký: câu tự nhiên từ what/who/where, nhóm theo ngày, lọc 
   assert.match(g[2].label, /04\/10\/2026$/);
   assert.equal(g[2].label[0], g[2].label[0].toLocaleUpperCase('vi'), 'viết hoa chữ đầu');
   assert.deepEqual(groupByDay([], { now }), []);
-  const mix = [{ source: 'zalo' }, { source: 'dashboard' }, { source: 'zalo' }];
-  assert.equal(filterKind(mix, 'zalo').length, 2);
-  assert.equal(filterKind(mix, 'dashboard').length, 1);
-  assert.equal(filterKind(mix, 'all').length, 3);
-  assert.equal(filterKind(mix, 'failed').length, 3, '"Chỉ lỗi" lọc ở máy chủ');
-  assert.deepEqual(AUDIT_KINDS.map((k) => k.value), ['all', 'zalo', 'dashboard', 'failed']);
+  // Nhật ký gộp Theo dõi agent: mở ra là "Có lỗi"; "Hoạt động AI" chỉ Quản trị; ô tìm chung.
+  assert.deepEqual(auditTabs(true).map((t) => t.value), ['errors', 'dashboard', 'zalo', 'ai']);
+  assert.deepEqual(auditTabs(false).map((t) => t.value), ['errors', 'dashboard', 'zalo']);
+  assert.equal(matches({ source: 'zalo', what: 'Bot gửi tệp', who: 'Lan', where: 'CLB BOT ZALO' }, 'clb bot'), true);
+  assert.equal(matches({ source: 'zalo', what: 'Bot gửi tệp', who: 'Lan', where: 'CLB' }, 'đoàn'), false);
+  assert.equal(matches({ kind: 'ai', chatName: 'AI Y Tế', who: 'Trung', user: 'dầu gội', tools: ['zalo_web_search'] }, 'web_search'), true);
+  assert.equal(matches({ kind: 'ai', chatName: 'AI Y Tế' }, ''), true);
 });
 
 test('thanh điều hướng điện thoại: 4 mục chính + "Thêm" theo vai trò', async () => {
@@ -434,7 +435,7 @@ test('thanh điều hướng điện thoại: 4 mục chính + "Thêm" theo vai 
   const admin = navSplit('admin', '/audit', { secondBrain: true });
   assert.deepEqual(admin.primary.map((i) => [i.path, i.short]), [['/', 'Tổng quan'], ['/chats', 'Phiên chat'], ['/zalo', 'Zalo'], ['/permissions', 'Phân quyền']]);
   assert.deepEqual(admin.more.map((i) => i.path), ['/contacts', '/schedules', '/memory', '/kb', '/insight', '/second-brain', '/mcp',
-    '/agent', '/tools', '/trace', '/audit', '/brand', '/health', '/settings', '/users', '/owners', '/alerts', '/profile']);
+    '/agent', '/tools', '/audit', '/brand', '/health', '/settings', '/users', '/owners', '/alerts', '/profile']);
   assert.equal(admin.activeMore.text, 'Nhật ký');
   const owner = navSplit('owner', '/', { secondBrain: true });
   assert.equal(owner.primary.length, 4);
@@ -754,7 +755,7 @@ test('thanh bên: 5 nhóm theo mẫu; Second brain chỉ Quản trị và chỉ 
   assert.deepEqual(admin.map((g) => g.label), ['Tổng quan', 'Hội thoại', 'Dữ liệu', 'Hệ thống', 'Quản trị']);
   assert.deepEqual(admin[1].items.map((i) => i.text), ['Phiên chat', 'Liên hệ', 'Phân quyền Bot', 'Lịch hẹn']);
   assert.deepEqual(admin[2].items.map((i) => i.text), ['Trí nhớ', 'Kho tri thức', 'Insight nhóm', 'Second brain', 'Kết nối MCP']);
-  assert.deepEqual(admin[3].items.map((i) => i.text), ['Tài khoản Zalo', 'Agent', 'Công cụ', 'Theo dõi agent', 'Nhật ký', 'Thương hiệu', 'Sức khoẻ máy chủ', 'Cấu hình']);
+  assert.deepEqual(admin[3].items.map((i) => i.text), ['Tài khoản Zalo', 'Agent', 'Công cụ', 'Nhật ký', 'Thương hiệu', 'Sức khoẻ máy chủ', 'Cấu hình']);
   const owner = visibleGroups('owner', { secondBrain: true });
   assert.deepEqual(owner.map((g) => g.label), ['Tổng quan', 'Hội thoại', 'Dữ liệu', 'Hệ thống']);
   assert.ok(!owner.flatMap((g) => g.items).some((i) => i.admin), 'Chủ bot không thấy mục admin nào');

@@ -2,6 +2,15 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [2.3.0] — 2026-10-09
+
+### Thay đổi
+- **Gộp Nhật ký và Theo dõi agent thành một trang "Nhật ký"** (dùng khi có lỗi hoặc cần tra lại); menu chỉ còn một mục.
+  - Mở ra là tab **Có lỗi** (7 ngày): việc bot làm hỏng, thao tác dashboard lỗi, và — với Quản trị — công cụ AI báo lỗi kèm nhóm, người hỏi, câu hỏi (bấm để xem trong Hoạt động AI). Không có lỗi thì chỉ một dòng xanh.
+  - Các tab khác chỉ mở khi cần: **Thao tác** (người trên dashboard), **Bot gửi**, **Hoạt động AI** (chỉ Quản trị — trang Theo dõi agent cũ; đường `#/trace` vẫn mở đúng tab này).
+  - Một ô tìm chung theo nhóm, người, hành động.
+- API: `/api/audit?source=zalo|dashboard`, `/api/admin/trace/errors?days=7`.
+
 ## [2.2.2] — 2026-10-09
 
 ### Thay đổi

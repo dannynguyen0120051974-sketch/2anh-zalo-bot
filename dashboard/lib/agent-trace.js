@@ -168,6 +168,29 @@ export function createAgentTrace({ dbPath }) {
       }
       return out.slice(0, want);
     },
+    /**
+     * Lỗi công cụ của trợ lý trong `days` ngày (tab "Có lỗi" của Nhật ký): mỗi lượt có công cụ báo lỗi một mục
+     * { at, key, chatId, chatType, who, user, tools: [tên công cụ lỗi] }, mới trước, tối đa `limit`.
+     */
+    errors({ days = 7, limit = 50, now = Date.now() } = {}) {
+      const since = (Number(now) - Math.min(Math.max(Number(days) || 7, 1), 30) * 86_400_000) / 1000;
+      const sessions = withDb((db) => {
+        const failed = db.prepare(`SELECT m.session_id AS sid, m.content FROM messages m WHERE m.role = 'tool' AND m.timestamp >= ?
+          ORDER BY m.id DESC LIMIT 5000`).all(since).filter((r) => toolFailed(r.content));
+        const ids = [...new Set(failed.map((r) => String(r.sid)))].slice(0, 40);
+        const meta = db.prepare('SELECT source, chat_id, chat_type FROM sessions WHERE id = ?');
+        return ids.map((id) => ({ id, ...(meta.get(id) || {}) }));
+      });
+      const out = [];
+      for (const s of sessions) {
+        for (const t of this.turns(s.id, { limit: 100 })) {
+          const bad = t.tools.filter((c) => c.status === 'lỗi');
+          if (!bad.length || t.at < since * 1000) continue;
+          out.push({ at: t.at, key: `${s.source}:${s.chat_id || s.id}`, chatId: s.chat_id || '', chatType: s.chat_type || '', who: t.who, user: t.user, tools: bad.map((c) => c.name) });
+        }
+      }
+      return out.sort((a, b) => b.at - a.at).slice(0, Math.min(Math.max(Number(limit) || 50, 1), 200));
+    },
     /** 30 lượt gần nhất của một phiên (đọc tối đa 1500 tin mới nhất). */
     turns(sessionId, { limit = 30 } = {}) {
       if (!/^[\w:.-]{1,128}$/.test(String(sessionId))) throw err(400, 'Phiên không hợp lệ.');

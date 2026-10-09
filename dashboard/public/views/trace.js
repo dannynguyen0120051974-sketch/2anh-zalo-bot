@@ -54,7 +54,8 @@ function Turns({ chat }) {
   })}</ol>` : html`<p class="muted">Chưa có lượt nào.</p>`}${meta}`;
 }
 
-export function Trace() {
+/** `embedded`: hiện trong tab "Hoạt động AI" của Nhật ký — không có tiêu đề trang, ô tìm do Nhật ký giữ (`q`). */
+export function Trace({ embedded = false, q: outerQ } = {}) {
   const [source, setSource] = useState('zalo');
   const [list, setList] = useState(null);
   const [more, setMore] = useState(false);
@@ -68,17 +69,18 @@ export function Trace() {
     })
     .catch((e) => setError(e.message));
   useEffect(() => { setList(null); setError(''); setOpen(''); load(); }, [source]);
-  const n = fold(q).trim();
+  const n = fold(embedded ? outerQ || '' : q).trim();
   const shown = (list || []).filter((c) => !n || fold(chatLabel(c)).includes(n));
   const last = list && list.length ? list[list.length - 1] : null;
-  return html`<${PageHead} title="Theo dõi agent" sub="Trợ lý đã làm gì trong từng cuộc trò chuyện. Bấm vào một dòng để xem các lượt gần nhất." />
-    <section class="card">
+  const head = embedded ? null : html`<${PageHead} title="Theo dõi agent" sub="Trợ lý đã làm gì trong từng cuộc trò chuyện. Bấm vào một dòng để xem các lượt gần nhất." />`;
+  return html`${head}
+    <section class=${embedded ? 'trace-embedded' : 'card'}>
       <div class="toolbar">
         <div class="chips" role="group" aria-label="Nguồn">
           ${SOURCES.map((s) => html`<button key=${s.value} type="button" class="btn btn-secondary btn-sm chip" aria-pressed=${source === s.value ? 'true' : 'false'} onClick=${() => setSource(s.value)}>${s.label}</button>`)}
         </div>
-        <label class="sr-only" for="trace-q">Lọc theo tên</label>
-        <input id="trace-q" type="search" placeholder="Lọc theo tên nhóm/người…" value=${q} onInput=${(e) => setQ(e.currentTarget.value)} />
+        ${embedded ? null : html`<label class="sr-only" for="trace-q">Lọc theo tên</label>
+        <input id="trace-q" type="search" placeholder="Lọc theo tên nhóm/người…" value=${q} onInput=${(e) => setQ(e.currentTarget.value)} />`}
       </div>
       <${Live} error=${error} />
       ${!list && !error ? html`<${Spinner} />` : null}

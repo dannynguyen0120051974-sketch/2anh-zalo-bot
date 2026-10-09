@@ -107,3 +107,17 @@ test('câu hỏi thật: bỏ ngữ cảnh nhóm, thẻ hồ sơ, trích dẫn; 
   assert.deepEqual(questionOf(`${card}\n[Replying to: "tin [cũ]\nhai dòng"]\n[Lan] được không`), { who: 'Lan', text: 'được không' });
   assert.deepEqual(questionOf('Tra giá vàng'), { who: '', text: 'Tra giá vàng' });
 });
+
+test('lỗi công cụ AI trong N ngày: mỗi lượt có công cụ lỗi một mục, kèm người hỏi và tên công cụ', (t) => {
+  const path = stateDb(t);
+  const db = new DatabaseSync(path);
+  const m = db.prepare('INSERT INTO messages (session_id, role, content, tool_calls, tool_call_id, timestamp) VALUES (?,?,?,?,?,?)');
+  m.run('z1', 'user', '[New message]\n[Lan] đọc tài liệu Đoàn', null, null, 2000);
+  m.run('z1', 'assistant', '', JSON.stringify([{ id: 'call_2', function: { name: 'zalo_kb_read', arguments: '{}' } }]), null, 2001);
+  m.run('z1', 'tool', '{"success": false, "error": "không thấy tệp"}', null, 'call_2', 2002);
+  db.close();
+  const trace = createAgentTrace({ dbPath: path });
+  const errs = trace.errors({ days: 7, now: 2003 * 1000 });
+  assert.deepEqual(errs.map((e) => [e.key, e.chatId, e.who, e.user, e.tools]), [['zalo:200', '200', 'Lan', 'đọc tài liệu Đoàn', ['zalo_kb_read']]]);
+  assert.deepEqual(trace.errors({ days: 1, now: (2003 + 2 * 86400) * 1000 }), [], 'ngoài khoảng ngày thì không tính');
+});

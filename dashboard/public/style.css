@@ -772,3 +772,7 @@ fieldset.field { border: 0; padding: 0; margin: 0; }
 .trace-caret { flex: none; color: var(--muted); transition: transform .15s; }
 .trace-row[aria-expanded="true"] .trace-caret { transform: rotate(90deg); }
 .trace-chat > .trace-box { margin: 0 0 10px; }
+
+/* Nhật ký: tab "Có lỗi" không có lỗi; tab "Hoạt động AI" nhúng Theo dõi agent. */
+.audit-clean { display: flex; align-items: center; gap: 8px; margin: 8px 0; padding: 12px 14px; border: 1px solid var(--ok-border); border-radius: 10px; background: var(--ok-soft); color: var(--ok); font-weight: 600; }
+.trace-embedded > .toolbar { margin-bottom: 4px; }

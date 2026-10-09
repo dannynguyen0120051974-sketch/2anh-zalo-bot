@@ -1,8 +1,11 @@
-// Nhật ký (spec §9): mỗi mục là một câu dễ hiểu (ai · làm gì · ở đâu), nhóm theo ngày; nhãn đỏ chỉ khi lỗi;
-// chip lọc theo loại. Quản trị mở "Chi tiết kỹ thuật" để xem mã. Câu dựng ở trình duyệt từ what/who/where/result.
+// Nhật ký (spec §9), gộp cả Theo dõi agent — dùng khi có lỗi hoặc cần tra lại. Mở ra là tab "Có lỗi" (7 ngày): việc
+// bot làm hỏng, thao tác dashboard lỗi, công cụ AI báo lỗi. Tab khác chỉ mở khi cần: Thao tác (người trên dashboard),
+// Bot gửi, Hoạt động AI (chỉ Quản trị). Mỗi mục là một câu dễ hiểu, nhóm theo ngày; Quản trị mở "Chi tiết kỹ thuật".
 import { useEffect, useRef, useState } from '../vendor/hooks.mjs';
 import { api } from '../api.js';
 import { html, Icon, Live, PageHead, Spinner } from '../ui.js';
+import { fold } from '../fold.js';
+import { Trace } from './trace.js';
 
 export function codeText(code) {
   if (!code) return '';
@@ -56,19 +59,39 @@ export function groupByDay(items, { now = Date.now(), tz } = {}) {
   return out;
 }
 
-export const AUDIT_KINDS = [
-  { value: 'all', label: 'Tất cả' },
-  { value: 'zalo', label: 'Việc của bot' },
-  { value: 'dashboard', label: 'Thao tác dashboard' },
-  { value: 'failed', label: 'Chỉ lỗi' },
-];
+export const ERROR_DAYS = 7;
 
-/** Lọc theo loại ở trình duyệt; "Chỉ lỗi" lọc ở máy chủ nên ở đây giữ nguyên. */
-export const filterKind = (items, kind) => (kind === 'zalo' || kind === 'dashboard' ? items.filter((it) => it.source === kind) : items);
+/** Tab của Nhật ký; "Hoạt động AI" chỉ Quản trị. */
+export function auditTabs(admin) {
+  return [
+    { value: 'errors', label: 'Có lỗi' },
+    { value: 'dashboard', label: 'Thao tác' },
+    { value: 'zalo', label: 'Bot gửi' },
+    ...(admin ? [{ value: 'ai', label: 'Hoạt động AI' }] : []),
+  ];
+}
+
+/** Ô tìm chung: khớp câu nhật ký (ai · làm gì · ở đâu) hoặc mục lỗi AI (nhóm, người hỏi, câu hỏi, công cụ). */
+export function matches(it, q) {
+  const n = fold(q || '').trim();
+  if (!n) return true;
+  const text = it.kind === 'ai' ? [it.chatName, it.who, it.user, ...(it.tools || [])].join(' ') : auditSentence(it);
+  return fold(text).includes(n);
+}
 
 const hhmm = new Intl.DateTimeFormat('vi-VN', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 
-function Entry({ it, admin }) {
+function Entry({ it, admin, onOpenAi }) {
+  if (it.kind === 'ai') {
+    return html`<li class="audit-item">
+      <time class="audit-time" datetime=${new Date(it.at).toISOString()}>${hhmm.format(new Date(it.at))}</time>
+      <div class="audit-body">
+        <p>Công cụ AI báo lỗi ở ${it.chatName || 'phiên không có hội thoại'}: <span class="mono">${it.tools.join(', ')}</span>.</p>
+        <p class="muted small">${it.who ? `${it.who}: ` : ''}${it.user || '(không có chữ)'}</p>
+        <p><button type="button" class="btn btn-ghost btn-sm" onClick=${() => onOpenAi(it.chatName)}>Xem trong Hoạt động AI</button></p>
+      </div>
+    </li>`;
+  }
   return html`<li class="audit-item">
     <time class="audit-time" datetime=${new Date(it.at).toISOString()}>${hhmm.format(new Date(it.at))}</time>
     <div class="audit-body">
@@ -81,23 +104,48 @@ function Entry({ it, admin }) {
   </li>`;
 }
 
-export function Audit({ me }) {
-  const [kind, setKind] = useState('all');
+function Days({ items, admin, onOpenAi }) {
+  return groupByDay(items).map((g) => html`<section class="audit-day" key=${g.key}>
+    <h2 class="audit-day-head">${g.label}</h2>
+    <ol class="audit-list">${g.items.map((it, i) => html`<${Entry} key=${`${it.at}-${i}`} it=${it} admin=${admin} onOpenAi=${onOpenAi} />`)}</ol>
+  </section>`);
+}
+
+/** Tab "Có lỗi": lỗi của bot + dashboard (máy chủ lọc) và lỗi công cụ AI (Quản trị) trong ERROR_DAYS ngày. */
+function Errors({ admin, q, round, onOpenAi, onCount }) {
+  const [items, setItems] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let alive = true;
+    setItems(null); setError('');
+    const since = Date.now() - ERROR_DAYS * 86_400_000;
+    Promise.all([
+      api('/api/audit?status=failed').then((r) => r.items.filter((it) => it.at >= since)),
+      admin ? api(`/api/admin/trace/errors?days=${ERROR_DAYS}`).then((r) => r.errors.map((e) => ({ ...e, kind: 'ai' }))).catch(() => []) : Promise.resolve([]),
+    ]).then(([a, b]) => {
+      if (!alive) return;
+      const all = [...a, ...b].sort((x, y) => y.at - x.at);
+      setItems(all); onCount(all.length);
+    }).catch((e) => { if (alive) { setItems([]); setError(e.message); } });
+    return () => { alive = false; };
+  }, [round]);
+  if (items === null) return html`<${Live} error=${error} />${error ? null : html`<${Spinner} />`}`;
+  if (!items.length) {
+    return html`<${Live} error=${error} />${error ? null : html`<p class="audit-clean"><${Icon} name="check" size=${18} /> Không có lỗi nào trong ${ERROR_DAYS} ngày qua.</p>`}`;
+  }
+  const shown = items.filter((it) => matches(it, q));
+  return html`<${Live} error=${error} />
+    ${shown.length ? html`<${Days} items=${shown} admin=${admin} onOpenAi=${onOpenAi} />` : html`<p class="muted">Không có lỗi nào khớp ô tìm.</p>`}`;
+}
+
+/** Tab "Thao tác" / "Bot gửi": danh sách theo nguồn, có "Xem cũ hơn". */
+function Feed({ source, admin, q, round }) {
   const [items, setItems] = useState(null);
   const [next, setNext] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [round, setRound] = useState(0);
-  const gen = useRef(0); // đổi bộ lọc/làm mới → bỏ trang "Xem cũ hơn" còn đang về của danh sách cũ
-  const failedOnly = kind === 'failed';
-  const url = (before) => {
-    const p = new URLSearchParams();
-    if (failedOnly) p.set('status', 'failed');
-    if (before) p.set('before', String(before));
-    const qs = p.toString(); // không dùng p.size — trình duyệt cũ chưa có
-    return `/api/audit${qs ? `?${qs}` : ''}`;
-  };
-
+  const gen = useRef(0); // đổi tab/làm mới → bỏ trang "Xem cũ hơn" còn đang về của danh sách cũ
+  const url = (before) => `/api/audit?source=${source}${before ? `&before=${before}` : ''}`;
   useEffect(() => {
     let alive = true;
     gen.current += 1;
@@ -106,8 +154,7 @@ export function Audit({ me }) {
       .then((r) => { if (alive) { setItems(r.items); setNext(r.nextBefore); } })
       .catch((err) => { if (alive) { setItems([]); setNext(null); setError(err.message); } });
     return () => { alive = false; };
-  }, [failedOnly, round]);
-
+  }, [source, round]);
   async function more() {
     if (busy || !next) return;
     const my = gen.current;
@@ -116,38 +163,41 @@ export function Audit({ me }) {
       const r = await api(url(next));
       if (my !== gen.current) return;
       setItems((cur) => [...(cur || []), ...r.items]); setNext(r.nextBefore);
-    } catch (err) {
-      if (my === gen.current) setError(err.message);
-    } finally {
-      if (my === gen.current) setBusy(false);
-    }
+    } catch (err) { if (my === gen.current) setError(err.message); } finally { if (my === gen.current) setBusy(false); }
   }
+  if (items === null) return html`<${Spinner} />`;
+  const shown = items.filter((it) => matches(it, q));
+  return html`<${Live} error=${error} />
+    ${shown.length ? html`<${Days} items=${shown} admin=${admin} />` : error ? null : html`<p class="muted">${q ? 'Chưa thấy mục nào khớp — bấm "Xem cũ hơn" để tìm tiếp.' : 'Chưa có hoạt động nào được ghi lại.'}</p>`}
+    ${next ? html`<button type="button" class="btn btn-secondary btn-sm load-more" disabled=${busy} onClick=${more}>${busy ? 'Đang tải…' : 'Xem cũ hơn'}</button>` : null}`;
+}
 
+export function Audit({ me, tab: initial = 'errors' }) {
   const admin = me.role === 'admin';
-  let body;
-  if (items === null) body = html`<${Spinner} />`;
-  else {
-    const shown = filterKind(items, kind);
-    body = html`
-      ${shown.length ? groupByDay(shown).map((g) => html`<section class="audit-day" key=${g.key}>
-        <h2 class="audit-day-head">${g.label}</h2>
-        <ol class="audit-list">${g.items.map((it, i) => html`<${Entry} key=${`${it.at}-${i}`} it=${it} admin=${admin} />`)}</ol>
-      </section>`) : error ? null : html`<p class="muted">${failedOnly ? 'Không có lỗi nào.'
-        : next ? 'Trang này chưa có mục nào thuộc loại đã chọn — bấm "Xem cũ hơn" để tìm tiếp.' : 'Chưa có hoạt động nào được ghi lại.'}</p>`}
-      ${next ? html`<button type="button" class="btn btn-secondary btn-sm load-more" disabled=${busy} onClick=${more}>${busy ? 'Đang tải…' : 'Xem cũ hơn'}</button>` : null}`;
-  }
-
+  const tabs = auditTabs(admin);
+  const [tab, setTab] = useState(tabs.some((t) => t.value === initial) ? initial : 'errors');
+  const [q, setQ] = useState('');
+  const [round, setRound] = useState(0);
+  const [count, setCount] = useState(null);
+  const openAi = (name) => { setQ(name || ''); setTab('ai'); };
   return html`
-    <${PageHead} title="Nhật ký" sub="Ai đã làm gì với bot: tin bot gửi, thao tác trên dashboard, và kết quả." />
+    <${PageHead} title="Nhật ký" sub="Dùng khi có lỗi hoặc cần tra lại: bot đã làm gì, ai đã đổi gì trên dashboard, AI đã tra những gì." />
     <section class="card">
       <div class="toolbar">
-        <div class="chips" role="group" aria-label="Lọc theo loại">
-          ${AUDIT_KINDS.map((k) => html`<button type="button" key=${k.value} class="btn btn-secondary btn-sm chip"
-            aria-pressed=${kind === k.value ? 'true' : 'false'} onClick=${() => setKind(k.value)}>${k.label}</button>`)}
+        <div class="chips" role="group" aria-label="Loại nhật ký">
+          ${tabs.map((t) => html`<button type="button" key=${t.value} class="btn btn-secondary btn-sm chip"
+            aria-pressed=${tab === t.value ? 'true' : 'false'} onClick=${() => setTab(t.value)}>
+            ${t.label}${t.value === 'errors' && count ? html` <span class="badge badge-danger">${count}</span>` : null}</button>`)}
         </div>
-        <button type="button" class="btn btn-secondary btn-sm" onClick=${() => setRound(round + 1)}><${Icon} name="refresh" size=${16} /> Làm mới</button>
+        <label class="sr-only" for="audit-q">Tìm trong nhật ký</label>
+        <input id="audit-q" type="search" placeholder="Tìm theo nhóm, người, hành động…" value=${q} onInput=${(e) => setQ(e.currentTarget.value)} />
+        ${tab === 'ai' ? null : html`<button type="button" class="btn btn-secondary btn-sm" onClick=${() => setRound(round + 1)}><${Icon} name="refresh" size=${16} /> Làm mới</button>`}
       </div>
-      <${Live} error=${error} />
-      ${body}
+      ${tab === 'errors' ? html`<${Errors} admin=${admin} q=${q} round=${round} onOpenAi=${openAi} onCount=${setCount} />`
+        : tab === 'ai' ? html`<${Trace} embedded q=${q} />`
+          : html`<${Feed} key=${tab} source=${tab} admin=${admin} q=${q} round=${round} />`}
     </section>`;
 }
+
+/** Nhật ký mở thẳng tab "Hoạt động AI" — đường cũ /trace (Theo dõi agent) vẫn dùng được. */
+export const AuditAi = (props) => html`<${Audit} ...${props} tab="ai" />`;

@@ -132,13 +132,14 @@ export function describe(x, { role, names = new Map(), groups = new Map(), isUse
 
 export function createAuditFeed({ store, activity, threadNames, isUser }) {
   return {
-    async list({ role, beforeMs = Number.MAX_SAFE_INTEGER, limit = 50, failedOnly = false }) {
+    /** `source`: 'all' | 'zalo' (việc của bot) | 'dashboard' (thao tác người) — lọc ở đây để mỗi trang đủ mục. */
+    async list({ role, beforeMs = Number.MAX_SAFE_INTEGER, limit = 50, failedOnly = false, source = 'all' }) {
       const want = limit + 20; // dư ra để kéo dài trang qua các mục trùng mili-giây
       let fromBot = [];
-      try { fromBot = store.available() ? store.listAudit({ beforeMs, limit: want, failedOnly }) : []; } catch (err) {
+      try { fromBot = source !== 'dashboard' && store.available() ? store.listAudit({ beforeMs, limit: want, failedOnly }) : []; } catch (err) {
         console.error('[dashboard] đọc nhật ký của bot lỗi:', err?.message || err);
       }
-      const fromDashboard = activity.list({ before: beforeMs, limit: want, failedOnly });
+      const fromDashboard = source === 'zalo' ? [] : activity.list({ before: beforeMs, limit: want, failedOnly });
       const merged = [
         ...fromBot.map((r) => ({ src: 'zalo', ...r })),
         ...fromDashboard.map((e) => ({ src: 'dashboard', at: e.at, actor: e.actor, action: e.action, detail: e.detail, ok: e.ok })),

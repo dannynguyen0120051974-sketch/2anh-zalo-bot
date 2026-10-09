@@ -635,7 +635,7 @@ Năm trang mới, **chỉ Quản trị** thấy (Chủ bot không thấy ở tha
 |---|---|---|
 | Agent | Hệ thống | Đổi model (chỉ tên có trong danh sách của cổng AI), mức suy nghĩ, tính cách SOUL.md (lịch sử 30 bản + bản gốc, khôi phục một chạm). |
 | Công cụ | Hệ thống | Mọi công cụ Zalo, ai dùng được, nút nào ở Phân quyền Bot điều khiển; tắt riêng từng công cụ công khai với người ngoài (`tools.off` trong `permissions.json`). Chủ nhân luôn dùng được. |
-| Theo dõi agent | Hệ thống | Phiên của trợ lý (Zalo / việc hẹn giờ / tất cả): từng lượt, công cụ đã gọi, xong/lỗi, thời gian, token, model. Chỉ đọc `state.db`; tham số công cụ chỉ hiện tên, không hiện giá trị; không hiện kết quả công cụ và lời nhắc hệ thống. |
+| Nhật ký › Hoạt động AI | Hệ thống | (Trước đây là trang Theo dõi agent, nay là một tab trong Nhật ký — chỉ Quản trị.) Mỗi cuộc trò chuyện một dòng; từng lượt hiện người hỏi + câu hỏi thật, công cụ đã gọi, xong/lỗi, thời gian, token, model. Chỉ đọc `state.db`; tham số công cụ chỉ hiện tên, không hiện giá trị; không hiện kết quả công cụ và lời nhắc hệ thống. Nhật ký mở ra ở tab **Có lỗi** (7 ngày: việc bot hỏng, thao tác dashboard lỗi, công cụ AI lỗi). |
 | Kết nối MCP | Dữ liệu | Máy chủ MCP trong `config.yaml`: tên, kiểu, máy:cổng hoặc tên lệnh, có mở cho thành viên không, trạng thái; bật/tắt. Chỉ dò máy chủ loopback; máy chủ stdio ghi "không kiểm được từ dashboard". Thêm mới: `hermes mcp install <tên>` trên máy chủ. |
 | Cấu hình | Hệ thống | Danh sách cố định các cài đặt bên dưới + lời chào thành viên mới theo từng nhóm. |
 
@@ -662,7 +662,7 @@ HERMES_HOME=/root/.hermes node --test dashboard/lib/config-yaml.test.js
 - [ ] Chủ bot: không thấy mục 7B nào; gõ `#/agent` → "Không có quyền"; gọi `/api/admin/settings` → 403.
 - [ ] Agent: đổi model → nhắn bot `/model` thấy model mới (không khởi động lại); sửa SOUL.md → dải vàng → Khởi động lại ngay → bot xưng hô theo tính cách mới ở phiên mới; khôi phục "bản gốc".
 - [ ] Công cụ: tắt `zalo_web_search` → thành viên nhờ tra web trong nhóm → bot nói chưa làm được; chủ nhân vẫn tra được; lưu Phân quyền nhóm → vẫn tắt.
-- [ ] Theo dõi agent: mở phiên nhóm vừa chat → thấy lượt, công cụ, tham số chỉ có tên khoá; "Xem phiên cũ hơn" không lặp phiên.
+- [ ] Nhật ký › Hoạt động AI: mở nhóm vừa chat → thấy lượt, công cụ, tham số chỉ có tên khoá; tab Có lỗi liệt kê công cụ AI lỗi trong 7 ngày.
 - [ ] Kết nối MCP (VPS): `rag` "Đang mở"; tắt → khởi động lại → công cụ rag biến mất; bật lại.
 - [ ] Cấu hình: đổi "Số tin tối đa" → `.env` có dòng mới, `.env.bak` có bản cũ; đổi "Nhóm chỉ chủ nhân" trên VPS → sửa `config.yaml` (đang ở `extra`), có `config.yaml.bak`; Nhật ký ghi "cũ → mới"; lời chào nhóm thử với tài khoản phụ vào nhóm.
 

@@ -29,6 +29,14 @@ export function traceRoutes({ agentTrace, threadNames }) {
       res.json({ ok: true, chats: list.map((c) => ({ ...c, chatName: c.chatId ? names.get(c.chatId) || fallbackName(c.chatId, c.chatType === 'group' ? 1 : 0) : '' })) });
     } catch (err) { fail(res, err); }
   });
+  r.get('/admin/trace/errors', ...guard, async (req, res) => {
+    try {
+      const list = agentTrace.errors({ days: req.query.days });
+      let names = new Map();
+      try { names = await threadNames.load(); } catch { /* tên dự phòng */ }
+      res.json({ ok: true, errors: list.map((e) => ({ ...e, chatName: e.chatId ? names.get(e.chatId) || fallbackName(e.chatId, e.chatType === 'group' ? 1 : 0) : '' })) });
+    } catch (err) { fail(res, err); }
+  });
   r.get('/admin/trace/chats/:key/turns', ...guard, (req, res) => {
     try { res.json({ ok: true, turns: agentTrace.chatTurns(req.params.key, { limit: req.query.limit }) }); } catch (err) { fail(res, err); }
   });

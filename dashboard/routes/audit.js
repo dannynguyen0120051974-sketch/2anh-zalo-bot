@@ -9,7 +9,9 @@ export function auditRoutes({ store, activity, threadNames, users }) {
   r.get('/audit', requireAuth, async (req, res) => {
     const status = req.query.status ?? '';
     const before = req.query.before ?? '';
+    const source = req.query.source ?? 'all';
     if (status !== '' && status !== 'failed') return res.status(400).json({ ok: false, error: 'Bộ lọc không hợp lệ — tải lại trang rồi thử lại.' });
+    if (!['all', 'zalo', 'dashboard'].includes(source)) return res.status(400).json({ ok: false, error: 'Bộ lọc không hợp lệ — tải lại trang rồi thử lại.' });
     if (before !== '' && !(typeof before === 'string' && /^\d{1,16}$/.test(before))) {
       return res.status(400).json({ ok: false, error: 'Vị trí trang không hợp lệ — tải lại trang rồi thử lại.' });
     }
@@ -18,6 +20,7 @@ export function auditRoutes({ store, activity, threadNames, users }) {
         role: req.user.role,
         beforeMs: before ? Number(before) : Number.MAX_SAFE_INTEGER,
         failedOnly: status === 'failed',
+        source,
       })) });
     } catch (err) { failStore(res, err, 'Chưa đọc được nhật ký — tải lại trang, nếu vẫn lỗi hãy báo người cài đặt.'); }
   });

@@ -7,7 +7,7 @@ import { Users } from './users.js';
 import { Alerts } from './alerts.js';
 import { Profile } from './profile.js';
 import { Chats } from './chats.js';
-import { Audit } from './audit.js';
+import { Audit, AuditAi } from './audit.js';
 import { Permissions } from './permissions.js';
 import { Brand } from './brand.js';
 import { Owners } from './owners.js';
@@ -20,7 +20,6 @@ import { Insight } from './insight.js';
 import { SecondBrain } from './second-brain.js';
 import { Agent } from './agent.js';
 import { Tools } from './tools.js';
-import { Trace } from './trace.js';
 import { Mcp } from './mcp.js';
 import { Settings } from './settings.js';
 
@@ -47,7 +46,7 @@ const ROUTES = {
   '/mcp': { view: Mcp, admin: true },
   '/agent': { view: Agent, admin: true },
   '/tools': { view: Tools, admin: true },
-  '/trace': { view: Trace, admin: true },
+  '/trace': { view: AuditAi, admin: true }, // đường cũ Theo dõi agent → Nhật ký › Hoạt động AI
   '/settings': { view: Settings, admin: true },
 };
 
@@ -71,7 +70,6 @@ export const GROUPS = [
     { path: '/zalo', text: 'Tài khoản Zalo', icon: 'phone' },
     { path: '/agent', text: 'Agent', icon: 'bot', admin: true },
     { path: '/tools', text: 'Công cụ', icon: 'tool', admin: true },
-    { path: '/trace', text: 'Theo dõi agent', icon: 'eye', admin: true },
     { path: '/audit', text: 'Nhật ký', icon: 'list' },
     { path: '/brand', text: 'Thương hiệu', icon: 'image' },
     { path: '/health', text: 'Sức khoẻ máy chủ', icon: 'activity' },
@@ -142,7 +140,7 @@ function StatusStrip({ status, error, path }) {
 
 // Thanh điều hướng điện thoại: 4 mục chính luôn hiện, còn lại trong "Thêm ▾".
 export const MOBILE_PRIMARY = ['/', '/chats', '/zalo', '/permissions'];
-const SHORT = { '/trace': 'Theo dõi', '/second-brain': 'Second brain', '/mcp': 'MCP', '/zalo': 'Zalo', '/permissions': 'Phân quyền', '/health': 'Sức khoẻ', '/alerts': 'Cảnh báo', '/owners': 'Chủ nhân', '/profile': 'Tài khoản' };
+const SHORT = { '/second-brain': 'Second brain', '/mcp': 'MCP', '/zalo': 'Zalo', '/permissions': 'Phân quyền', '/health': 'Sức khoẻ', '/alerts': 'Cảnh báo', '/owners': 'Chủ nhân', '/profile': 'Tài khoản' };
 
 /**
  * Nhóm thanh bên vai trò này thấy: bỏ nhóm/mục `admin` với Chủ bot, bỏ mục có `feature` đang tắt
