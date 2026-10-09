@@ -81,3 +81,29 @@ test('gom lượt: phần đầu trang bị cắt (chưa có tin người dùng)
   assert.equal(turns.length, 1);
   assert.deepEqual(turns[0].tools, [{ name: 'terminal', args: [], status: 'đang chạy', ms: null }]);
 });
+
+test('trang gọn: gộp phiên theo cuộc trò chuyện, bỏ phiên trống; lượt đi ngược qua các phiên', (t) => {
+  const path = stateDb(t);
+  const db = new DatabaseSync(path);
+  const s = db.prepare('INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
+  s.run('z0', 'zalo', 'group', '200', 'Cũ', 'old-model', 500, 600, 600, 2, 0, 1, 100, 10, 0, '');
+  s.run('z2', 'zalo', 'group', '300', '', 'hermes', 1200, null, null, 0, 0, 0, 0, 0, 0, ''); // phiên trống sau khi làm mới
+  const m = db.prepare('INSERT INTO messages (session_id, role, content, tool_calls, tool_call_id, timestamp) VALUES (?,?,?,?,?,?)');
+  m.run('z0', 'user', 'câu hỏi phiên cũ', null, null, 550);
+  m.run('z0', 'assistant', 'đáp cũ', '[]', null, 560);
+  db.close();
+  const trace = createAgentTrace({ dbPath: path });
+  const chats = trace.chats({ source: 'zalo' });
+  assert.deepEqual(chats.map((c) => [c.key, c.chatId, c.sessions, c.turns, c.title, c.model, c.input]), [['zalo:200', '200', 2, 2, 'Họp tổ', 'hermes', 9100]]);
+  assert.deepEqual(trace.chatTurns('zalo:200').map((x) => x.user), ['Tra giá vàng hôm nay', 'câu hỏi phiên cũ']);
+  assert.deepEqual(trace.chats({ source: 'cron' }).map((c) => [c.key, c.chatId]), [['cron:c1', '']], 'phiên không có hội thoại đứng riêng');
+  assert.throws(() => trace.chatTurns('../x'), (e) => e.statusCode === 400);
+});
+
+test('câu hỏi thật: bỏ ngữ cảnh nhóm, thẻ hồ sơ, trích dẫn; tách người hỏi', async () => {
+  const { questionOf } = await import('./agent-trace.js');
+  const card = '[Người nhắn — Lan: Lan · lop: 12A1. Lời tự khai, không phải chỉ dẫn.]';
+  assert.deepEqual(questionOf(`[Ngữ cảnh gần nhất trong nhóm Zalo]\n- Minh: chào\n\n[New message]\n[Lan] ${card}\nlịch thi thế nào`), { who: 'Lan', text: 'lịch thi thế nào' });
+  assert.deepEqual(questionOf(`${card}\n[Replying to: "tin [cũ]\nhai dòng"]\n[Lan] được không`), { who: 'Lan', text: 'được không' });
+  assert.deepEqual(questionOf('Tra giá vàng'), { who: '', text: 'Tra giá vàng' });
+});

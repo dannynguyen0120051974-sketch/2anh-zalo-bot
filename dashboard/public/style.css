@@ -762,3 +762,13 @@ fieldset.field { border: 0; padding: 0; margin: 0; }
 .trace-q { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .trace-turn[open] .trace-q { white-space: normal; overflow-wrap: anywhere; }
 .trace-detail { padding: 4px 0 4px 18px; }
+
+/* Theo dõi agent: cả dòng là nút mở/thu. */
+.trace-chat { border-bottom: 1px solid var(--border); }
+.trace-chat:last-child { border-bottom: 0; }
+.trace-row { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 52px; padding: 8px 4px; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; border-radius: 8px; }
+.trace-row:hover { background: var(--bg); }
+.trace-row:focus-visible { outline: none; box-shadow: var(--focus); }
+.trace-caret { flex: none; color: var(--muted); transition: transform .15s; }
+.trace-row[aria-expanded="true"] .trace-caret { transform: rotate(90deg); }
+.trace-chat > .trace-box { margin: 0 0 10px; }

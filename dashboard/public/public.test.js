@@ -901,10 +901,12 @@ test('Theo dõi agent: thời gian dễ đọc', async () => {
 });
 
 test('trang gọn: Theo dõi agent tóm tắt phiên một dòng; Kho tri thức chỉ đếm tệp của nguồn', async () => {
-  const { sessionSummary } = await import('./views/trace.js');
-  assert.equal(sessionSummary({ messages: 12, toolCalls: 5 }), '12 tin · 5 công cụ');
-  assert.equal(sessionSummary({ messages: 3, toolCalls: 0 }), '3 tin');
-  assert.equal(sessionSummary({ messages: 0, toolCalls: 0 }), 'Chưa có hoạt động');
+  const { chatSummary, chatLabel } = await import('./views/trace.js');
+  assert.equal(chatSummary({ turns: 64, toolCalls: 5, sessions: 18 }), '64 lượt · 5 công cụ · 18 phiên');
+  assert.equal(chatSummary({ turns: 3, toolCalls: 0, sessions: 1 }), '3 lượt');
+  assert.equal(chatSummary({ turns: 0, toolCalls: 0, sessions: 1 }), 'Chưa có lượt nào');
+  assert.equal(chatLabel({ chatName: 'AI Y Tế', title: 'x' }), 'AI Y Tế');
+  assert.equal(chatLabel({ chatName: '', title: 'Báo cáo sáng', source: 'cron' }), 'Báo cáo sáng');
   const { sourceCount } = await import('./views/kb.js');
   assert.equal(sourceCount({ files: 1214, links: 3 }), '1.214 tệp · 3 link');
   assert.equal(sourceCount({ files: 0, links: 2 }), '2 link');

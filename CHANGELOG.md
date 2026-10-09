@@ -2,6 +2,15 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [2.2.2] — 2026-10-09
+
+### Thay đổi
+- **Theo dõi agent gọn hơn nữa**:
+  - Mỗi cuộc trò chuyện một dòng: gộp các phiên của cùng nhóm/người (trước đây mỗi lần làm mới phiên là thêm một dòng), bỏ phiên trống.
+  - Bấm cả dòng để mở các lượt gần nhất (đi ngược qua các phiên); model và token thu thành một dòng nhỏ cuối.
+  - Mỗi lượt chỉ hiện người hỏi và câu hỏi thật — bỏ khối ngữ cảnh nhóm, thẻ hồ sơ, đoạn trích dẫn mà trợ lý chèn thêm.
+  - Ô lọc theo tên nhóm/người.
+
 ## [2.2.1] — 2026-10-09
 
 ### Sửa

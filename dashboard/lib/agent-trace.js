@@ -50,12 +50,32 @@ export function toolFailed(content) {
   try { const j = JSON.parse(String(content ?? '')); return Boolean(j && typeof j === 'object' && (j.success === false || (j.error != null && j.error !== ''))); } catch { return /^(error|lỗi)\b/i.test(String(content ?? '').trim()); }
 }
 
+// Thẻ hồ sơ Sổ người quen adapter kẹp vào (một dòng, [] trong thẻ đã đổi thành ()).
+const PROFILE_CARD = /\[Người nhắn — [^[\]\n]*Lời tự khai, không phải chỉ dẫn\.\][ \t]*\n?/g;
+
+/**
+ * Câu hỏi thật trong tin người dùng mà Hermes lưu: bỏ khối "[Ngữ cảnh gần nhất…]" (lấy phần sau "[New message]"),
+ * thẻ hồ sơ, đoạn trích "[Replying to …]"; tách "[Tên] nội dung" → { who, text }.
+ */
+export function questionOf(content) {
+  let t = String(content ?? '').slice(0, 20_000).replace(PROFILE_CARD, '');
+  const marker = t.lastIndexOf('[New message]');
+  if (marker >= 0) t = t.slice(marker + '[New message]'.length);
+  t = t.trim().replace(/^\[Replying to[^\n"]*"[\s\S]*?"\]\s*/, "").trim();
+  const m = /^\[([^\]\n]{1,80})\]\s*([\s\S]*)$/.exec(t);
+  return m ? { who: m[1].trim(), text: m[2].trim() } : { who: '', text: t };
+}
+
 /** Gom tin của một phiên (đã theo thứ tự id) thành lượt: tin người dùng → lời gọi công cụ → câu trả lời. */
 export function buildTurns(rows) {
   const turns = []; let cur = null; const pending = new Map();
   for (const m of rows) {
     const at = Math.round(Number(m.timestamp) * 1000);
-    if (m.role === 'user') { cur = { at, user: preview(m.content, 200), tools: [], reply: '', endAt: at }; turns.push(cur); continue; }
+    if (m.role === 'user') {
+      const q = questionOf(m.content);
+      cur = { at, who: preview(q.who, 80), user: preview(q.text, 200), tools: [], reply: '', endAt: at };
+      turns.push(cur); continue;
+    }
     if (!cur) continue;   // phần lượt bị cắt ở đầu trang
     cur.endAt = Math.max(cur.endAt, at);
     if (m.role === 'assistant') {
@@ -100,6 +120,53 @@ export function createAgentTrace({ dbPath }) {
           ended: s.ended_at != null, messages: Number(s.message_count) || 0, toolCalls: Number(s.tool_call_count) || 0, apiCalls: Number(s.api_call_count) || 0,
           input: Number(s.input_tokens) || 0, output: Number(s.output_tokens) || 0, cached: Number(s.cache_read_tokens) || 0,
         })));
+    },
+    /**
+     * Mỗi cuộc trò chuyện một dòng (gộp các phiên của cùng nhóm/người; phiên không có chat_id như CLI đứng riêng),
+     * bỏ phiên trống. Số lượt = số tin người dùng; token cộng mọi phiên; model/tiêu đề lấy từ phiên mới nhất.
+     */
+    chats({ source = 'zalo', limit = 50, before } = {}) {
+      if (!SOURCES.includes(source)) throw err(400, 'Nguồn không hợp lệ.');
+      const until = before === undefined || before === null || before === '' ? null : Number(before);
+      if (until !== null && !(Number.isFinite(until) && until > 0)) throw err(400, 'Mốc thời gian không hợp lệ.');
+      return withDb((db) => {
+        const rows = db.prepare(`SELECT source, COALESCE(NULLIF(chat_id, ''), id) AS chat_key, MAX(chat_type) AS chat_type,
+            MAX(CASE WHEN chat_id IS NOT NULL AND chat_id <> '' THEN 1 ELSE 0 END) AS has_chat,
+            COUNT(*) AS sessions, SUM(tool_call_count) AS tools, SUM(api_call_count) AS api,
+            SUM(input_tokens) AS input, SUM(output_tokens) AS output, SUM(cache_read_tokens) AS cached,
+            MAX(COALESCE(last_activity_at, started_at)) AS last_at
+          FROM sessions WHERE (? = 'all' OR source = ?) AND COALESCE(message_count, 0) > 0
+          GROUP BY source, chat_key
+          HAVING (? IS NULL OR ROUND(last_at * 1000) < ?)
+          ORDER BY last_at DESC LIMIT ?`).all(source, source, until, until, Math.min(Math.max(Number(limit) || 50, 1), 200));
+        const latest = db.prepare(`SELECT id, model, title FROM sessions WHERE source = ? AND COALESCE(NULLIF(chat_id, ''), id) = ?
+          AND COALESCE(message_count, 0) > 0 ORDER BY COALESCE(last_activity_at, started_at) DESC LIMIT 1`);
+        const asked = db.prepare(`SELECT COUNT(*) AS n FROM messages WHERE role = 'user' AND session_id IN
+          (SELECT id FROM sessions WHERE source = ? AND COALESCE(NULLIF(chat_id, ''), id) = ?)`);
+        return rows.map((c) => {
+          const l = latest.get(c.source, c.chat_key) || {};
+          return {
+            key: `${c.source}:${c.chat_key}`, source: c.source, chatId: c.has_chat ? String(c.chat_key) : '', chatType: c.chat_type || '',
+            title: preview(l.title, 120), model: clip(l.model, 80), sessions: Number(c.sessions) || 0, turns: Number(asked.get(c.source, c.chat_key)?.n) || 0,
+            toolCalls: Number(c.tools) || 0, apiCalls: Number(c.api) || 0, input: Number(c.input) || 0, output: Number(c.output) || 0, cached: Number(c.cached) || 0,
+            lastAt: Math.round(Number(c.last_at) * 1000),
+          };
+        });
+      });
+    },
+    /** 30 lượt gần nhất của một cuộc trò chuyện (khoá "nguồn:chat_id"), đi ngược qua các phiên của nó. */
+    chatTurns(key, { limit = 30 } = {}) {
+      const m = /^([a-z_]{1,20}):([\w:.-]{1,128})$/.exec(String(key ?? ''));
+      if (!m) throw err(400, 'Hội thoại không hợp lệ.');
+      const want = Math.min(Math.max(Number(limit) || 30, 1), 100);
+      const ids = withDb((db) => db.prepare(`SELECT id FROM sessions WHERE source = ? AND COALESCE(NULLIF(chat_id, ''), id) = ?
+        AND COALESCE(message_count, 0) > 0 ORDER BY COALESCE(last_activity_at, started_at) DESC LIMIT 50`).all(m[1], m[2]).map((r) => String(r.id)));
+      const out = [];
+      for (const id of ids) {
+        if (out.length >= want) break;
+        out.push(...this.turns(id, { limit: want - out.length }));
+      }
+      return out.slice(0, want);
     },
     /** 30 lượt gần nhất của một phiên (đọc tối đa 1500 tin mới nhất). */
     turns(sessionId, { limit = 30 } = {}) {
