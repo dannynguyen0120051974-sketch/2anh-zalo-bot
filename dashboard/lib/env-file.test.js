@@ -13,6 +13,8 @@ test('chỉ đọc/ghi khoá được phép — khoá khác ném lỗi, không b
   writeFileSync(f, 'OPENAI_API_KEY=sk-bimat\nZALO_ALLOWED_USERS=1234567890123456\n');
   assert.equal(readEnvKey(f, K), '1234567890123456');
   assert.throws(() => readEnvKey(f, 'OPENAI_API_KEY'), /không nằm trong danh sách/);
+  // Kho tri thức tự học đọc địa chỉ OpenViking của provider zalo_memory.
+  assert.equal(readEnvKey(f, 'OPENVIKING_ENDPOINT'), null);
   assert.throws(() => writeEnvKey(f, 'OPENAI_API_KEY', '1'), /không nằm trong danh sách/);
 });
 

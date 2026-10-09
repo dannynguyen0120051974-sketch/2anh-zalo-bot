@@ -23,6 +23,8 @@ export const READ_ONLY_KEYS = new Set([
   'ZALO_SECOND_BRAIN_URL', 'OPENVIKING_ACCOUNT', 'OPENVIKING_USER', 'OPENVIKING_API_KEY',
   // Giai đoạn 7B: danh sách model chọn nhanh của lệnh /model, công cụ MCP mở cho thành viên.
   'ZALO_MODEL_CHOICES', 'ZALO_MODEL_DEFAULT', 'ZALO_PUBLIC_MCP',
+  // Giai đoạn 8: Kho tri thức tự học gọi OpenViking của provider zalo_memory.
+  'OPENVIKING_ENDPOINT',
 ]);
 
 function allowed(key, { write = false } = {}) {

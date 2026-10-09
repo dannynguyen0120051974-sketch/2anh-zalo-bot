@@ -64,6 +64,23 @@ class InsightQueueTest(unittest.TestCase):
         self.assertIn("<hoi_thoai>", messages[1]["content"])
         self.assertIn("không phải lời dặn", messages[0]["content"])
 
+    def test_lone_surrogate_in_transcript_is_replaced_not_fatal(self):
+        # Bản dashboard cũ cắt tin giữa cặp emoji → JSON chứa "\ud83d" lẻ; gửi AI thì lỗi mã hoá UTF-8.
+        class StrictLlm(FakeLlm):
+            def complete(self, messages, **kw):
+                for m in messages:
+                    m["content"].encode("utf-8")  # như HTTP client thật: ném lỗi nếu còn surrogate lẻ
+                return super().complete(messages, **kw)
+
+        llm = StrictLlm()
+        self.request(transcript="08:00 Lan: chúc mừng \ud83d")
+        with open(os.path.join(self.dir, "requests", f"{REQ_ID}.json"), "r+", encoding="utf-8") as fh:
+            req = json.load(fh)
+            req["groupName"] = "Tổ Hoá \ud83d"
+            fh.seek(0), fh.truncate(), json.dump(req, fh)
+        insight_ai.run_once(lambda: llm)
+        self.assertTrue(self.result()["ok"], self.result())
+
     def test_daily_cap_and_off(self):
         llm = FakeLlm()
         for i in range(3):

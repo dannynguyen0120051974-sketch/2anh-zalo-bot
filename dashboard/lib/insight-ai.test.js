@@ -65,3 +65,12 @@ test('đoạn hội thoại gửi AI: theo thời gian, nhãn ảnh không kèm 
   assert.equal(text, '07/10 08:00 Lan: Họp tổ thứ Hai\n07/10 08:01 Minh: [Ảnh]\n07/10 08:03 Bot: Dạ em ghi nhận');
   assert.equal(deps.store.groupTranscript('200', { days: 7, nowMs: base + 3_600_000, maxChars: 40 }), '07/10 08:03 Bot: Dạ em ghi nhận', 'giữ tin mới nhất khi phải cắt');
 });
+
+test('đoạn hội thoại gửi AI: cắt tin dài không chẻ đôi emoji', (t) => {
+  const deps = makeDeps(t);
+  const base = Date.UTC(2026, 9, 7, 1, 0);
+  seedHistory(deps, { messages: [chatMsg({ threadId: '200', threadType: 1, senderName: 'Lan', text: `${'a'.repeat(299)}😀😀`, ts: base })] });
+  const text = deps.store.groupTranscript('200', { days: 7, nowMs: base + 3_600_000 });
+  assert.ok(text.isWellFormed(), 'không còn nửa cặp surrogate — Python sẽ không mã hoá được');
+  assert.ok(text.endsWith(`${'a'.repeat(299)}😀`));
+});

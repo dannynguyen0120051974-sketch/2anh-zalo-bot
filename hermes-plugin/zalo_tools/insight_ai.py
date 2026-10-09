@@ -166,6 +166,8 @@ def process_request(path: Path, llm: Any, *, limit: Optional[int] = None) -> Dic
             return {"ok": False, "error": "Yêu cầu quá lớn — chọn khoảng thời gian ngắn hơn."}
         req = json.loads(path.read_text(encoding="utf-8"))
         transcript = str(req.get("transcript") or "")[:MAX_TRANSCRIPT].translate(_ANGLE)
+        # Surrogate lẻ (emoji bị chẻ ở dashboard cũ) → "?" thay vì làm hỏng cả lần gọi AI.
+        transcript = transcript.encode("utf-8", "replace").decode("utf-8")
         if not transcript.strip():
             return {"ok": False, "error": "Nhóm chưa có tin nào trong khoảng này để tóm tắt."}
     except (OSError, ValueError, AttributeError):
@@ -178,7 +180,7 @@ def process_request(path: Path, llm: Any, *, limit: Optional[int] = None) -> Dic
         return {"ok": False, "error": "Máy chủ đang bận — bấm Tóm tắt lại sau ít phút."}
     if not has_quota:
         return {"ok": False, "error": "Đã hết lượt tóm tắt hôm nay — thử lại ngày mai (người cài đặt có thể đổi ZALO_INSIGHT_DAILY)."}
-    group = _clip(req.get("groupName"), 80).translate(_ANGLE)
+    group = _clip(req.get("groupName"), 80).translate(_ANGLE).encode("utf-8", "replace").decode("utf-8")
     try:
         days = int(req.get("days") or 0)
     except (TypeError, ValueError):

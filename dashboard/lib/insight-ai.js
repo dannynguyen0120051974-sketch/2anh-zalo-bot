@@ -38,7 +38,7 @@ export function createInsightAi({ dir, now = Date.now, newId = () => randomBytes
         || readdirSafe(reqDir).some((f) => f.endsWith(CLAIMED) && age(join(reqDir, f)) <= PENDING_TIMEOUT_MS);
       if (busy) throw err(409, 'Đang tóm tắt một nhóm khác — đợi xong rồi bấm lại.');
       const id = newId();
-      writeJsonAtomic(join(reqDir, `${id}.json`), { v: 1, id, groupId: String(groupId), groupName: String(groupName || '').slice(0, 80), days, transcript, by: String(by), createdAt: now() });
+      writeJsonAtomic(join(reqDir, `${id}.json`), { v: 1, id, groupId: String(groupId), groupName: Array.from(String(groupName || '')).slice(0, 80).join('').toWellFormed(), days, transcript, by: String(by), createdAt: now() });
       return id;
     },
     /** `{ status: 'pending' | 'done' | 'timeout', result? }`; id lạ → 400; không có → 404. */

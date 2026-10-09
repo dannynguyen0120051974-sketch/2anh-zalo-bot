@@ -71,7 +71,8 @@ export function groupTranscriptQuery(db, account, threadId, { days = 7, nowMs = 
   let used = 0;
   for (const r of rows) {
     const t = new Date(Number(r.timestamp_ms) + VN_S * 1000).toISOString();
-    const body = MSG_LABELS[r.msg_type] || String(r.text || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+    // Cắt theo ký tự (không theo đơn vị UTF-16) để không chẻ đôi emoji — nửa cặp surrogate làm AI phía Python lỗi mã hoá.
+    const body = MSG_LABELS[r.msg_type] || Array.from(String(r.text || '').replace(/\s+/g, ' ').trim()).slice(0, 300).join('').toWellFormed();
     if (!body) continue;
     const line = `${t.slice(8, 10)}/${t.slice(5, 7)} ${t.slice(11, 16)} ${r.is_self ? 'Bot' : (r.sender_name || 'Thành viên')}: ${body}`;
     if (used + line.length + 1 > maxChars) break;

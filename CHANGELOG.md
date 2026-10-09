@@ -2,6 +2,12 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [2.1.2] — 2026-10-09
+
+### Sửa
+- Dashboard › Trí nhớ › **Kho tri thức tự học** báo "Lỗi bên trong dashboard" (500) ở mọi máy: dashboard đọc `OPENVIKING_ENDPOINT` trong `.env` của Hermes nhưng khoá này chưa nằm trong danh sách khoá được phép đọc.
+- **Insight nhóm › Tóm tắt AI** hỏng ("gọi AI lỗi … surrogates not allowed") khi nhóm có tin dài chứa emoji: dashboard cắt tin 300 ký tự theo đơn vị UTF-16 nên chẻ đôi emoji. Nay cắt theo ký tự; phía trợ lý cũng thay nửa ký tự lẻ bằng "?" thay vì làm hỏng cả lần tóm tắt (áp dụng cho cả tên nhóm).
+
 ## [2.1.1] — 2026-10-09
 
 Bản lớn **Dashboard v2**: gom toàn bộ các bản 1.19.0 → 1.28.1 thành một mốc phiên bản mới. Không đổi mã so với 1.28.1; chi tiết từng phần xem các mục bên dưới.
