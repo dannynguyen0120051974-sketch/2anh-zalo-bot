@@ -148,6 +148,17 @@ test('phân quyền: gộp nhóm của bot với tệp, so thay đổi, nhãn tr
   assert.equal(same[0].custom, false, 'mục trong tệp trùng hẳn mặc định thì không hiện "Chỉnh riêng"');
 });
 
+test('phân quyền: nhóm trong danh sách cũ "chỉ chủ nhân" (Cấu hình) hiện đúng trạng thái; nhóm đã chỉnh riêng thì không', async () => {
+  const { mergeGroups, groupBadge } = await import('./views/permissions.js');
+  const defaults = { active: true, replyOnlyTagged: true, features: { web: true } };
+  const perms = { defaults, legacyOwnerOnly: ['200', '300'], groups: { '300': { name: 'CLB', custom: true, ...defaults } } };
+  const [a, b] = mergeGroups([{ id: '200', name: 'Vibe', members: 9 }, { id: '300', name: 'CLB', members: 5 }], perms);
+  assert.equal(a.ownerOnly, true);
+  assert.deepEqual(groupBadge(a), { kind: 'danger', text: 'Chỉ chủ nhân (Cấu hình)' });
+  assert.equal(b.ownerOnly, false, 'đã có mục riêng → phân quyền thắng');
+  assert.equal(groupBadge(b), null);
+});
+
 test('phân quyền: hỏi trước khi bỏ thay đổi chưa lưu; nhóm chỉ còn trong tệp về mặc định thì rời danh sách', async () => {
   const { mayLeave, staysListed, LEAVE_MSG, DEFAULTS_KEY } = await import('./views/permissions.js');
   const asked = [];

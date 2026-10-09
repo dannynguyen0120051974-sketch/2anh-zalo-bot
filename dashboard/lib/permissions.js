@@ -387,7 +387,7 @@ export function createPermissionsStore({ file, globalReplyOnlyTagged = true, dmE
      * Lưu một nhóm: chỉ ghi khoá khác mặc định (spec §8.1), để nút chưa đụng tới đi theo mặc định sau này.
      * Không còn khoá nào khác → xoá mục của nhóm. Trả `{ state, changed: string[] }` (các khoá khác mặc định).
      */
-    setGroup(groupId, settings, name = '') {
+    setGroup(groupId, settings, name = '', { keep = false } = {}) {
       if (!GROUP_ID.test(groupId)) throw new InvalidPermissions('Nhóm không hợp lệ — chọn lại từ danh sách.');
       const { data } = read();
       const prevName = data.groups[groupId]?.name;
@@ -408,6 +408,8 @@ export function createPermissionsStore({ file, globalReplyOnlyTagged = true, dmE
         throw new InvalidPermissions(`Đã có ${MAX_GROUPS} nhóm được chỉnh riêng, chưa thêm được nhóm nữa — đưa bớt nhóm về mặc định rồi thử lại.`);
       }
       if (Object.keys(entry).length) data.groups[groupId] = cleanName ? { name: cleanName, ...entry } : entry;
+      // `keep`: nhóm thuộc danh sách cũ "chỉ chủ nhân" — mục chỉ có tên vẫn là "đã phân quyền riêng" với bot.
+      else if (keep) data.groups[groupId] = { name: cleanName || `Nhóm …${String(groupId).slice(-4)}` };
       else delete data.groups[groupId];
       write(data);
       return { state: view({ data, exists: true, corrupt: false }), changed };

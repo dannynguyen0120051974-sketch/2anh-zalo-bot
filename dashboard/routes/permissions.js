@@ -41,7 +41,12 @@ export function describeQuotas(s) {
   return [`Mặc định ${s.quota} lượt/người/ngày`, s.people.length ? `${s.people.length} người có hạn mức riêng` : 'không ai có hạn mức riêng'].join(' · ');
 }
 
-export function permissionRoutes({ permissions, sidecar, threadNames, activity, platform = process.platform, studioPolicyFile = '' }) {
+export function permissionRoutes({ permissions, sidecar, threadNames, activity, settings, platform = process.platform, studioPolicyFile = '' }) {
+  // Danh sách cũ "Nhóm chỉ chủ nhân gọi được" (Cấu hình / config.yaml): nhóm chưa phân quyền riêng mà nằm trong đó thì
+  // thành viên vẫn bị bỏ qua — trang Phân quyền phải nói ra, không để tưởng nhóm đang mở.
+  const legacyOwnerOnly = () => {
+    try { const v = settings?.view().find((x) => x.id === 'ownerOnlyGroups')?.value; return Array.isArray(v) ? v.map(String) : []; } catch { return []; }
+  };
   const r = express.Router();
   const policy = () => studioPolicy(platform, studioPolicyFile);   // đọc lại mỗi lần: plugin có thể ghi sau
   const fail = (res, err, fallback) => {
@@ -51,7 +56,7 @@ export function permissionRoutes({ permissions, sidecar, threadNames, activity, 
   };
 
   r.get('/permissions', requireAuth, (req, res) => {
-    try { res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, studioFeatures: STUDIO_FEATURES, studioPolicy: policy(), ...permissions.get() }); } catch (err) { fail(res, err, READ_FAIL); }
+    try { res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, studioFeatures: STUDIO_FEATURES, studioPolicy: policy(), legacyOwnerOnly: legacyOwnerOnly(), ...permissions.get() }); } catch (err) { fail(res, err, READ_FAIL); }
   });
 
   r.get('/groups', requireAuth, async (req, res) => {
@@ -75,7 +80,7 @@ export function permissionRoutes({ permissions, sidecar, threadNames, activity, 
       try {
         activity.append({ actor: req.user.username, action: 'permissions_defaults', detail: describeSettings(s) });
       } catch (err) { console.error('[dashboard] không ghi được Nhật ký phân quyền:', err); }
-      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, studioFeatures: STUDIO_FEATURES, studioPolicy: policy(), ...state });
+      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, studioFeatures: STUDIO_FEATURES, studioPolicy: policy(), legacyOwnerOnly: legacyOwnerOnly(), ...state });
     } catch (err) { fail(res, err, SAVE_FAIL); }
   });
 
@@ -86,7 +91,7 @@ export function permissionRoutes({ permissions, sidecar, threadNames, activity, 
       try {
         activity.append({ actor: req.user.username, action: 'permissions_dm', detail: describeDm(s) });
       } catch (err) { console.error('[dashboard] không ghi được Nhật ký phân quyền:', err); }
-      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, studioFeatures: STUDIO_FEATURES, studioPolicy: policy(), ...state });
+      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, studioFeatures: STUDIO_FEATURES, studioPolicy: policy(), legacyOwnerOnly: legacyOwnerOnly(), ...state });
     } catch (err) { fail(res, err, SAVE_FAIL); }
   });
 
@@ -97,7 +102,7 @@ export function permissionRoutes({ permissions, sidecar, threadNames, activity, 
       try {
         activity.append({ actor: req.user.username, action: 'permissions_studio', detail: describeQuotas(s) });
       } catch (err) { console.error('[dashboard] không ghi được Nhật ký phân quyền:', err); }
-      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, studioFeatures: STUDIO_FEATURES, studioPolicy: policy(), ...state });
+      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, studioFeatures: STUDIO_FEATURES, studioPolicy: policy(), legacyOwnerOnly: legacyOwnerOnly(), ...state });
     } catch (err) { fail(res, err, SAVE_FAIL); }
   });
 
@@ -108,14 +113,15 @@ export function permissionRoutes({ permissions, sidecar, threadNames, activity, 
     try { s = parseSettings(req.body); } catch (err) { return fail(res, err, SAVE_FAIL); }
     try {
       const name = (await threadNames.load()).get(groupId) || '';
-      const { state, changed } = permissions.setGroup(groupId, s, name);
+      // Nhóm thuộc danh sách cũ "chỉ chủ nhân": luôn giữ mục riêng (kể cả khi bằng mặc định) để phân quyền này thắng danh sách đó.
+      const { state, changed } = permissions.setGroup(groupId, s, name, { keep: legacyOwnerOnly().includes(groupId) });
       try {
         activity.append({
           actor: req.user.username, action: 'permissions_group',
           detail: `${name || fallbackName(groupId, 1)}: ${changed.length ? describeSettings(s) : 'dùng mặc định'}`,
         });
       } catch (err) { console.error('[dashboard] không ghi được Nhật ký phân quyền:', err); }
-      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, studioFeatures: STUDIO_FEATURES, studioPolicy: policy(), ...state });
+      res.json({ ok: true, features: FEATURES, dmFeatures: DM_FEATURES, studioFeatures: STUDIO_FEATURES, studioPolicy: policy(), legacyOwnerOnly: legacyOwnerOnly(), ...state });
     } catch (err) { fail(res, err, SAVE_FAIL); }
   });
 

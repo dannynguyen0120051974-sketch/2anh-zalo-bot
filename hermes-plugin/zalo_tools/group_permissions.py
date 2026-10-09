@@ -230,7 +230,10 @@ def _load() -> Dict[str, Any]:
 
 
 def group_settings(group_id: str) -> Dict[str, Any]:
-    """Quyền đã gộp của một nhóm: ``{active, reply_only_tagged, features}``."""
+    """Quyền đã gộp của một nhóm: ``{active, reply_only_tagged, features, custom}``.
+
+    ``custom``: nhóm có mục riêng trong tệp — phân quyền riêng này thắng danh sách cũ ``owner_only_groups``.
+    """
     data = _load()
     defaults = data.get("defaults") or {}
     entry = (data.get("groups") or {}).get(str(group_id or "")) or {}
@@ -239,7 +242,7 @@ def group_settings(group_id: str) -> Dict[str, Any]:
     features.update(entry.get("features") or {})
     active = entry.get("active", defaults.get("active", True))
     reply = entry.get("replyOnlyTagged", defaults.get("replyOnlyTagged"))
-    return {"active": active, "reply_only_tagged": reply, "features": features}
+    return {"active": active, "reply_only_tagged": reply, "features": features, "custom": bool(entry)}
 
 
 def tool_off(tool_name: str) -> bool:

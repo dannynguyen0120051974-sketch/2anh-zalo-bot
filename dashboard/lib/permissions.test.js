@@ -43,6 +43,15 @@ test('lưu nhóm chỉ ghi khoá khác mặc định; trùng mặc định thì 
   assert.deepEqual(s.disk().groups, {});
 });
 
+test('nhóm thuộc danh sách cũ "chỉ chủ nhân": lưu bằng mặc định vẫn giữ mục riêng (chỉ tên) để thắng danh sách đó', (t) => {
+  const s = setup(t);
+  s.store.setGroup(G, settings({}), 'CLB', { keep: true });
+  assert.deepEqual(s.disk().groups, { [G]: { name: 'CLB' } });
+  assert.equal(s.store.get().groups[G].active, true, 'mục chỉ tên đi theo mặc định');
+  s.store.setGroup(G, settings({}), 'CLB');
+  assert.deepEqual(s.disk().groups, {}, 'không thuộc danh sách cũ thì vẫn xoá như trước');
+});
+
 test('ghi nguyên tử, giữ .bak bản trước, quyền 600', (t) => {
   const s = setup(t);
   s.store.setDefaults(settings({}, { video: false }));

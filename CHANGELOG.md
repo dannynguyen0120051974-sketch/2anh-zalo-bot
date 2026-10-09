@@ -2,6 +2,14 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [2.2.1] — 2026-10-09
+
+### Sửa
+- **Phân quyền nhóm không có tác dụng** với nhóm nằm trong danh sách cũ "Nhóm chỉ chủ nhân gọi được bot" (`owner_only_groups` trong config.yaml / `ZALO_OWNER_ONLY_GROUPS`): danh sách này chặn thành viên trước khi bot đọc phân quyền dashboard, và trang Phân quyền không hiện ra.
+  - Nhóm đã phân quyền riêng trên dashboard: phân quyền đó thắng danh sách cũ (áp ngay, không cần khởi động lại).
+  - Trang Phân quyền đánh dấu nhóm còn bị danh sách cũ chặn ("Chỉ chủ nhân (Cấu hình)") kèm giải thích; lưu nhóm đó (kể cả bằng mặc định) luôn giữ mục riêng để thắng danh sách cũ.
+  - Ghi chú ở Cấu hình: nên chỉnh ở Phân quyền Bot.
+
 ## [2.2.0] — 2026-10-09
 
 ### Thay đổi

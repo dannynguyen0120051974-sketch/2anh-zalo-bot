@@ -358,6 +358,18 @@ class AdapterGroupRulesTest(PermissionsFile, AdapterHarness, unittest.IsolatedAs
         self.assertNotIn("Nhóm này đang tắt", self.handled[0].channel_context or "")
         self.assertNotIn("Nhóm này đang tắt", self.handled[0].text)
 
+    async def test_custom_group_permissions_override_legacy_owner_only_list(self):
+        # Sự cố 09/10: nhóm nằm trong owner_only_groups cũ (config.yaml) — mở trên Phân quyền mà thành viên vẫn bị bỏ qua.
+        adapter = self.make_adapter()
+        adapter._owner_only_groups = {GROUP_A, GROUP_B}
+        self.write({"version": 1, "defaults": {}, "groups": {GROUP_A: {"active": True, "replyOnlyTagged": False}}})
+        await self.say(adapter, "m1", MEMBER, "chào bot", tagged=False)
+        self.assertEqual(len(self.handled), 1, "nhóm đã phân quyền riêng: phân quyền thắng danh sách cũ")
+        await self.say(adapter, "m2", MEMBER, "@Lăng Tiêu chào", thread=GROUP_B)
+        self.assertEqual(len(self.handled), 1, "nhóm chưa chỉnh riêng: danh sách cũ vẫn áp")
+        await self.say(adapter, "m3", OWNER, "@Lăng Tiêu chào", thread=GROUP_B)
+        self.assertEqual(len(self.handled), 2, "chủ nhân không bao giờ bị chặn")
+
     async def test_people_off_skips_profile_for_members_but_not_owner(self):
         from plugins.zalo_tools import people
 

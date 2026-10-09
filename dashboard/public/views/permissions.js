@@ -30,7 +30,9 @@ export function mergeGroups(groups, perms) {
     const own = perms.groups[id];
     // Mục trong tệp có thể trùng hẳn mặc định (tệp của bản cũ từng ghi cờ tag vào từng nhóm) — khi đó không coi là chỉnh riêng.
     const custom = Boolean(own) && !sameSettings(own, perms.defaults);
-    out.push({ id, name: name || `Nhóm …${id.slice(-4)}`, members, custom, ...pick(own || perms.defaults) });
+    // Danh sách cũ ở Cấu hình chỉ còn tác dụng với nhóm chưa có mục riêng trong tệp (bot: mục riêng thắng).
+    const ownerOnly = !own && (perms.legacyOwnerOnly || []).includes(id);
+    out.push({ id, name: name || `Nhóm …${id.slice(-4)}`, members, custom, ownerOnly, ...pick(own || perms.defaults) });
   };
   for (const g of groups || []) add(g.id, g.name, g.members);
   for (const [id, g] of Object.entries(perms.groups)) add(id, g.name, null);
@@ -60,6 +62,7 @@ export function settingsPayload(d, { isGroup, studioFeatures = [], policy }) {
 
 /** Nhãn ngắn cạnh tên nhóm trong danh sách; null khi nhóm đang đúng mặc định. */
 export function groupBadge(g) {
+  if (g.ownerOnly) return { kind: 'danger', text: 'Chỉ chủ nhân (Cấu hình)' };
   if (!g.active) return { kind: 'danger', text: 'Đang tắt' };
   const off = Object.values(g.features).filter((v) => !v).length;
   if (off) return { kind: 'warn', text: `Tắt ${off} tính năng` };
@@ -111,6 +114,7 @@ function Editor({ target, value, defaults, features, studioFeatures, studioPolic
       <h2>${target.name}</h2>
       ${isGroup && target.members ? html`<span class="tag">${target.members} thành viên</span>` : null}
     </header>
+    ${isGroup && target.ownerOnly ? html`<${Notice} kind="warn">Nhóm này đang nằm trong danh sách cũ <strong>Nhóm chỉ chủ nhân gọi được bot</strong> (trang Cấu hình): thành viên tag bot thì bot im. Lưu phân quyền riêng cho nhóm ở đây thì phân quyền này thắng danh sách đó.<//>` : null}
     <div class="perm-note-row">
       <p class="muted small perm-note">${isGroup
         ? 'Chỉ áp cho thành viên trong nhóm này. Chủ nhân bot luôn dùng được mọi tính năng.'

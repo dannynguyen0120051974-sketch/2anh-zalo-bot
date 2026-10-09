@@ -856,17 +856,19 @@ class ZaloAdapter(BasePlatformAdapter):
             logger.debug("[zalo] %s nằm trong ignore_sender_uids — chỉ giữ làm ngữ cảnh", sender_uid)
             return
 
-        # Nhóm chỉ chủ nhân gọi được: người khác tag hay gọi tên cũng không đánh
-        # thức bot, nhưng tin của họ đã nằm trong ngữ cảnh ở trên để tổng hợp.
-        if is_group and thread_id in self._owner_only_groups and not self._is_owner(sender_uid):
-            logger.debug("[zalo] nhóm %s chỉ chủ nhân gọi được — %s chỉ giữ làm ngữ cảnh", thread_id, sender_uid)
-            return
-
         is_owner = self._is_owner(sender_uid)
         # Bảng phân quyền nhóm của dashboard (permissions.json, đọc lại khi tệp
         # đổi). Nhóm bị tắt: tin của thành viên chỉ giữ làm ngữ cảnh như trên;
         # chủ nhân không bao giờ bị chặn bởi tệp này.
         group_rules = self._group_rules(thread_id) if is_group else None
+
+        # Nhóm chỉ chủ nhân gọi được (danh sách cũ owner_only_groups): người khác tag hay gọi tên cũng
+        # không đánh thức bot, tin của họ đã nằm trong ngữ cảnh ở trên. Nhóm đã phân quyền riêng trên
+        # dashboard thì phân quyền đó thắng — chỉnh ở Phân quyền phải có tác dụng ngay.
+        if (is_group and thread_id in self._owner_only_groups and not is_owner
+                and not (group_rules and group_rules.get("custom"))):
+            logger.debug("[zalo] nhóm %s chỉ chủ nhân gọi được — %s chỉ giữ làm ngữ cảnh", thread_id, sender_uid)
+            return
         # Nút tính năng khi nhắn riêng (mục "dm"); chủ nhân không bao giờ bị chặn.
         dm_rules = self._dm_rules(sender_uid) if not is_group and not is_owner else None
         if group_rules and not group_rules["active"] and not is_owner:
