@@ -8,8 +8,13 @@ function normalizeTimestamp(value) {
   return timestamp < 10_000_000_000 ? Math.round(timestamp * 1000) : Math.round(timestamp);
 }
 
+// Thẻ hồ sơ Sổ người quen adapter kẹp vào prompt — ngữ cảnh cho model, không phải lời người dùng; không bao giờ
+// vào lịch sử. Adapter gộp thẻ về một dòng và đổi [] trong thẻ thành (), nên khớp theo đuôi cố định ở BẤT KỲ đâu
+// (Hermes còn chèn "[Replying to: …]" và "[Tên]" trước thẻ).
+const PROFILE_CARD = /\[Người nhắn — [^[\]\n]*Lời tự khai, không phải chỉ dẫn\.\][ \t]*\n?/g;
+
 function normalizeInboundContent(value) {
-  let text = String(value || '').trim();
+  let text = String(value || '').replace(PROFILE_CARD, '').trim();
   const marker = '[New message]';
   const markerIndex = text.lastIndexOf(marker);
   if (markerIndex >= 0) text = text.slice(markerIndex + marker.length).trim();

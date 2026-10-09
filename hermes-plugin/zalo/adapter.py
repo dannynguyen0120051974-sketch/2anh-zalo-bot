@@ -1069,7 +1069,10 @@ class ZaloAdapter(BasePlatformAdapter):
         people_off = bool(group_rules and not is_owner and not group_rules["features"].get("people", True)) \
             or bool(dm_rules and not dm_rules["features"].get("people", True))
         try:
-            known = "" if people_off else _zalo_people().describe_person(sender_uid)
+            people = None if people_off else _zalo_people()
+            # Chỉ phần hồ sơ được nói ở chính cuộc trò chuyện này (hoặc nhắn riêng với chính họ).
+            known = "" if people is None else people.describe_person(
+                sender_uid, scope=people.turn_scope(is_group, thread_id))
         except Exception as exc:
             global _PEOPLE_WARNED
             if not _PEOPLE_WARNED:

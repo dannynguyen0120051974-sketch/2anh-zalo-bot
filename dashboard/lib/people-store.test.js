@@ -42,12 +42,22 @@ test('sửa: thay cả hồ sơ, giữ khoá lạ của plugin, ghi người s�
   const p = store.put(A, parsePerson({ name: 'Cô Lan', note: '', fields: [{ key: 'môn', value: 'Hoá' }] }), 'anh');
   assert.equal(p.name, 'Cô Lan');
   const saved = JSON.parse(readFileSync(file, 'utf8'))[A];
-  assert.deepEqual(saved, { name: 'Cô Lan', fields: { 'môn': 'Hoá' }, updated_at: 1_800_000_000, extra: 'giữ', updated_by: 'dashboard:anh' });
+  assert.deepEqual(saved, { name: 'Cô Lan', fields: { 'môn': 'Hoá' }, scopes: { fields: {} }, updated_at: 1_800_000_000, extra: 'giữ', updated_by: 'dashboard:anh' });
   assert.ok(existsSync(`${file}.bak`));
   assert.equal(store.remove(A), true);
   assert.equal(store.remove(A), false);
   assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), {});
   assert.throws(() => store.put('abc', parsePerson({ name: 'x' }), 'anh'), (e) => e.statusCode === 400);
+});
+
+test('sửa trên dashboard: mục giữ nguyên giữ nơi ghi; mục đổi/thêm và ghi chú đổi mất nơi ghi (chỉ còn nhắn riêng)', (t) => {
+  const { file, store } = setup(t, { [A]: {
+    name: 'Lan', note: 'cũ', fields: { lop: '12A1', tai_san: '14 chỉ' },
+    scopes: { fields: { lop: ['g:1'], tai_san: ['g:2'] }, note: ['g:1'] }, updated_at: 1,
+  } });
+  store.put(A, { name: 'Lan', note: 'mới', fields: { lop: '12A1', tai_san: '15 chỉ', mon: 'Hoá' } }, 'anh');
+  const saved = JSON.parse(readFileSync(file, 'utf8'))[A];
+  assert.deepEqual(saved.scopes, { fields: { lop: ['g:1'] } });
 });
 
 test('bot ghi chen giữa lúc đọc và lúc ghi → 409, không đè mất hồ sơ bot vừa ghi', (t) => {

@@ -778,7 +778,8 @@ test('undo không có ID chỉ thu hồi tin mới nhất do bot gửi', async (
   const listener = new EventEmitter();
   listener.requestOldMessages = () => {};
   const api = { listener, undo: (...args) => { calls.push(args); return Promise.resolve({ ok: true }); } };
-  const server = startHermesBridge({ api, profile: { user_id: 'bot' }, port: 0, store: testStore(t), ownerUids: ['owner'] });
+  const store = testStore(t);
+  const server = startHermesBridge({ api, profile: { user_id: 'bot' }, port: 0, store, ownerUids: ['owner'] });
   await new Promise((resolve) => server.once('listening', resolve));
   const ws = new WebSocket(`ws://127.0.0.1:${server.address().port}`);
 
@@ -795,6 +796,11 @@ test('undo không có ID chỉ thu hồi tin mới nhất do bot gửi', async (
     assert.equal(ack.ok, true);
     assert.deepEqual(calls, [[{ msgId: 'mine', cliMsgId: 'minec' }, 'g1', 1]]);
     assert.equal(ack.result.msgId, 'mine');
+    // Sự cố 09/10: tin đã thu hồi vẫn nằm trong lịch sử → công cụ tra lịch sử/dashboard còn đọc được.
+    const mine = store.getHistory('bot', 'g1', 1, 10).find((m) => m.msgId === 'mine');
+    assert.equal(mine.msgType, 'chat.undo');
+    assert.equal(mine.text, '');
+    assert.equal(store.findOwnMessage('bot', 'g1', 1), null, 'không chọn lại tin đã thu hồi');
   } finally {
     ws.close();
     stopHermesBridge();

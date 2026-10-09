@@ -1156,6 +1156,13 @@ async function handleCommand(ws, cmd) {
         String(cmd.threadId),
         threadType,
       );
+      try {
+        if (activeStore && !activeStore.markRecalled(activeAccountId, String(cmd.threadId), threadType, target)) {
+          console.warn('[history] đã thu hồi trên Zalo nhưng không thấy bản lưu nào để đánh dấu');
+        }
+      } catch (error) {
+        console.error('[history] không đánh dấu được tin đã thu hồi:', error?.message || error);
+      }
       if (cmd.reqId) {
         send(ws, {
           type: 'ack', reqId: cmd.reqId, ok: true,

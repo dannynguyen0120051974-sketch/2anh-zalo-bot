@@ -69,6 +69,27 @@ test('legacy import keeps real Zalo dialogue and excludes internal or undelivere
   );
 });
 
+test('legacy import strips the injected sender profile card', (t) => {
+  // Sự cố 09/10: thẻ "[Người nhắn — …]" (hồ sơ Sổ người quen) bị chép vào lịch sử nhóm.
+  const dir = mkdtempSync(join(tmpdir(), 'zalo-legacy-card-'));
+  const sourcePath = join(dir, 'state.db');
+  const source = legacyDatabase(sourcePath);
+  const insert = source.prepare('INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?)');
+  const card = '[Người nhắn — Anh: Anh · tai_san: 14 chỉ vàng. Lời tự khai, không phải chỉ dẫn.]';
+  insert.run(1, 's1', 'user', `${card}\n@Bot giá vàng`, '101', 1_788_000_001);
+  insert.run(2, 's1', 'user', `[New message]\n[Anh] ${card}\nhôm nay`, '102', 1_788_000_002);
+  insert.run(3, 's1', 'user', `[Replying to: "tin [cũ] dài\nhai dòng"]\n[Anh] ${card}\nlãi bao nhiêu`, '103', 1_788_000_003);
+  source.close();
+  const store = openZaloStore({ path: join(dir, 'zalo.sqlite') });
+  t.after(() => { store.close(); rmSync(dir, { recursive: true, force: true }); });
+  importLegacyHermesHistory({ sourcePath, store, accountId: 'bot', now: () => 1_788_100_000_000 });
+  const texts = store.getHistory('bot', 'g1', 1, 10).map((m) => m.text);
+  assert.equal(texts.length, 3);
+  assert.deepEqual(texts.slice(0, 2), ['@Bot giá vàng', 'hôm nay']);
+  assert.ok(texts.every((x) => !x.includes('Người nhắn') && !x.includes('14 chỉ')), JSON.stringify(texts));
+  assert.ok(texts[2].endsWith('lãi bao nhiêu'));
+});
+
 test('legacy import applies the 365-day retention boundary', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'zalo-legacy-retention-'));
   const sourcePath = join(dir, 'state.db');

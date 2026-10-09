@@ -2,6 +2,17 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [2.1.3] — 2026-10-09
+
+### Bảo mật
+- **Sổ người quen theo nơi ghi** — sự cố: tài sản chủ nhân khai ở một nhóm bị bot nhắc lại ở nhóm khác. Hồ sơ trước đây đi theo người nên được kẹp vào mọi cuộc trò chuyện. Nay mỗi mục hồ sơ nhớ nơi nó được nói (`scopes` trong people.json):
+  - chỉ dùng lại ở đúng nhóm/tin nhắn riêng đó, và khi nhắn riêng với chính người đó (trừ điều người khác ghi về họ trong tin nhắn riêng của người khác);
+  - mục cũ chưa có nơi ghi → chỉ dùng khi nhắn riêng với chính người đó; tên luôn dùng được;
+  - `zalo_remember_person` / `zalo_recall_person` / `zalo_list_people` chỉ trả phần dùng được ở cuộc trò chuyện hiện tại; xem đủ cả sổ chỉ khi chủ nhân nhắn riêng với bot (không áp dụng cho việc hẹn giờ gửi vào tin nhắn riêng người khác); liệt kê trong nhóm không lộ ai có trong sổ;
+  - sửa một mục trên dashboard thì mục đó chỉ còn dùng khi nhắn riêng (không đẩy giá trị mới sang nhóm cũ).
+- Nhập lịch sử Hermes cũ không còn chép thẻ hồ sơ "[Người nhắn — …]" vào lịch sử trò chuyện (kể cả tin có trích dẫn trả lời).
+- Bot thu hồi tin của chính nó → nội dung cũng bị xoá khỏi lịch sử (cả bản sao nhập từ Hermes cũ); nhập lại/backfill không khôi phục.
+
 ## [2.1.2] — 2026-10-09
 
 ### Sửa

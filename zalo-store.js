@@ -197,8 +197,9 @@ export function openZaloStore({ path, retentionDays = 365, now = Date.now } = {}
       cli_msg_id = COALESCE(excluded.cli_msg_id, messages.cli_msg_id),
       sender_uid = excluded.sender_uid,
       sender_name = excluded.sender_name,
-      text = excluded.text,
-      msg_type = excluded.msg_type,
+      -- Tin đã thu hồi giữ nguyên trạng thái: backfill/nhập lại không được khôi phục nội dung.
+      text = CASE WHEN messages.msg_type = 'chat.undo' THEN messages.text ELSE excluded.text END,
+      msg_type = CASE WHEN messages.msg_type = 'chat.undo' THEN messages.msg_type ELSE excluded.msg_type END,
       timestamp_ms = excluded.timestamp_ms,
       is_self = excluded.is_self,
       source = CASE WHEN messages.source = 'live' THEN messages.source ELSE excluded.source END,
@@ -341,7 +342,7 @@ export function openZaloStore({ path, retentionDays = 365, now = Date.now } = {}
   function findOwnMessage(accountId, threadId, threadType, ids = null) {
     const conditions = [
       'account_id = ?', 'thread_id = ?', 'thread_type = ?', 'is_self = 1',
-      'msg_id IS NOT NULL', 'cli_msg_id IS NOT NULL',
+      'msg_id IS NOT NULL', 'cli_msg_id IS NOT NULL', "COALESCE(msg_type, '') <> 'chat.undo'",
     ];
     const params = [String(accountId), String(threadId), Number(threadType)];
     if (ids) {
@@ -353,6 +354,32 @@ export function openZaloStore({ path, retentionDays = 365, now = Date.now } = {}
       ORDER BY timestamp_ms DESC, rowid DESC LIMIT 1
     `).get(...params);
     return row ? mapMessage(row) : null;
+  }
+
+  /**
+   * Bot vừa thu hồi tin của chính nó: xoá nội dung khỏi lịch sử (tra lịch sử, dashboard không còn đọc được).
+   * Cùng câu trả lời còn có bản sao không msgId do nhập lịch sử Hermes cũ (legacy-hermes, nguyên văn Markdown) —
+   * khớp theo đầu nội dung đã bỏ dấu câu/định dạng, trong ±30 phút, rồi xoá luôn. Trạng thái giữ khi nhập lại (upsert).
+   */
+  function markRecalled(accountId, threadId, threadType, { msgId, cliMsgId }) {
+    const key = [String(accountId), String(threadId), Number(threadType)];
+    const target = db.prepare(`SELECT text, timestamp_ms FROM messages WHERE account_id = ? AND thread_id = ? AND thread_type = ?
+      AND is_self = 1 AND msg_id = ? AND cli_msg_id = ?`).get(...key, String(msgId), String(cliMsgId));
+    const blank = db.prepare("UPDATE messages SET text = '', msg_type = 'chat.undo', updated_at_ms = ? WHERE rowid = ?");
+    let changed = Number(db.prepare(`UPDATE messages SET text = '', msg_type = 'chat.undo', updated_at_ms = ?
+      WHERE account_id = ? AND thread_id = ? AND thread_type = ? AND is_self = 1 AND msg_id = ? AND cli_msg_id = ?`)
+      .run(Number(now()), ...key, String(msgId), String(cliMsgId)).changes);
+    const head = (value) => String(value || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '').slice(0, 40);
+    const want = head(target?.text);
+    if (want.length >= 12) {
+      const near = db.prepare(`SELECT rowid, text FROM messages WHERE account_id = ? AND thread_id = ? AND thread_type = ?
+        AND is_self = 1 AND msg_type = 'legacy-hermes' AND timestamp_ms BETWEEN ? AND ?`)
+        .all(...key, Number(target.timestamp_ms) - 1_800_000, Number(target.timestamp_ms) + 1_800_000);
+      for (const row of near) {
+        if (head(row.text).startsWith(want)) changed += Number(blank.run(Number(now()), row.rowid).changes);
+      }
+    }
+    return changed;
   }
 
   function pruneMessages() {
@@ -468,6 +495,7 @@ export function openZaloStore({ path, retentionDays = 365, now = Date.now } = {}
     getRange,
     searchHistory,
     findOwnMessage,
+    markRecalled,
     pruneMessages,
     beginAudit,
     finishAudit,

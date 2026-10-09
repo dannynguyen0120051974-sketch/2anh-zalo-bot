@@ -2263,6 +2263,19 @@ async def zalo_video_download(args: Dict[str, Any], **_kw) -> str:
 # chỉ dùng để xưng hô và hiểu ngữ cảnh, không bao giờ dùng để cấp quyền —
 # quyền vẫn chỉ dựa vào ZALO_ALLOWED_USERS.
 
+def _people_scope(turn: Dict[str, Any]) -> str:
+    from .people import turn_scope
+    return turn_scope(bool(turn.get("is_group")), turn.get("thread_id"))
+
+
+def _people_full(turn: Dict[str, Any]) -> bool:
+    """Xem đủ cả sổ: chỉ khi chủ nhân đang nhắn riêng với bot — không phải nhóm, không phải
+    việc hẹn giờ của chủ nhân gửi vào tin nhắn riêng của người khác."""
+    sender = str(turn.get("sender_uid") or "")
+    return (bool(turn.get("is_owner")) and not turn.get("is_group") and bool(sender)
+            and str(turn.get("thread_id") or "") == sender)
+
+
 async def zalo_remember_person(args: Dict[str, Any], **_kw) -> str:
     from .people import remember_person
 
@@ -2292,14 +2305,17 @@ async def zalo_remember_person(args: Dict[str, Any], **_kw) -> str:
             note=args.get("note", ""),
             fields=fields,
             updated_by=sender,
+            scope=_people_scope(turn),
         )
     except ValueError as exc:
         return _err(str(exc))
-    return _ok({"user_id": target, "profile": entry})
+    # Chỉ trả phần dùng được ở đây — hồ sơ đầy đủ có cả điều nói ở cuộc trò chuyện khác.
+    from .people import visible_profile
+    return _ok({"user_id": target, "profile": visible_profile(target, entry, _people_scope(turn), full=_people_full(turn))})
 
 
 async def zalo_recall_person(args: Dict[str, Any], **_kw) -> str:
-    from .people import get_person
+    from .people import get_person, visible_profile
 
     turn = _turn()
     sender = turn.get("sender_uid") or ""
@@ -2310,12 +2326,16 @@ async def zalo_recall_person(args: Dict[str, Any], **_kw) -> str:
     person = get_person(target)
     if not person:
         return _ok({"user_id": target, "profile": None, "note": "chưa có hồ sơ"})
-    return _ok({"user_id": target, "profile": person})
+    # Chỉ phần được nói ở chính cuộc trò chuyện này; chủ nhân nhắn riêng với bot thì xem đủ.
+    return _ok({"user_id": target, "profile": visible_profile(target, person, _people_scope(turn), full=_people_full(turn))})
 
 
 async def zalo_list_people(args: Dict[str, Any], **_kw) -> str:
     from .people import list_people
-    return _ok(list_people(limit=max(1, min(int(args.get("limit", 50) or 50), 200))))
+    turn = _turn()
+    # Trong nhóm chỉ liệt kê phần đã nói ở nhóm đó — câu trả lời ai trong nhóm cũng đọc được.
+    return _ok(list_people(limit=max(1, min(int(args.get("limit", 50) or 50), 200)),
+                           scope=_people_scope(turn), full=_people_full(turn)))
 
 
 async def zalo_forget_person(args: Dict[str, Any], **_kw) -> str:
@@ -3584,7 +3604,8 @@ TOOLS = [
         "Ghi nhớ thông tin người đang trò chuyện để lần sau xưng hô và tư vấn "
         "cho đúng. Gọi khi họ tự giới thiệu — tên, công việc, lĩnh vực, sở "
         "thích, nhu cầu. Chỉ lưu điều họ tự nói ra, đừng suy đoán. Không lưu "
-        "thông tin nhạy cảm như số tài khoản hay mật khẩu.",
+        "thông tin nhạy cảm như số tài khoản hay mật khẩu. Điều ghi ở cuộc trò chuyện nào "
+        "chỉ được dùng lại ở chính cuộc trò chuyện đó và khi nhắn riêng với người đó.",
         {
             "name": {"type": "string", "description": "Tên hoặc cách xưng hô họ muốn."},
             "note": {"type": "string", "description": "Ghi chú ngắn về họ."},

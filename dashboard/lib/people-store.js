@@ -87,6 +87,17 @@ export function createPeopleStore({ file, now = Date.now }) {
       checkSeen(data, uid, expectedUpdatedAt);
       if (!data[uid] && Object.keys(data).length >= 5000) throw err(400, 'Sổ người quen đã đủ 5000 người — xoá bớt hồ sơ cũ trước.');
       const entry = { ...(data[uid] || {}) };
+      // Nơi ghi (plugin, Sổ người quen theo nơi ghi): mục giữ nguyên giá trị thì giữ nơi ghi; mục sửa/thêm ở
+      // dashboard không có nơi ghi → trợ lý chỉ dùng khi nhắn riêng với chính người đó (không đẩy giá trị mới sang nhóm cũ).
+      const oldFields = entry.fields && typeof entry.fields === 'object' ? entry.fields : {};
+      const oldScopes = entry.scopes && typeof entry.scopes === 'object' ? entry.scopes : {};
+      const oldFieldScopes = oldScopes.fields && typeof oldScopes.fields === 'object' ? oldScopes.fields : {};
+      const scopes = { fields: {} };
+      for (const [k, v] of Object.entries(person.fields)) {
+        if (Object.hasOwn(oldFields, k) && String(oldFields[k]) === v && Array.isArray(oldFieldScopes[k])) scopes.fields[k] = oldFieldScopes[k];
+      }
+      if (person.note && person.note === entry.note && Array.isArray(oldScopes.note)) scopes.note = oldScopes.note;
+      entry.scopes = scopes;
       for (const k of ['name', 'note']) { if (person[k]) entry[k] = person[k]; else delete entry[k]; }
       if (Object.keys(person.fields).length) entry.fields = person.fields; else delete entry.fields;
       entry.updated_at = Math.floor(now() / 1000);

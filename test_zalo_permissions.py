@@ -104,6 +104,95 @@ class GroupPermissionsTest(PermissionsFile, unittest.TestCase):
         self.assertEqual(set(gp.FEATURE_LABELS), set(gp.FEATURES))
 
 
+class PeopleScopeToolsTest(PermissionsFile, unittest.IsolatedAsyncioTestCase):
+    """Sổ người quen theo nơi ghi: điều nói ở nhóm nào chỉ dùng lại ở nhóm đó và khi nhắn riêng với chính người đó."""
+
+    def setUp(self):
+        super().setUp()
+        self.enterContext(patch.dict(os.environ, {"ZALO_PEOPLE_FILE": os.path.join(self.dir, "people.json")}))
+        self.addCleanup(zalo_tools.bind_turn, None)
+
+    def turn(self, sender, thread, *, group=True, owner=False):
+        zalo_tools.set_turn_context(sender_uid=sender, thread_id=thread, is_group=group, is_owner=owner)
+
+    async def call(self, fn, **args):
+        return json.loads(await fn(args))
+
+    async def test_fact_said_in_group_a_stays_in_group_a_and_owner_dm(self):
+        self.turn(OWNER, GROUP_A, owner=True)
+        await self.call(zalo_tools.zalo_remember_person, fields={"tai_san": "14 chỉ vàng"})
+        self.turn(OWNER, GROUP_B, owner=True)
+        await self.call(zalo_tools.zalo_remember_person, fields={"chuc_vu": "giáo viên"})
+
+        self.turn(OWNER, GROUP_B, owner=True)
+        here = (await self.call(zalo_tools.zalo_recall_person))["result"]["profile"]
+        self.assertEqual(here.get("fields"), {"chuc_vu": "giáo viên"}, "nhóm B không thấy tài sản nói ở nhóm A")
+        listed = (await self.call(zalo_tools.zalo_list_people))["result"]["people"]
+        self.assertNotIn("vàng", json.dumps(listed, ensure_ascii=False))
+
+        self.turn(OWNER, GROUP_A, owner=True)
+        here = (await self.call(zalo_tools.zalo_recall_person))["result"]["profile"]
+        self.assertEqual(here.get("fields"), {"tai_san": "14 chỉ vàng"})
+
+        self.turn(OWNER, OWNER, group=False, owner=True)
+        mine = (await self.call(zalo_tools.zalo_recall_person))["result"]["profile"]
+        self.assertEqual(mine["fields"], {"tai_san": "14 chỉ vàng", "chuc_vu": "giáo viên"}, "nhắn riêng: đủ")
+
+    async def test_changed_value_moves_to_new_place_same_value_is_shared(self):
+        from plugins.zalo_tools import people
+
+        self.turn(MEMBER, GROUP_A)
+        await self.call(zalo_tools.zalo_remember_person, fields={"lop": "12A1"})
+        self.turn(MEMBER, GROUP_B)
+        await self.call(zalo_tools.zalo_remember_person, fields={"lop": "12A1"})
+        self.assertIn("lop: 12A1", people.describe_person(MEMBER, scope=f"g:{GROUP_A}"))
+        self.assertIn("lop: 12A1", people.describe_person(MEMBER, scope=f"g:{GROUP_B}"))
+        await self.call(zalo_tools.zalo_remember_person, fields={"lop": "12A2"})
+        self.assertNotIn("lop", people.describe_person(MEMBER, scope=f"g:{GROUP_A}"), "giá trị mới không sang nhóm cũ")
+        self.assertIn("lop: 12A2", people.describe_person(MEMBER, scope=f"g:{GROUP_B}"))
+
+    async def test_remember_result_only_shows_this_place(self):
+        self.turn(OWNER, GROUP_A, owner=True)
+        await self.call(zalo_tools.zalo_remember_person, fields={"tai_san": "14 chỉ vàng"})
+        self.turn(OWNER, GROUP_B, owner=True)
+        got = await self.call(zalo_tools.zalo_remember_person, fields={"chuc_vu": "giáo viên"})
+        text = json.dumps(got, ensure_ascii=False)
+        self.assertNotIn("vàng", text)
+        self.assertNotIn(GROUP_A, text, "không lộ ID nhóm khác qua danh sách nơi ghi")
+
+    async def test_owner_cron_into_someone_elses_dm_is_not_full_view(self):
+        from plugins.zalo_tools import people
+
+        people.remember_person(OWNER, fields={"tai_san": "14 chỉ vàng"}, scope=f"g:{GROUP_A}")
+        people.remember_person(MEMBER, name="Lan", fields={"lop": "12A1"}, scope=f"g:{GROUP_A}")
+        self.turn(OWNER, MEMBER, group=False, owner=True)  # việc hẹn giờ của chủ nhân gửi vào DM của Lan
+        listed = (await self.call(zalo_tools.zalo_list_people))["result"]
+        recalled = (await self.call(zalo_tools.zalo_recall_person, user_id=OWNER))["result"]
+        self.assertNotIn("vàng", json.dumps([listed, recalled], ensure_ascii=False))
+
+    async def test_own_dm_hides_notes_the_owner_wrote_in_owner_dm_and_group_list_hides_names(self):
+        from plugins.zalo_tools import people
+
+        people.remember_person(MEMBER, name="Lan", fields={"lop": "12A1"}, scope=f"g:{GROUP_A}")
+        people.remember_person(MEMBER, note="chủ nhân nhận xét riêng", scope=f"u:{OWNER}")
+        mine = people.describe_person(MEMBER, scope=f"u:{MEMBER}")
+        self.assertIn("lop: 12A1", mine)
+        self.assertNotIn("nhận xét riêng", mine)
+        people.remember_person(OWNER, name="Chủ", fields={"x": "y"}, scope=f"g:{GROUP_A}")
+        self.turn(OWNER, GROUP_B, owner=True)
+        listed = (await self.call(zalo_tools.zalo_list_people))["result"]
+        self.assertEqual(listed, {"count": 0, "people": {}}, "nhóm B không biết ai có trong sổ")
+
+    async def test_member_recall_in_group_and_no_scope_fail_closed(self):
+        from plugins.zalo_tools import people
+
+        people.remember_person(MEMBER, name="Lan", note="khai riêng", fields={"sdt": "0912"}, scope=f"u:{MEMBER}")
+        self.turn(MEMBER, GROUP_A)
+        got = (await self.call(zalo_tools.zalo_recall_person))["result"]["profile"]
+        self.assertEqual(got, {"name": "Lan"}, "điều khai khi nhắn riêng không ra nhóm")
+        self.assertEqual(people.describe_person(MEMBER), "Lan", "không rõ nơi → chỉ tên")
+
+
 class BomTest(PermissionsFile, unittest.TestCase):
     def test_hand_edited_file_with_bom_is_read(self):
         with open(self.path, "w", encoding="utf-8-sig") as fh:
@@ -273,8 +362,8 @@ class AdapterGroupRulesTest(PermissionsFile, AdapterHarness, unittest.IsolatedAs
         from plugins.zalo_tools import people
 
         self.enterContext(patch.dict(os.environ, {"ZALO_PEOPLE_FILE": os.path.join(self.dir, "people.json")}))
-        people.remember_person(MEMBER, name="Lan", note="Giáo viên Hoá")
-        people.remember_person(OWNER, name="Chủ", note="Hiệu trưởng")
+        people.remember_person(MEMBER, name="Lan", note="Giáo viên Hoá", scope=f"g:{GROUP_B}")
+        people.remember_person(OWNER, name="Chủ", note="Hiệu trưởng", scope=f"g:{GROUP_A}")
         adapter = self.make_adapter()
         await self.say(adapter, "m1", MEMBER, "@Lăng Tiêu chào", thread=GROUP_B)
         self.assertIn("Giáo viên Hoá", self.handled[-1].text)

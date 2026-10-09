@@ -43,6 +43,33 @@ test('message upsert deduplicates live and backfill copies', (t) => {
   assert.equal(rows[0].msgId, 'm-1');
 });
 
+test('recalled own message stays recalled when the same message is upserted again', (t) => {
+  const { store } = withStore(t);
+  const own = { ...baseMessage, senderUid: 'account-1', isSelf: true, text: 'định giá tài sản' };
+  store.upsertMessage('account-1', own, 'live');
+  assert.equal(store.markRecalled('account-1', 'group-1', 1, { msgId: 'm-1', cliMsgId: 'c-1' }), 1);
+  store.upsertMessage('account-1', own, 'backfill');
+  const [row] = store.getHistory('account-1', 'group-1', 1, 20);
+  assert.equal(row.msgType, 'chat.undo');
+  assert.equal(row.text, '');
+});
+
+test('recalling an own message also blanks its legacy-hermes copy without msgId (and keeps it blank on re-import)', (t) => {
+  const { store } = withStore(t);
+  const ts = 1_700_000_000_000;
+  const live = { ...baseMessage, senderUid: 'account-1', isSelf: true, msgType: 'webchat', text: 'Dạ em gửi sếp bảng giá vàng hôm nay: 1. Vàng nhẫn', ts };
+  const legacy = { ...baseMessage, msgId: null, cliMsgId: null, senderUid: 'account-1', isSelf: true, msgType: 'legacy-hermes',
+    text: 'Dạ em gửi sếp **bảng giá vàng** hôm nay:\n### 1. Vàng nhẫn', ts: ts - 20_000 };
+  const other = { ...legacy, text: 'Một câu trả lời khác của bot', ts: ts - 10_000 };
+  store.upsertMessage('account-1', live, 'live');
+  store.insertMessages('account-1', [legacy, other], 'legacy-hermes');
+  assert.equal(store.markRecalled('account-1', 'group-1', 1, { msgId: 'm-1', cliMsgId: 'c-1' }), 2);
+  store.insertMessages('account-1', [legacy], 'legacy-hermes');
+  const texts = store.getHistory('account-1', 'group-1', 1, 20).map((m) => m.text);
+  assert.ok(texts.every((x) => !x.includes('giá vàng')), JSON.stringify(texts));
+  assert.ok(texts.includes('Một câu trả lời khác của bot'));
+});
+
 test('message upsert merges a legacy msgId with a later backfill cliMsgId', (t) => {
   const { store } = withStore(t);
   store.upsertMessage('bot', {
