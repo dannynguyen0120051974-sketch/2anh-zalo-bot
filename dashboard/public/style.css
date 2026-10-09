@@ -191,7 +191,7 @@ input:focus-visible, select:focus-visible { outline: none; border-color: var(--b
 .soul-edit { width: 100%; min-height: 280px; font-size: 13.5px; line-height: 1.5; }
 .trace-box { flex: 1 1 100%; margin-top: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
 .trace-turns { list-style: none; margin: 0; padding: 0; }
-.trace-turn + .trace-turn { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.trace-turns > li + li { margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--border); }
 .trace-turn p { margin: 2px 0; overflow-wrap: anywhere; }
 .trace-tools { margin: 4px 0; padding-left: 18px; }
 .trace-tools li { margin: 2px 0; overflow-wrap: anywhere; }
@@ -730,3 +730,35 @@ fieldset:disabled .radio-card { cursor: not-allowed; }
   .table-cards .reset-row { background: #f8fafc; }
   .table-cards .reset-row td { padding: 8px 0; border-bottom: 0; }
 }
+
+/* Cửa sổ chi tiết (<dialog>, ui.js Dialog) — dùng ở Kho tri thức. */
+.dialog { width: min(520px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); color: var(--text); box-shadow: 0 20px 50px rgba(15, 23, 42, .25); }
+.dialog-wide { width: min(820px, calc(100vw - 32px)); }
+.dialog::backdrop { background: rgba(15, 23, 42, .45); }
+.dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--card); }
+.dialog-head h2 { margin: 0; font-size: 17px; }
+.dialog-body { padding: 16px 18px; }
+.dialog-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.icon-btn { min-width: 36px; justify-content: center; }
+.stack > * + * { margin-top: 12px; }
+.stack .field { margin-bottom: 0; }
+.field > span:first-child, .field > legend { font-weight: 600; font-size: 14px; }
+fieldset.field { border: 0; padding: 0; margin: 0; }
+.input-suffix, .input-row { display: flex; gap: 8px; align-items: center; }
+.input-suffix input, .input-row input { flex: 1 1 auto; min-width: 0; }
+.doc-editor { width: 100%; min-height: 260px; resize: vertical; font: 14px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.check-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px 16px; max-height: 260px; overflow: auto; padding: 4px 0; }
+.check-grid .check { font-weight: 400; }
+.kb-find { margin-top: 10px; }
+.kb-find > summary { display: inline-flex; align-items: center; min-height: 36px; color: var(--brand); font-size: 14px; font-weight: 600; cursor: pointer; }
+.kb-find[open] > input { width: 100%; margin: 6px 0; }
+
+/* Theo dõi agent gọn: chi tiết số liệu và từng lượt chỉ hiện khi bấm. */
+.trace-meta { flex: 1 1 100%; margin: 4px 0 0; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--muted); }
+.trace-turn > summary { display: flex; gap: 8px; align-items: baseline; cursor: pointer; list-style: none; min-height: 32px; }
+.trace-turn > summary::-webkit-details-marker { display: none; }
+.trace-turn > summary::before { content: "▸"; color: var(--muted); flex: none; transition: transform .15s; }
+.trace-turn[open] > summary::before { transform: rotate(90deg); }
+.trace-q { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trace-turn[open] .trace-q { white-space: normal; overflow-wrap: anywhere; }
+.trace-detail { padding: 4px 0 4px 18px; }

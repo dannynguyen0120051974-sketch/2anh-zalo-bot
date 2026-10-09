@@ -889,6 +889,17 @@ test('Theo dõi agent: thời gian dễ đọc', async () => {
   assert.equal(fmtMs(65_000), '1 phút 5 giây');
 });
 
+test('trang gọn: Theo dõi agent tóm tắt phiên một dòng; Kho tri thức chỉ đếm tệp của nguồn', async () => {
+  const { sessionSummary } = await import('./views/trace.js');
+  assert.equal(sessionSummary({ messages: 12, toolCalls: 5 }), '12 tin · 5 công cụ');
+  assert.equal(sessionSummary({ messages: 3, toolCalls: 0 }), '3 tin');
+  assert.equal(sessionSummary({ messages: 0, toolCalls: 0 }), 'Chưa có hoạt động');
+  const { sourceCount } = await import('./views/kb.js');
+  assert.equal(sourceCount({ files: 1214, links: 3 }), '1.214 tệp · 3 link');
+  assert.equal(sourceCount({ files: 0, links: 2 }), '2 link');
+  assert.equal(sourceCount({ files: 0, links: 0 }), 'Chưa có tệp');
+});
+
 test('Kết nối MCP: màu trạng thái', async () => {
   const { mcpKind } = await import('./views/mcp.js');
   assert.deepEqual(['Đang mở', 'Không phản hồi', 'Đã tắt', 'Máy ngoài — không kiểm'].map(mcpKind), ['ok', 'danger', 'idle', 'warn']);

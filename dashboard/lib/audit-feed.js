@@ -55,6 +55,10 @@ export const ACTION_LABELS = {
   cron_remove: 'Xoá việc hẹn giờ của trợ lý',
   kb_upload: 'Tải tài liệu lên kho tri thức',
   kb_delete: 'Xoá tài liệu khỏi kho tri thức',
+  kb_note: 'Viết tài liệu mới trong kho tri thức',
+  kb_edit: 'Sửa tài liệu trong kho tri thức',
+  kb_replace: 'Thay tệp trong kho tri thức',
+  kb_source: 'Đổi nguồn kho tri thức',
   insight_summary: 'Nhờ AI tóm tắt chủ đề nhóm',
   second_brain_note: 'Thêm ghi chú vào Second brain',
   // Giai đoạn 8 (spec §19.6)

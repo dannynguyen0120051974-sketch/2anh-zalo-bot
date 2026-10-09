@@ -10,16 +10,17 @@ export const SETTINGS_ENV_KEYS = [
   'ZALO_ACK_GESTURES', 'ZALO_AUTO_REACT', 'ZALO_FRIEND_TOOLS', 'ZALO_OWNER_ONLY_GROUPS', 'ZALO_CONFIRM_DANGEROUS',
   'ZALO_HISTORY_RETENTION_DAYS', 'ZALO_KB_PUBLIC_DIRS', 'ZALO_PUBLIC_MCP',
 ];
-export const EDITABLE_KEYS = new Set(['ZALO_ALLOWED_USERS', ...SETTINGS_ENV_KEYS]);
+export const EDITABLE_KEYS = new Set(['ZALO_ALLOWED_USERS', 'ZALO_KB_DIR', ...SETTINGS_ENV_KEYS]);
 // Giá trị ghi được: UID chủ nhân chỉ chữ số + dấu phẩy; khoá Cấu hình: chữ (cả có dấu), số, khoảng trắng, _ . , * ? : / -
 // — không bao giờ có nháy, \, xuống dòng, # hay = nên không chèn được dòng/khoá khác.
-const VALUE_RULES = { ZALO_ALLOWED_USERS: /^[0-9,]*$/ };
+// ZALO_KB_DIR (Kho tri thức › Sửa nguồn): đường dẫn ghi bằng "/" — không \, nháy, #, = (lib/kb-store.js kiểm thư mục).
+const VALUE_RULES = { ZALO_ALLOWED_USERS: /^[0-9,]*$/, ZALO_KB_DIR: /^[\p{L}\p{N} _.,:/()&+-]{1,400}$/u };
 const SETTING_VALUE = /^[\p{L}\p{N} _.,*?:/-]*$/u;
 const BARE_VALUE = /^[A-Za-z0-9_.,*?:/-]*$/;
 // Chỉ đọc, chỉ dùng phía máy chủ (giai đoạn 7): nơi đặt sổ người quen/kho tài liệu, địa chỉ bộ nhớ dài hạn.
 // OPENVIKING_API_KEY là khoá bí mật — dashboard dùng để gọi OpenViking, KHÔNG BAO GIỜ trả ra trình duyệt.
 export const READ_ONLY_KEYS = new Set([
-  'ZALO_PEOPLE_FILE', 'ZALO_KB_DIR', 'ZALO_KB_PUBLIC_DIRS',
+  'ZALO_PEOPLE_FILE', 'ZALO_KB_DIR', 'ZALO_KB_PUBLIC_DIRS', 'ZALO_KB_ALLOWED_ROOTS',
   'ZALO_SECOND_BRAIN_URL', 'OPENVIKING_ACCOUNT', 'OPENVIKING_USER', 'OPENVIKING_API_KEY',
   // Giai đoạn 7B: danh sách model chọn nhanh của lệnh /model, công cụ MCP mở cho thành viên.
   'ZALO_MODEL_CHOICES', 'ZALO_MODEL_DEFAULT', 'ZALO_PUBLIC_MCP',

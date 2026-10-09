@@ -2,6 +2,17 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [2.2.0] — 2026-10-09
+
+### Thay đổi
+- **Kho tri thức gọn**:
+  - Nguồn có sẵn (thư mục trên máy, kể cả Google Drive đồng bộ về máy; tệp `.url` là lối tắt link) chỉ hiện số tệp theo thư mục, không liệt kê từng tệp; tìm tệp khi cần.
+  - Tài liệu tự tạo hiện từng tài liệu với nút **Chi tiết**: đổi tên, sửa nội dung `.md`/`.txt`, thay tệp, xoá.
+  - Thêm **Viết tài liệu mới** ngay trên trang (lưu thành `.md`).
+  - **Sửa nguồn** (chỉ Quản trị): chọn thư mục con bot được đọc, hoặc chuyển gốc trong danh sách người cài đặt cho phép (`ZALO_KB_ALLOWED_ROOTS`, cách nhau bằng `;`). Không nhận đường dẫn tự do. Lưu xong cần khởi động lại trợ lý.
+- **Theo dõi agent gọn**: mỗi phiên một dòng (tên · lần cuối · số tin/công cụ); model và token nằm trong **Chi tiết**; mỗi lượt gập lại, bấm mới hiện công cụ và câu trả lời.
+- Thêm cửa sổ chi tiết dùng chung (`<dialog>`): hỏi lại trước khi đóng bản đang sửa.
+
 ## [2.1.4] — 2026-10-09
 
 ### Bảo mật

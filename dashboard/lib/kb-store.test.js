@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, parse, sep } from 'node:path';
 import { checkContent, createKbStore, kbAllowed, safeFileName } from './kb-store.js';
 
 const PDF = Buffer.from('%PDF-1.7\n...');
@@ -38,7 +38,7 @@ test('liệt kê đúng tệp bot đọc được; có phạm vi thì chỉ tron
   assert.equal(scoped.info().uploadDir, 'Nam 2026/tai-len-dashboard');
   const none = createKbStore({ kbDir: () => '', publicDirs: () => '' });
   assert.deepEqual(none.info(), { configured: false, publicDirs: [], uploadDir: null });
-  assert.deepEqual(await none.list(), { files: [], truncated: false });
+  assert.deepEqual(await none.list(), { files: [], truncated: false, sources: [], own: [] });
 });
 
 test('tên tệp: tên thiết bị Windows bị từ chối (có/không đuôi, hoa thường); cắt dài chỉ cắt phần tên, giữ đuôi', () => {
@@ -66,7 +66,7 @@ test('tải lên vào thư mục riêng, không đè tệp trùng tên; chỉ xo
   const { root, store } = kb(t);
   assert.equal(store.upload('Ke hoach.pdf', PDF), 'tai-len-dashboard/Ke hoach.pdf');
   assert.equal(store.upload('Ke hoach.pdf', PDF), 'tai-len-dashboard/Ke hoach (2).pdf');
-  assert.ok((await store.list()).files.find((f) => f.path === 'tai-len-dashboard/Ke hoach (2).pdf').uploaded);
+  assert.ok((await store.list()).own.some((f) => f.path === 'tai-len-dashboard/Ke hoach (2).pdf'), 'tài liệu tự tạo nằm ở own');
   store.remove('tai-len-dashboard/Ke hoach.pdf');
   assert.equal(existsSync(join(root, 'tai-len-dashboard', 'Ke hoach.pdf')), false);
   for (const rel of ['Luu tru/cu.pdf', 'tai-len-dashboard/../goc.md', '../x', 'tai-len-dashboard']) {
@@ -104,4 +104,92 @@ test('liệt kê bất đồng bộ giữ trần 3000 tệp và báo truncated',
   const out = await store.list({ fresh: true });
   assert.equal(out.files.length, 3000);
   assert.equal(out.truncated, true);
+});
+
+test('trang gọn: nguồn có sẵn chỉ đếm tệp theo thư mục cấp 1 (".url" là lối tắt link); tài liệu tự tạo liệt kê riêng', async (t) => {
+  const { root, store } = kb(t, { scope: 'Nam 2026, Trong' });
+  mkdirSync(join(root, 'Trong'));
+  writeFileSync(join(root, 'Nam 2026', 'Bai giang.url'), '[InternetShortcut]\nURL=https://docs.google.com/x');
+  store.upload('Ghi chu.md', Buffer.from('# hi'));
+  const { sources, own } = await store.list({ fresh: true });
+  assert.deepEqual(sources, [{ name: 'Nam 2026', files: 1, links: 1 }, { name: 'Trong', files: 0, links: 0 }]);
+  assert.deepEqual(own.map((f) => f.path), ['Nam 2026/tai-len-dashboard/Ghi chu.md']);
+});
+
+test('tài liệu tự tạo: viết mới, đọc, sửa nội dung, đổi tên (giữ đuôi), thay tệp; ngoài thư mục tự tạo bị chặn', async (t) => {
+  const { root, store } = kb(t);
+  const p = store.createNote('Nội quy nhóm', 'Điều 1: lịch sự');
+  assert.equal(p, 'tai-len-dashboard/Nội quy nhóm.md');
+  assert.equal(store.readOwn(p), 'Điều 1: lịch sự');
+  const renamed = store.saveOwn(p, { name: 'Nội quy 2026.txt', text: 'Điều 1: lịch sự\nĐiều 2: đúng giờ' });
+  assert.equal(renamed, 'tai-len-dashboard/Nội quy 2026.md', 'giữ đuôi cũ');
+  assert.equal(readFileSync(join(root, renamed), 'utf8'), 'Điều 1: lịch sự\nĐiều 2: đúng giờ');
+  const pdf = store.upload('a.pdf', PDF);
+  assert.throws(() => store.readOwn(pdf), /Thay tệp/);
+  assert.throws(() => store.replaceOwn(pdf, DOCX), /không khớp/);
+  store.replaceOwn(pdf, Buffer.from('%PDF-2.0 mới'));
+  assert.throws(() => store.readOwn('goc.md'), (e) => e.statusCode === 403);
+  assert.throws(() => store.saveOwn('tai-len-dashboard/../goc.md', { text: 'x' }), (e) => e.statusCode === 403);
+  assert.throws(() => store.createNote('', 'x'), /tiêu đề/);
+  assert.throws(() => store.saveOwn(renamed, { text: '' }), /trống/);
+});
+
+test('đổi nguồn: chỉ kho hiện tại hoặc gốc người cài đặt cho phép — không nhận đường dẫn tự do; giữ thứ tự; rỗng phải xác nhận', (t) => {
+  const { root } = kb(t);
+  const other = mkdtempSync(join(tmpdir(), 'zd-kb2-'));
+  const secret = mkdtempSync(join(tmpdir(), 'zd-secret-'));
+  t.after(() => { rmSync(other, { recursive: true, force: true }); rmSync(secret, { recursive: true, force: true }); });
+  mkdirSync(join(other, 'Drive Doan'));
+  const envFile = join(secret, '.env');
+  writeFileSync(envFile, `ZALO_KB_DIR=${root}\n`);
+  let open = 'Nam 2026';
+  const store = createKbStore({ kbDir: () => root, publicDirs: () => open, allowedRoots: () => `${other};${join(other, 'khong-co')}`, envFile });
+  const src = store.source();
+  assert.deepEqual(src.roots, [root, other], 'gốc không tồn tại bị bỏ');
+  assert.deepEqual(src.subdirs, ['Luu tru', 'Nam 2026'], 'bỏ thư mục ẩn, node_modules');
+  assert.deepEqual(store.browse(other).subdirs, ['Drive Doan']);
+  for (const bad of [secret, join(secret, '..'), '', 'tuong-doi', join(root, 'Nam 2026')]) {
+    assert.throws(() => store.browse(bad), (e) => e.statusCode === 400, String(bad));
+    assert.throws(() => store.setSource({ dir: bad, publicDirs: [] , allDirs: true }), (e) => e.statusCode === 400, String(bad));
+  }
+  assert.throws(() => store.setSource({ dir: root, publicDirs: [] }), /xác nhận/);
+  assert.throws(() => store.setSource({ dir: root, publicDirs: ['Khong co'] }), /Không thấy thư mục/);
+  const saved = store.setSource({ dir: root, publicDirs: ['Nam 2026', 'Luu tru'] });
+  assert.equal(saved.changed, true);
+  assert.match(readFileSync(envFile, 'utf8'), /ZALO_KB_PUBLIC_DIRS="Nam 2026,Luu tru"/, 'giữ thứ tự chọn');
+  open = 'Nam 2026,Luu tru';
+  assert.equal(store.setSource({ dir: root, publicDirs: ['Nam 2026', 'Luu tru'] }).changed, false, 'không đổi thì không ghi');
+  const moved = store.setSource({ dir: other, publicDirs: [], allDirs: true });
+  assert.equal(moved.changed, true);
+  const env = readFileSync(envFile, 'utf8');
+  assert.ok(!env.includes(String.fromCharCode(92) + 'n'), env);
+  assert.match(env, /ZALO_KB_PUBLIC_DIRS=\r?\n|ZALO_KB_PUBLIC_DIRS=$/m);
+});
+
+test('tên tài liệu: từ bị lọc bị từ chối trước khi ghi; "v1.2" giữ nguyên; đổi chỉ hoa/thường không báo trùng', (t) => {
+  const { store } = kb(t);
+  assert.throws(() => store.createNote('Order tháng 10', 'x'), /đổi tên khác/);
+  assert.throws(() => store.upload('backup.md', Buffer.from('x')), /đổi tên khác/);
+  const p = store.createNote('Báo cáo v1.2', 'nội dung');
+  assert.equal(p, 'tai-len-dashboard/Báo cáo v1.2.md');
+  const q = store.createNote('Ghi chú.md', 'nội dung');
+  assert.equal(q, 'tai-len-dashboard/Ghi chú.md');
+  assert.throws(() => store.saveOwn(q, { name: 'Báo cáo v1.2' }), (e) => e.statusCode === 409);
+  assert.throws(() => store.saveOwn(q, { name: 'Private notes', text: 'mới' }), /đổi tên khác/);
+  assert.equal(store.readOwn(q), 'nội dung', 'lỗi tên thì không ghi nội dung');
+  assert.equal(store.saveOwn(q, { name: 'GHI CHÚ' }), 'tai-len-dashboard/GHI CHÚ.md');
+  assert.equal(store.createNote('a/b', 'x'), 'tai-len-dashboard/a-b.md');
+});
+
+test('danh sách gọn: đếm vượt trần 3000; tài liệu tự tạo đọc riêng, chỉ ở thư mục tải lên hiện tại', async (t) => {
+  const { root, store } = kb(t);
+  mkdirSync(join(root, 'Lon'));
+  for (let i = 0; i < 3005; i += 1) writeFileSync(join(root, 'Lon', `t${i}.md`), 'x');
+  mkdirSync(join(root, 'Lon', 'tai-len-dashboard'));
+  writeFileSync(join(root, 'Lon', 'tai-len-dashboard', 'cu.md'), 'x');
+  const p = store.createNote('Mới nhất', 'x');
+  const r = await store.list({ fresh: true });
+  assert.equal(r.sources.find((s) => s.name === 'Lon').files, 3006, 'thư mục tải lên cũ ở nguồn khác tính là tệp nguồn');
+  assert.deepEqual(r.own.map((f) => f.path), [p]);
+  assert.equal(r.truncated, true);
 });

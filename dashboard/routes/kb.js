@@ -1,10 +1,11 @@
-// Kho tri thức (spec §18.5) — cả hai vai trò: xem, tải lên (≤ 10 MB, docx/pdf/md/txt), xoá tệp đã tải lên từ dashboard.
+// Kho tri thức (spec §18.5) — cả hai vai trò: xem (gọn: số tệp theo nguồn + tài liệu tự tạo), tải lên (≤ 10 MB,
+// docx/pdf/md/txt), viết tài liệu mới, sửa/đổi tên/thay/xoá tài liệu tự tạo. Đổi nguồn (ZALO_KB_DIR + thư mục mở): chỉ Quản trị.
 // Tải lên gửi thân nhị phân (application/octet-stream) + tên tệp ở X-File-Name (encodeURIComponent) — không base64.
 import express from 'express';
-import { requireAuth } from '../lib/http-guards.js';
+import { requireAuth, requireRole } from '../lib/http-guards.js';
 import { MAX_UPLOAD_BYTES, UPLOAD_TYPES } from '../lib/kb-store.js';
 
-export function kbRoutes({ kb, activity }) {
+export function kbRoutes({ kb, activity, restartFlags }) {
   const r = express.Router();
   const fail = (res, err, fallback) => {
     const status = Number.isInteger(err?.statusCode) ? err.statusCode : (err?.type === 'entity.too.large' ? 413 : 500);
@@ -17,19 +18,66 @@ export function kbRoutes({ kb, activity }) {
     try { activity.append({ actor: req.user.username, action, detail }); } catch (e) { console.error('[dashboard] không ghi được Nhật ký:', e); }
   };
 
+  const readName = (req) => { try { return decodeURIComponent(String(req.get('x-file-name') || '')); } catch { return ''; } };
+
   r.get('/kb', requireAuth, async (req, res) => {
     try { res.json({ ok: true, ...kb.info(), ...(await kb.list({ fresh: req.query.fresh === '1' })), uploadTypes: UPLOAD_TYPES, maxBytes: MAX_UPLOAD_BYTES }); } catch (err) { fail(res, err, 'Chưa đọc được kho tri thức — thử lại sau ít phút.'); }
   });
 
   r.post('/kb/upload', requireAuth, express.raw({ type: 'application/octet-stream', limit: MAX_UPLOAD_BYTES }), (req, res) => {
     try {
-      let name = '';
-      try { name = decodeURIComponent(String(req.get('x-file-name') || '')); } catch { /* tên hỏng → lỗi bên dưới */ }
+      const name = readName(req);
       if (!Buffer.isBuffer(req.body)) return res.status(400).json({ ok: false, error: 'Chưa nhận được tệp — chọn lại tệp rồi tải lên.' });
       const path = kb.upload(name, req.body);
       log(req, 'kb_upload', path);
       res.json({ ok: true, path });
     } catch (err) { fail(res, err, 'Chưa tải lên được — thử lại, nếu vẫn lỗi hãy báo người cài đặt.'); }
+  });
+
+  r.get('/kb/own', requireAuth, (req, res) => {
+    try { res.json({ ok: true, text: kb.readOwn(String(req.query.path ?? '')) }); } catch (err) { fail(res, err, 'Chưa đọc được tài liệu — thử lại.'); }
+  });
+
+  r.put('/kb/own', requireAuth, (req, res) => {
+    try {
+      const { path, name, text } = req.body || {};
+      const next = kb.saveOwn(String(path ?? ''), { name: name == null ? undefined : String(name), text: text == null ? undefined : String(text) });
+      log(req, 'kb_edit', next);
+      res.json({ ok: true, path: next });
+    } catch (err) { fail(res, err, 'Chưa lưu được tài liệu — thử lại.'); }
+  });
+
+  r.post('/kb/own/replace', requireAuth, express.raw({ type: 'application/octet-stream', limit: MAX_UPLOAD_BYTES }), (req, res) => {
+    try {
+      if (!Buffer.isBuffer(req.body)) return res.status(400).json({ ok: false, error: 'Chưa nhận được tệp — chọn lại tệp.' });
+      const path = String(req.query.path ?? '');
+      kb.replaceOwn(path, req.body);
+      log(req, 'kb_replace', path);
+      res.json({ ok: true, path });
+    } catch (err) { fail(res, err, 'Chưa thay được tệp — thử lại.'); }
+  });
+
+  r.post('/kb/note', requireAuth, (req, res) => {
+    try {
+      const path = kb.createNote(req.body?.title, req.body?.text);
+      log(req, 'kb_note', path);
+      res.json({ ok: true, path });
+    } catch (err) { fail(res, err, 'Chưa tạo được tài liệu — thử lại.'); }
+  });
+
+  r.get('/admin/kb/source', requireAuth, requireRole('admin'), (req, res) => {
+    try { res.json({ ok: true, ...(req.query.dir ? kb.browse(String(req.query.dir)) : kb.source()) }); } catch (err) { fail(res, err, 'Chưa đọc được nguồn kho — thử lại.'); }
+  });
+
+  r.put('/admin/kb/source', requireAuth, requireRole('admin'), (req, res) => {
+    try {
+      const saved = kb.setSource({ dir: req.body?.dir, publicDirs: req.body?.publicDirs, allDirs: req.body?.allDirs === true });
+      if (saved.changed) {
+        restartFlags?.mark('assistant', 'Kho tri thức: nguồn');
+        log(req, 'kb_source', `${saved.dir} — ${saved.publicDirs.length ? saved.publicDirs.join(', ') : 'cả kho'}`);
+      }
+      res.json({ ok: true, ...saved });
+    } catch (err) { fail(res, err, 'Chưa đổi được nguồn — thử lại.'); }
   });
 
   r.delete('/kb/file', requireAuth, (req, res) => {
@@ -42,6 +90,6 @@ export function kbRoutes({ kb, activity }) {
   });
 
   // Lỗi của express.raw (quá cỡ) đi qua đây thay vì câu chung của app.
-  r.use('/kb', (err, req, res, next) => (err?.type === 'entity.too.large' ? fail(res, err, '') : next(err)));
+  r.use(['/kb', '/admin/kb'], (err, req, res, next) => (err?.type === 'entity.too.large' ? fail(res, err, '') : next(err)));
   return r;
 }

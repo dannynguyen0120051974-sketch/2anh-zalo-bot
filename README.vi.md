@@ -184,6 +184,8 @@ Người trong nhóm không có `read_file`, nhưng bot vẫn cần đọc tài 
 
 Kho trỏ vào cả một ổ đĩa nhiều năm thì thêm `ZALO_KB_PUBLIC_DIRS` để chỉ mở vài thư mục cấp 1 (tên cách nhau bằng dấu phẩy, ví dụ `ĐOÀN CNT 25 - 26,ĐOÀN CNT 26-27`). Giới hạn áp cho cả liệt kê, đọc và gửi tệp, và áp cho mọi người kể cả chủ nhân — danh sách tệp được đệm dùng chung giữa các lượt nên phạm vi không thể phụ thuộc người hỏi; chủ nhân cần đọc chỗ khác thì đã có `read_file`.
 
+Trên dashboard (Kho tri thức), Quản trị đổi được thư mục bot đọc bằng nút **Sửa nguồn**: chọn thư mục con trong kho hiện tại, hoặc chuyển sang một thư mục gốc khác nằm trong danh sách `ZALO_KB_ALLOWED_ROOTS` (đường dẫn cách nhau bằng `;`, ví dụ `Y:/;D:/Tai lieu Doan`). Dashboard không bao giờ nhận đường dẫn tự do — vì bot đọc kho bằng công cụ công khai, chỉ người cài đặt mới thêm được gốc mới. Tài liệu viết hoặc tải lên từ dashboard nằm trong thư mục `tai-len-dashboard` của thư mục mở đầu tiên.
+
 Ba lớp chặn:
 1. Mọi đường dẫn được ép về đường dẫn thật rồi kiểm tra lại — `../`, `..\`, symlink đều không thoát ra ngoài
 2. Bỏ qua thư mục ẩn (`.git`, `.env`, `.backup`), `node_modules`, `dist`, `build`, và tệp có tên gợi ý dữ liệu riêng tư (`backup`, `order`, `customer`, `secret`…)

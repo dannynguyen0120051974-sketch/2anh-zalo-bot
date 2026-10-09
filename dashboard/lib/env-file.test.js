@@ -105,8 +105,18 @@ test('khoá chỉ đọc (giai đoạn 7): đọc được, không bao giờ ghi
   assert.equal(readEnvKey(f, 'ZALO_KB_DIR'), 'D:/Kho tai lieu');
   assert.equal(readEnvKey(f, 'ZALO_SECOND_BRAIN_URL'), 'http://127.0.0.1:1933');
   assert.equal(readEnvKey(f, 'ZALO_PEOPLE_FILE'), null);
-  assert.throws(() => writeEnvKey(f, 'ZALO_KB_DIR', '1'), /không nằm trong danh sách/);
+  assert.throws(() => writeEnvKey(f, 'ZALO_SECOND_BRAIN_URL', 'http://x'), /không nằm trong danh sách/);
   assert.throws(() => readEnvKey(f, 'TELEGRAM_BOT_TOKEN'), /không nằm trong danh sách/);
+});
+
+test('ZALO_KB_DIR ghi được (Kho tri thức › Sửa nguồn) nhưng chỉ đường dẫn dạng "/" — không \\, nháy, #, xuống dòng', (t) => {
+  const f = join(tmp(t), '.env');
+  writeFileSync(f, '');
+  writeEnvKey(f, 'ZALO_KB_DIR', 'Y:/ĐOÀN CNT (2026)');
+  assert.equal(readEnvKey(f, 'ZALO_KB_DIR'), 'Y:/ĐOÀN CNT (2026)');
+  for (const bad of ['Y:\\Kho', 'D:/a"b', 'D:/a#b', 'D:/a\nX=1', '']) {
+    assert.throws(() => writeEnvKey(f, 'ZALO_KB_DIR', bad), /không cho phép/, JSON.stringify(bad));
+  }
 });
 
 test('writeEnvKeys: nhiều khoá trong một lần ghi, một .bak, giữ khoá khác', (t) => {

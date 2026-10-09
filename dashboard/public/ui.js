@@ -1,6 +1,7 @@
 // Phần dùng chung cho mọi màn: htm gắn preact, biểu tượng SVG, định dạng giờ, hộp thông báo.
 import { h } from './vendor/preact.mjs';
 import htm from './vendor/htm.mjs';
+import { useEffect, useRef } from './vendor/hooks.mjs';
 
 export const html = htm.bind(h);
 
@@ -40,6 +41,7 @@ const PATHS = {
   download: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4m4-5 5 5 5-5m-5 5V3',
   link: 'M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71',
   close: 'M18 6 6 18M6 6l12 12',
+  folder: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z',
   prev: 'm15 18-6-6 6-6',
   next: 'm9 18 6-6-6-6',
   brain: 'M9.5 2a2.5 2.5 0 0 0-2.45 2A3 3 0 0 0 4 7a3 3 0 0 0 .5 5.5A3 3 0 0 0 7 17a2.5 2.5 0 0 0 5 .5V4.5A2.5 2.5 0 0 0 9.5 2zm5 0a2.5 2.5 0 0 1 2.45 2A3 3 0 0 1 20 7a3 3 0 0 1-.5 5.5A3 3 0 0 1 17 17a2.5 2.5 0 0 1-5 .5',
@@ -129,4 +131,46 @@ export function SaveBar({ count, busy, canSave, onUndo, idle, msg }) {
 
 export function PageHead({ title, sub }) {
   return html`<header class="page-head"><h1>${title}</h1>${sub ? html`<p class="muted">${sub}</p>` : null}</header>`;
+}
+
+let dialogSeq = 0;
+/**
+ * Cửa sổ chi tiết (<dialog> gốc: khoá focus, Esc để đóng). Bấm nền tối bên ngoài cũng đóng — chỉ khi cả lúc nhấn
+ * lẫn lúc thả chuột đều ở nền (kéo chọn chữ ra ngoài không đóng). `dirty()` true → hỏi trước khi đóng, khỏi mất bản đang sửa.
+ * Đóng xong trả focus về nút đã mở (nút đã mất thì về tiêu đề trang).
+ */
+export function Dialog({ title, onClose, dirty, children, wide = false }) {
+  const ref = useRef(null);
+  const id = useRef(`dlg-${++dialogSeq}`).current;
+  const latest = useRef({ onClose, dirty });
+  latest.current = { onClose, dirty };
+  const close = () => {
+    const { onClose: done, dirty: isDirty } = latest.current;
+    if (isDirty?.() && !confirm('Bỏ các thay đổi chưa lưu?')) return;
+    done();
+  };
+  useEffect(() => {
+    const d = ref.current;
+    const back = document.activeElement;
+    if (d && !d.open) d.showModal();
+    let downOnBackdrop = false;
+    const cancel = (e) => { e.preventDefault(); close(); };
+    const down = (e) => { downOnBackdrop = e.target === d; };
+    const click = (e) => { if (downOnBackdrop && e.target === d) close(); downOnBackdrop = false; };
+    d?.addEventListener('cancel', cancel);
+    d?.addEventListener('mousedown', down);
+    d?.addEventListener('click', click);
+    return () => {
+      d?.removeEventListener('cancel', cancel); d?.removeEventListener('mousedown', down); d?.removeEventListener('click', click);
+      if (d?.open) d.close();
+      const target = back?.isConnected ? back : document.querySelector('main h1, h1');
+      if (target && !back?.isConnected) target.setAttribute('tabindex', '-1');
+      target?.focus?.();
+    };
+  }, []);
+  return html`<dialog ref=${ref} class=${wide ? 'dialog dialog-wide' : 'dialog'} aria-labelledby=${id}>
+    <div class="dialog-head"><h2 id=${id}>${title}</h2>
+      <button type="button" class="btn btn-secondary btn-sm icon-btn" aria-label="Đóng" onClick=${close}><${Icon} name="close" size=${16} /></button></div>
+    <div class="dialog-body">${children}</div>
+  </dialog>`;
 }
