@@ -2,6 +2,11 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [2.8.3] — 2026-10-10
+
+### Đổi
+- Nút **Ủng hộ tác giả** chuyển lên thanh trạng thái đầu mọi trang (nút trắng nổi bật, trái tim đỏ) cho mọi người dễ thấy; bỏ nút trùng ở thanh bên.
+
 ## [2.8.2] — 2026-10-10
 
 ### Thêm

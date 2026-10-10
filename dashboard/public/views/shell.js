@@ -144,7 +144,10 @@ function StatusStrip({ status, error, path }) {
   else lv = { kind: 'idle', icon: 'clock', text: 'Đang kiểm tra trạng thái bot…' };
   return html`<div class=${`strip strip-${lv.kind}`} role="status" aria-live="polite">
     <span class="strip-text"><${Icon} name=${lv.icon} /> ${lv.text}</span>
-    ${lv.qr && path !== '/zalo' ? html`<a class="btn btn-light btn-sm" href="#/zalo"><${Icon} name="qr" size=${16} /> Quét mã đăng nhập lại</a>` : null}
+    <span class="strip-actions">
+      ${lv.qr && path !== '/zalo' ? html`<a class="btn btn-light btn-sm" href="#/zalo"><${Icon} name="qr" size=${16} /> Quét mã đăng nhập lại</a>` : null}
+      <${DonateButton} className="donate-pill" />
+    </span>
   </div>`;
 }
 
@@ -245,7 +248,6 @@ function Sidebar({ me, brand, path, features }) {
           <span class="avatar avatar-sm" aria-hidden="true">${me.username.slice(0, 1).toUpperCase()}</span>
           <span class="me"><span>Tài khoản của tôi</span><small>${me.username} · ${roleLabel(me.role)}</small></span>
         </a>
-        <${DonateButton} />
         <${PoweredBy} brand=${brand} />
       </div>
     </nav>

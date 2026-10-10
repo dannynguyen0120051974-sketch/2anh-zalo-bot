@@ -24,8 +24,8 @@ function DonateDialog({ onClose }) {
   <//>`;
 }
 
-/** Nút "Ủng hộ tác giả" (thanh bên, trang Tài khoản). */
-export function DonateButton({ className = 'nav-item' }) {
+/** Nút "Ủng hộ tác giả" (thanh trạng thái đầu trang, trang Tài khoản). */
+export function DonateButton({ className = 'donate-pill' }) {
   const [open, setOpen] = useState(false);
   return html`<button type="button" class=${className} onClick=${() => setOpen(true)}><${Icon} name="heart" size=${18} /><span>Ủng hộ tác giả</span></button>
     ${open ? html`<${DonateDialog} onClose=${() => setOpen(false)} />` : null}`;

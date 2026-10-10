@@ -261,7 +261,7 @@ If this project is useful to you, you can buy the author a coffee via Vietnamese
 |---|---|---|
 | MB Bank | `0328186264` | LUONG HAI ANH |
 
-The same QR is in the admin dashboard (sidebar › **Ủng hộ tác giả**).
+The same QR is in the admin dashboard (the **Ủng hộ tác giả** button on the status bar at the top of every page).
 
 ## License
 
