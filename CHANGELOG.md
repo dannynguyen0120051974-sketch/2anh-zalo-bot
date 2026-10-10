@@ -2,6 +2,11 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [2.8.1] — 2026-10-10
+
+### Sửa
+- Bảo trì › Sao lưu: nút **Tải về** báo lỗi 404 trên máy chủ Linux (bản sao lưu nằm trong thư mục `.hermes`).
+
 ## [2.8.0] — 2026-10-10
 
 ### Thêm

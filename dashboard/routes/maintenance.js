@@ -45,7 +45,7 @@ export function maintenanceRoutes({ maintenance, hermesAdmin, restartFlags, acti
     try { const out = await hermesAdmin.write('backup.create', { dir: dir() }, { timeoutMs: 600_000 }); log(req, 'backup_create', out.file); res.json({ ok: true, ...strip(out), backups: maintenance.backups() }); } catch (err) { fail(res, err, 'Chưa tạo được bản sao lưu.'); }
   });
   r.get('/admin/backups/:file', ...guard, (req, res) => {
-    try { const p = maintenance.backupPath(req.params.file); log(req, 'backup_download', req.params.file); res.download(p, req.params.file); } catch (err) { fail(res, err, 'Chưa tải được bản sao lưu.'); }
+    try { const p = maintenance.backupPath(req.params.file); log(req, 'backup_download', req.params.file); res.download(p, req.params.file, { dotfiles: 'allow' }); } catch (err) { fail(res, err, 'Chưa tải được bản sao lưu.'); }
   });
   r.post('/admin/backups/:file/remove', ...guard, (req, res) => {
     try { rmSync(maintenance.backupPath(req.params.file), { force: true }); log(req, 'backup_remove', req.params.file); res.json({ ok: true, backups: maintenance.backups() }); } catch (err) { fail(res, err, 'Chưa xoá được bản sao lưu.'); }

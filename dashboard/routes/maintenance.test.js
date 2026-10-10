@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { loginAs, makeDeps, startApp } from '../test-helpers.js';
 
 function fakes(deps) {
-  const backupDir = join(deps.dir, 'backups');
+  const backupDir = join(deps.dir, '.hermes', 'backups'); // như VPS: /root/.hermes/… (thư mục bắt đầu bằng dấu chấm)
   mkdirSync(backupDir, { recursive: true });
   writeFileSync(join(backupDir, 'hermes-zalo-20261010-134504.zip'), 'PKzip');
   const calls = [];
