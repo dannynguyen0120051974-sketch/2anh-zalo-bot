@@ -247,6 +247,22 @@ npm run uninstall:hermes -- --hermes-home <path-to-Hermes-home>
 
 The uninstaller removes only the managed Zalo plugin directories. It preserves the sidecar `.env`, Zalo session/history, and optional TTS environment, and does not edit Hermes `config.yaml` — the `plugins.enabled`, `platforms.zalo`, and `known_plugin_toolsets.zalo` entries stay behind, so remove them by hand if you are not reinstalling. Each install also keeps the previous file as `config.yaml.bak-<timestamp>`.
 
+## Ủng hộ tác giả / Support the author
+
+Nếu dự án này hay và hữu ích với anh chị, một ly cà phê ủng hộ sẽ giúp 2Anh AI có thêm động lực phát triển tiếp. Cảm ơn anh chị rất nhiều!
+
+If this project is useful to you, you can buy the author a coffee via Vietnamese bank transfer (VietQR):
+
+<p align="center">
+  <img src="docs/images/donate-qr.jpg" width="240" alt="VietQR — MB Bank 0328186264 LUONG HAI ANH">
+</p>
+
+| Ngân hàng / Bank | Số tài khoản / Account | Chủ tài khoản / Name |
+|---|---|---|
+| MB Bank | `0328186264` | LUONG HAI ANH |
+
+The same QR is in the admin dashboard (sidebar › **Ủng hộ tác giả**).
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

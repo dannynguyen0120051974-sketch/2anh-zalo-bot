@@ -1,6 +1,7 @@
 import { useState } from '../vendor/hooks.mjs';
 import { api } from '../api.js';
 import { html, Icon, Live, PageHead, roleLabel } from '../ui.js';
+import { DonateButton } from './donate.js';
 
 export function Profile({ me, status }) {
   const [busy, setBusy] = useState('');
@@ -59,6 +60,10 @@ export function Profile({ me, status }) {
         ${linkUrl ? html`<p class="link-out"><a class="btn btn-secondary btn-sm" href=${linkUrl} target="_blank" rel="noopener">
           <${Icon} name="external" size=${16} /> Mở Telegram để nối</a> <span class="small muted">nếu Telegram chưa tự mở.</span></p>` : null}
         <${Live} error=${tg.error} ok=${tg.ok} />
+      </section>
+      <section class="card"><h2>Ủng hộ tác giả</h2>
+        <p class="small muted">Thấy bot hay và hữu ích? Ủng hộ 2Anh AI một ly cà phê qua chuyển khoản MB Bank.</p>
+        <${DonateButton} className="btn btn-secondary" />
       </section>
     </div>`;
 }

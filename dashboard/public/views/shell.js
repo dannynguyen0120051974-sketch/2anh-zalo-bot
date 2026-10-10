@@ -24,6 +24,7 @@ import { Tools } from './tools.js';
 import { Mcp } from './mcp.js';
 import { Skills } from './skills.js';
 import { Maintenance } from './maintenance.js';
+import { DonateButton } from './donate.js';
 import { Settings } from './settings.js';
 
 const STATUS_MS = 3000;
@@ -244,6 +245,7 @@ function Sidebar({ me, brand, path, features }) {
           <span class="avatar avatar-sm" aria-hidden="true">${me.username.slice(0, 1).toUpperCase()}</span>
           <span class="me"><span>Tài khoản của tôi</span><small>${me.username} · ${roleLabel(me.role)}</small></span>
         </a>
+        <${DonateButton} />
         <${PoweredBy} brand=${brand} />
       </div>
     </nav>

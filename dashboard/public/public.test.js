@@ -988,3 +988,10 @@ test('Bảo trì: định dạng dung lượng và giờ điểm khôi phục', 
   assert.equal(snapshotTime('20261010-134504-dashboard'), '10/10/2026 13:45');
   assert.equal(snapshotTime('la'), 'la');
 });
+
+test('Ủng hộ tác giả: thông tin chuyển khoản và ảnh QR có sẵn trong giao diện', async () => {
+  const { DONATE } = await import('./views/donate.js');
+  assert.deepEqual(DONATE, { bank: 'MB Bank', account: '0328186264', name: 'LUONG HAI ANH' });
+  const { existsSync } = await import('node:fs');
+  assert.ok(existsSync(new URL('./donate-qr.jpg', import.meta.url)));
+});

@@ -2,6 +2,9 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [2.8.2] — 2026-10-10
+
+### Thêm\n- **Ủng hộ tác giả**: nút ở thanh bên dashboard và trang Tài khoản mở mã VietQR (MB Bank 0328186264 — LUONG HAI ANH), bấm để chép số tài khoản; thêm mục ủng hộ kèm QR vào README.\n
 ## [2.8.1] — 2026-10-10
 
 ### Sửa
