@@ -1,7 +1,7 @@
 // Kho tri thức (spec §18.5), trang gọn: nguồn có sẵn chỉ hiện số tệp theo thư mục (tìm tệp khi cần); tài liệu tự tạo
 // (tải lên / viết trên dashboard) hiện từng tệp, bấm "Chi tiết" để sửa trong cửa sổ. Quản trị đổi được nguồn.
 import { useEffect, useState } from '../vendor/hooks.mjs';
-import { api, NETWORK_ERROR } from '../api.js';
+import { api, sendFile } from '../api.js';
 import { Dialog, html, fmtTime, Icon, Live, Notice, PageHead, Spinner } from '../ui.js';
 import { fold } from '../fold.js';
 import { RestartBanner } from './restart-banner.js';
@@ -33,21 +33,6 @@ export function sourceCount({ files, links }) {
 const nameOf = (path) => path.split('/').pop();
 const stemOf = (path) => nameOf(path).replace(/\.[^.]+$/, '');
 const isText = (path) => /\.(md|txt)$/i.test(path);
-
-async function sendFile(url, file) {
-  let res;
-  try {
-    res = await fetch(url, {
-      method: 'POST', credentials: 'same-origin', body: file,
-      headers: { 'Content-Type': 'application/octet-stream', 'X-Requested-With': 'zalo-dashboard', 'X-File-Name': encodeURIComponent(file.name) },
-    });
-  } catch { throw new Error(NETWORK_ERROR); }
-  let json = {};
-  try { json = await res.json(); } catch { /* không phải JSON */ }
-  if (res.status === 401) window.dispatchEvent(new Event('zd:logout'));
-  if (!res.ok || json.ok === false) throw new Error(json.error || `Lỗi ${res.status} — thử lại.`);
-  return json;
-}
 
 /** Cửa sổ chi tiết một tài liệu tự tạo: đổi tên, sửa nội dung (.md/.txt), thay tệp, xoá. */
 function OwnDoc({ file, data, onDone, onClose }) {

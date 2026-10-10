@@ -875,3 +875,12 @@ button.flow-node:hover { border-color: var(--brand); }
 .key-err { flex: 1 1 100%; }
 .key-actions { display: inline-flex; flex-wrap: wrap; gap: 4px; }
 .key-events { margin: 0; padding-left: 18px; }
+
+/* Skill */
+.clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.skill-md { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 55vh; overflow-y: auto; font-family: var(--mono); font-size: 13px; background: var(--bg, #f8fafc); padding: 12px; border-radius: 8px; margin: 0; }
+.card-sub { padding: 12px; border: 1px dashed var(--border); border-radius: 10px; }
+.card-sub h3 { margin: 0 0 4px; }
+
+/* Kết nối MCP */
+.mcp-cat-form { flex: 1 1 100%; padding: 10px 0 4px; }

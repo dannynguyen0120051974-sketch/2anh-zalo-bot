@@ -3,7 +3,7 @@
  * Dashboard quản trị Zalo — tiến trình riêng. Sống độc lập với sidecar và Hermes
  * để vẫn báo lỗi và cho quét QR đúng lúc các phần kia hỏng.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadRepoEnv, loadHermesEnv } from '../scripts/setup-env.js';
@@ -31,6 +31,8 @@ import { createLearnedMemory, readProvider } from './lib/learned-memory.js';
 import { createPeopleStore } from './lib/people-store.js';
 import { createHermesMemory } from './lib/hermes-memory.js';
 import { createSchedules, hermesBin } from './lib/schedules.js';
+import { createHermesAdmin } from './lib/hermes-admin.js';
+import { createMaintenance } from './lib/maintenance.js';
 import { createKbStore } from './lib/kb-store.js';
 import { createInsightAi } from './lib/insight-ai.js';
 import { createAgentConfig, createSoul } from './lib/agent-config.js';
@@ -63,6 +65,8 @@ export function buildDeps({ env = process.env, sidecarRoot = join(here, '..'), i
     file: paths.telegramFile, hermesTelegramToken: String(env.TELEGRAM_BOT_TOKEN || '').trim(),
     isActive: (username) => { const u = users.get(username); return Boolean(u && !u.disabled); },
   });
+  // Cầu nối mã Hermes (Skill, MCP, sao lưu): chạy lib/hermes-admin.py bằng Python của Hermes.
+  const hermesAdmin = createHermesAdmin({ hermesHome: paths.hermesHome, env, configFile: paths.hermesConfigFile, backupDir: join(paths.dataDir, 'config-backups') });
   const restartSidecar = makeRestartSidecar({ cmd: config.restartCmd, sidecarRoot: paths.sidecarRoot, port: sidecarPort });
   let botName = 'Bot Zalo';
   const watchedSidecar = { health: async () => { const h = await sidecar.health(); if (h?.zalo?.displayName) botName = h.zalo.displayName; return h; } };
@@ -117,6 +121,9 @@ export function buildDeps({ env = process.env, sidecarRoot = join(here, '..'), i
     toolsManifestFile: paths.toolsManifestFile,
     agentTrace: createAgentTrace({ dbPath: paths.hermesStateDb }),
     mcpServers: createMcpServers({ configFile: paths.hermesConfigFile, publicMcp: () => readEnvKey(paths.hermesEnvFile, 'ZALO_PUBLIC_MCP') }),
+    hermesAdmin,
+    maintenance: createMaintenance({ hermesBin: hermesBin({ hermesHome: paths.hermesHome, env }), dataDir: paths.dataDir,
+      pluginYaml: () => { try { return readFileSync(join(hermesAdmin.root(), 'plugins', 'zalo_tools', 'plugin.yaml'), 'utf8'); } catch { return ''; } } }),
     settings: createSettings({ envFile: paths.hermesEnvFile, configFile: paths.hermesConfigFile, inherited: inheritedSettings }),
     // Lời chào thành viên mới: cùng tệp kết nối Zalo đọc (zalo-welcome.js); ZALO_WELCOME_FILE của kết nối Zalo thắng.
     welcomeFile: env.ZALO_WELCOME_FILE || join(paths.sidecarRoot, 'data', 'welcome.json'),

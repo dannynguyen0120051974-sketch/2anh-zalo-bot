@@ -27,6 +27,8 @@ import { toolRoutes } from './routes/tools.js';
 import { traceRoutes } from './routes/trace.js';
 import { mcpRoutes } from './routes/mcp.js';
 import { settingsRoutes } from './routes/settings.js';
+import { skillRoutes } from './routes/skills.js';
+import { maintenanceRoutes } from './routes/maintenance.js';
 
 export function createDashboardApp(deps) {
   const app = express();
@@ -60,6 +62,8 @@ export function createDashboardApp(deps) {
   if (deps.agentTrace) app.use('/api', traceRoutes(deps));
   if (deps.mcpServers) app.use('/api', mcpRoutes(deps));
   if (deps.settings) app.use('/api', settingsRoutes(deps));
+  if (deps.hermesAdmin) app.use('/api', skillRoutes(deps));
+  if (deps.maintenance) app.use('/api', maintenanceRoutes(deps));
   app.use('/api', adminRoutes(deps));
   // Gắn ở gốc: router này có cả /api/brand lẫn /brand.css, /brand/logo.png (công khai, trước giao diện tĩnh).
   app.use(brandRoutes(deps));

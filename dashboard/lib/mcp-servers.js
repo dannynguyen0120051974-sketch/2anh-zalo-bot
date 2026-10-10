@@ -5,13 +5,14 @@
  * - Trạng thái: chỉ dò TCP tới địa chỉ loopback (127.0.0.1/localhost), có thời hạn; máy ngoài không dò (tránh biến
  *   dashboard thành cầu quét mạng). stdio: không chạy lệnh để dò — "không kiểm được từ dashboard".
  * - Bật/tắt: sửa đúng dòng `mcp_servers.<tên>.enabled` (Hermes bỏ qua máy chủ có enabled: false) → cần khởi động
- *   lại trợ lý. KHÔNG có "thêm máy chủ mới" — thêm = chạy lệnh tuỳ ý trên máy chủ; dùng `hermes mcp install` ở máy.
+ *   lại trợ lý. Thêm/gỡ/chọn công cụ/đăng nhập đi qua mã Hermes (lib/hermes-admin.py, routes/mcp.js): chỉ danh mục
+ *   Hermes hoặc địa chỉ https — không bao giờ chạy lệnh tuỳ ý do người dùng gõ.
  */
 import { connect } from 'node:net';
 import { basename } from 'node:path';
 import { editConfigYaml, readConfigYaml } from './config-yaml.js';
 
-export const SERVER_NAME = /^[A-Za-z0-9_.-]{1,64}$/;
+export const SERVER_NAME = /^(?!\.+$)[A-Za-z0-9_.-]{1,64}$/;
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
 
 const err = (statusCode, message) => Object.assign(new Error(message), { statusCode });
@@ -34,6 +35,8 @@ export function describeServer(name, cfg, publicPatterns = []) {
   return {
     name, transport, target, enabled: truthy(c.enabled ?? true), loopback: LOOPBACK.has(host),
     publicToMembers: publicPatterns.some((p) => globMatch(p, name) || globMatch(p, `mcp-${name}`)), host, port,
+    auth: c.auth === 'oauth' ? 'oauth' : (c.headers ? 'key' : 'none'),
+    toolsOff: Array.isArray(c.tools?.exclude) ? c.tools.exclude.length : 0, toolsOnly: Array.isArray(c.tools?.include) ? c.tools.include.length : null,
   };
 }
 

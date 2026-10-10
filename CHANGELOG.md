@@ -2,6 +2,20 @@
 
 Theo chuẩn [Keep a Changelog](https://keepachangelog.com/vi/1.1.0/).
 
+## [2.8.0] — 2026-10-10
+
+### Thêm
+- **Trang "Skill"** (Hệ thống, chỉ Quản trị): mọi skill của trợ lý — mô tả, nguồn (có sẵn / tự tạo / từ kho / tải lên), số lần dùng.
+  - **Bật/tắt trên Zalo** (danh sách riêng `skills.platform_disabled.zalo`, hiệu lực từ cuộc trò chuyện mới, không đụng dòng lệnh/Telegram); xem nội dung SKILL.md; gỡ skill cài thêm.
+  - **Thêm skill**: tải lên `.zip` hoặc `SKILL.md`; duyệt danh mục chính thức của Hermes (137 skill); tìm trên kho cộng đồng. Mọi skill đều qua **bộ quét an toàn của Hermes** — skill bị đánh giá không an toàn không cài được; có nút "Kiểm tra an toàn" trước khi cài. Gói tải lên không được chứa `.skillignore`, symlink, đường dẫn lạ, và không bao giờ đè skill đang có.
+- **Kết nối MCP** quản lý đầy đủ trên dashboard:
+  - **Thêm từ danh mục Hermes** (65 dịch vụ: Notion, Linear, Atlassian, Canva…) một lần bấm, điền khoá nếu dịch vụ cần; hoặc **theo địa chỉ https riêng** (không cần đăng nhập / OAuth / khoá token — khoá chỉ lưu trong .env).
+  - **Kiểm tra** thật (kết nối và liệt kê công cụ), **chọn công cụ** dùng/không dùng, **Đăng nhập** OAuth qua trang dashboard (dịch vụ chuyển về `/api/mcp-oauth/callback`), **Gỡ**.
+- **Trang "Bảo trì"** (chỉ Quản trị):
+  - **Cập nhật**: phiên bản bot Zalo và bản mới nhất trên GitHub (kèm "có gì mới"); phiên bản Hermes, **Kiểm tra bản mới**, **Cập nhật Hermes** (chạy `hermes update --yes --backup` nền, xem nhật ký tiến độ).
+  - **Sao lưu**: bản sao lưu cài đặt (.zip: cấu hình, .env, SOUL, trí nhớ, skill, phân quyền/sổ người quen Zalo, tài khoản dashboard, lịch hẹn) — tạo, **tải về**, **khôi phục** (từ bản trên máy hoặc tệp tải lên; luôn lưu hiện trạng trước), xoá; **điểm khôi phục của Hermes** (gồm cả lịch sử trò chuyện) — tạo, khôi phục.
+- Dashboard: cầu nối `dashboard/lib/hermes-admin.py` chạy bằng chính Python của Hermes, gọi hàm nội bộ Hermes (không đọc bảng chữ dòng lệnh); tự tìm Python (`ZALO_HERMES_PYTHON` → venv trong HERMES_HOME → venv cạnh lệnh `hermes`). Mỗi lần dashboard ghi config.yaml qua Hermes đều giữ bản sao (10 bản gần nhất, `zalo/dashboard/config-backups`).
+
 ## [2.7.0] — 2026-10-09
 
 ### Thêm

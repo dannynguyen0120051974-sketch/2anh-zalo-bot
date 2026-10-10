@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import YAML from 'yaml';
-import { createMcpServers, describeServer, globMatch } from './mcp-servers.js';
+import { SERVER_NAME, createMcpServers, describeServer, globMatch } from './mcp-servers.js';
 
 const CONFIG = [
   'mcp_servers:',
@@ -33,7 +33,10 @@ function setup(t, config = CONFIG) {
 
 test('mô tả an toàn: không bao giờ có khoá, header, env, args, đường dẫn/truy vấn URL', () => {
   const d = describeServer('rag', { url: 'http://127.0.0.1:9998/mcp?token=bi-mat' }, ['rag']);
-  assert.deepEqual({ ...d }, { name: 'rag', transport: 'http', target: 'http://127.0.0.1:9998', enabled: true, loopback: true, publicToMembers: true, host: '127.0.0.1', port: 9998 });
+  assert.deepEqual({ ...d }, { name: 'rag', transport: 'http', target: 'http://127.0.0.1:9998', enabled: true, loopback: true, publicToMembers: true, host: '127.0.0.1', port: 9998, auth: 'none', toolsOff: 0, toolsOnly: null });
+  assert.deepEqual([describeServer('n', { url: 'https://x', auth: 'oauth', tools: { exclude: ['a', 'b'] } })].map((s) => [s.auth, s.toolsOff]), [['oauth', 2]]);
+  assert.equal(describeServer('k', { url: 'https://x', headers: { Authorization: 'Bearer ${K}' } }).auth, 'key');
+  assert.deepEqual(['..', '.', 'rag.v2', 'a..b'].map((n) => SERVER_NAME.test(n)), [false, false, true, true]);
   assert.equal(describeServer('f', { command: '/usr/bin/npx', enabled: 'false' }).enabled, false);
   assert.equal(describeServer('u', { url: 'http://user:pass@127.0.0.1:1/x' }).target, 'http://127.0.0.1:1', 'không lộ user:pass trong URL');
   assert.equal(globMatch('mcp-*', 'mcp-rag'), true);

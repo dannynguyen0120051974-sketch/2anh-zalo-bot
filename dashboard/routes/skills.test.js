@@ -1,0 +1,78 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
+import { loginAs, makeDeps, startApp } from '../test-helpers.js';
+
+/** hermesAdmin giả: ghi lại lệnh, trả kết quả theo bảng. */
+function fakeAdmin(answers = {}) {
+  const calls = [];
+  const run = (kind) => async (cmd, args) => {
+    calls.push({ kind, cmd, args });
+    const a = answers[cmd];
+    if (a instanceof Error) throw a;
+    return { ok: true, ...(typeof a === 'function' ? a(args) : a) };
+  };
+  return { calls, read: run('read'), write: run('write') };
+}
+
+test('Skill: chỉ Quản trị; bật/tắt ghi Nhật ký, không cần khởi động lại; cài/gỡ đánh dấu khởi động lại', async (t) => {
+  const deps = makeDeps(t);
+  deps.hermesAdmin = fakeAdmin({
+    'skills.list': { skills: [{ name: 'bao-cao', enabled: true }] },
+    'skills.toggle': (a) => ({ name: a.name, enabled: a.enabled }),
+    'hub.install': (a) => ({ name: 'pdf', identifier: a.identifier }),
+    'skills.uninstall': (a) => ({ name: a.name }),
+  });
+  const { call } = await startApp(t, deps);
+  const owner = await loginAs(t, deps, call, { username: 'khach', role: 'owner' });
+  assert.equal((await call('/api/admin/skills', { cookie: owner })).status, 403);
+  assert.equal((await call('/api/admin/skills/hub/install', { method: 'POST', cookie: owner, body: { identifier: 'x' } })).status, 403);
+  const admin = await loginAs(t, deps, call);
+  assert.deepEqual((await call('/api/admin/skills', { cookie: admin })).json.skills, [{ name: 'bao-cao', enabled: true }]);
+
+  const off = await call('/api/admin/skills/toggle', { method: 'PUT', cookie: admin, body: { name: 'bao-cao', enabled: false } });
+  assert.equal(off.json.enabled, false);
+  assert.equal(deps.activity.list().find((e) => e.action === 'skill_disable').detail, 'bao-cao');
+  assert.ok(!deps.restartFlags.get().assistant, 'bật/tắt áp dụng từ cuộc trò chuyện mới, không cần khởi động lại');
+
+  await call('/api/admin/skills/hub/install', { method: 'POST', cookie: admin, body: { identifier: 'official/doc/pdf' } });
+  await call('/api/admin/skills/uninstall', { method: 'POST', cookie: admin, body: { name: 'pdf' } });
+  assert.deepEqual(deps.restartFlags.get().assistant.reasons, ['Skill: pdf']);
+  assert.deepEqual(deps.hermesAdmin.calls.filter((c) => c.kind === 'write').map((c) => c.cmd), ['skills.toggle', 'hub.install', 'skills.uninstall'], 'lệnh ghi đi hàng đợi ghi');
+});
+
+test('Skill: lỗi người dùng từ Hermes trả nguyên câu; lỗi lạ trả câu chung', async (t) => {
+  const deps = makeDeps(t);
+  deps.hermesAdmin = fakeAdmin({
+    'hub.install': Object.assign(new Error('Chưa cài được skill: Blocked'), { statusCode: 400 }),
+    'skills.list': new Error('Traceback ... /root/.hermes/secret'),
+  });
+  const { call } = await startApp(t, deps);
+  const admin = await loginAs(t, deps, call);
+  const bad = await call('/api/admin/skills/hub/install', { method: 'POST', cookie: admin, body: { identifier: 'x' } });
+  assert.equal(bad.status, 400);
+  assert.equal(bad.json.error, 'Chưa cài được skill: Blocked');
+  const boom = await call('/api/admin/skills', { cookie: admin });
+  assert.equal(boom.status, 500);
+  assert.doesNotMatch(boom.json.error, /secret/);
+});
+
+test('Skill tải lên: chỉ .zip/.md, ghi tệp tạm cho Hermes đọc rồi xoá', async (t) => {
+  const deps = makeDeps(t);
+  let seen = null;
+  deps.hermesAdmin = fakeAdmin({ 'skills.upload': (a) => { seen = { ...a, existed: existsSync(a.path) }; return { installed: true, name: 'my-skill', scan: { policy: 'allow' } }; } });
+  const { base, call } = await startApp(t, deps);
+  const admin = await loginAs(t, deps, call);
+  const send = (name, body) => fetch(`${base}/api/admin/skills/upload`, {
+    method: 'POST', body,
+    headers: { 'Content-Type': 'application/octet-stream', 'X-Requested-With': 'zalo-dashboard', 'X-File-Name': encodeURIComponent(name), Cookie: admin },
+  }).then(async (r) => ({ status: r.status, json: await r.json() }));
+  assert.equal((await send('virus.exe', Buffer.from('x'))).status, 400);
+  const ok = await send('my skill.zip', Buffer.from('PK...'));
+  assert.equal(ok.status, 200);
+  assert.equal(ok.json.installed, true);
+  assert.equal(seen.filename, 'my skill.zip');
+  assert.equal(seen.existed, true);
+  assert.equal(existsSync(seen.path), false, 'tệp tạm đã xoá');
+  assert.deepEqual(deps.restartFlags.get().assistant.reasons, ['Skill: my-skill']);
+});

@@ -23,3 +23,75 @@ test('Kết nối MCP: chỉ Quản trị; tắt ghi config + cờ chờ + Nhậ
   assert.equal((await call('/api/admin/mcp/khac', { method: 'PUT', cookie: admin, body: { enabled: true } })).status, 404);
   assert.equal((await call('/api/admin/mcp', { method: 'POST', cookie: admin, body: { name: 'x', command: 'rm' } })).status, 404);
 });
+
+function fakeAdmin() {
+  const calls = [];
+  let sent = null;
+  const answers = {
+    'mcp.catalog': { entries: [{ name: 'notion', auth: 'oauth', env: [] }] },
+    'mcp.install': (a) => ({ name: a.name, auth: 'oauth' }),
+    'mcp.add': (a) => ({ name: a.name, auth: a.auth }),
+    'mcp.test': (a) => ({ name: a.name, connected: true, tools: [{ name: 'q', enabled: true }] }),
+    'mcp.tools': (a) => ({ name: a.name, disabled: a.disabled }),
+    'mcp.remove': (a) => ({ name: a.name }),
+  };
+  const run = (kind) => async (cmd, args) => { calls.push({ kind, cmd, args }); const a = answers[cmd]; return { ok: true, ...(typeof a === 'function' ? a(args) : a) }; };
+  return {
+    calls, sent: () => sent, read: run('read'), write: run('write'),
+    stream(cmd, args) {
+      calls.push({ kind: 'stream', cmd, args });
+      let finish;
+      const done = new Promise((res) => { finish = res; });
+      return { first: Promise.resolve({ ok: true, url: 'https://notion.example/authorize?state=S123', state: 'S123' }), done,
+        send(obj) { sent = obj; finish({ ok: true, tools: 7 }); return true; }, cancel() {} };
+    },
+  };
+}
+
+test('Kết nối MCP: thêm từ danh mục / theo địa chỉ, kiểm tra, chọn công cụ, gỡ — chỉ Quản trị, đánh dấu khởi động lại', async (t) => {
+  const deps = makeDeps(t);
+  writeFileSync(join(deps.dir, 'config.yaml'), 'mcp_servers:\n  rag:\n    url: http://127.0.0.1:9998/mcp\n');
+  deps.mcpServers = createMcpServers({ configFile: join(deps.dir, 'config.yaml'), probe: async () => true });
+  deps.hermesAdmin = fakeAdmin();
+  const { call } = await startApp(t, deps);
+  const owner = await loginAs(t, deps, call, { username: 'khach', role: 'owner' });
+  for (const [path, method] of [['/api/admin/mcp-catalog', 'GET'], ['/api/admin/mcp-catalog/install', 'POST'], ['/api/admin/mcp-add', 'POST'], ['/api/admin/mcp/rag/test', 'POST'], ['/api/admin/mcp/rag/oauth', 'POST']]) {
+    assert.equal((await call(path, { method, cookie: owner, body: method === 'POST' ? {} : undefined })).status, 403, path);
+  }
+  const admin = await loginAs(t, deps, call);
+  assert.equal((await call('/api/admin/mcp', { cookie: admin })).json.manage, true);
+  assert.equal((await call('/api/admin/mcp-catalog', { cookie: admin })).json.entries[0].name, 'notion');
+  await call('/api/admin/mcp-catalog/install', { method: 'POST', cookie: admin, body: { name: 'notion', env: { X: '1' } } });
+  await call('/api/admin/mcp-add', { method: 'POST', cookie: admin, body: { name: 'tl', url: 'https://x/mcp', auth: 'bearer', token: 'secret-token' } });
+  assert.equal((await call('/api/admin/mcp/rag/test', { method: 'POST', cookie: admin })).json.tools.length, 1);
+  await call('/api/admin/mcp/rag/tools', { method: 'PUT', cookie: admin, body: { disabled: ['q'] } });
+  await call('/api/admin/mcp/rag/remove', { method: 'POST', cookie: admin });
+  assert.deepEqual(deps.hermesAdmin.calls.filter((c) => c.kind === 'write').map((c) => c.cmd), ['mcp.install', 'mcp.add', 'mcp.tools', 'mcp.remove']);
+  assert.deepEqual(deps.restartFlags.get().assistant.reasons, ['Kết nối MCP: notion', 'Kết nối MCP: tl', 'Kết nối MCP: rag: tắt 1 công cụ', 'Kết nối MCP: rag']);
+  assert.ok(!JSON.stringify(deps.activity.list()).includes('secret-token'), 'Nhật ký không ghi khoá');
+});
+
+test('Kết nối MCP: đăng nhập OAuth — trang quay về chỉ nhận đúng state đang chờ, không cần phiên', async (t) => {
+  const deps = makeDeps(t);
+  writeFileSync(join(deps.dir, 'config.yaml'), 'mcp_servers:\n  notion:\n    url: https://mcp.notion.com/mcp\n    auth: oauth\n');
+  deps.mcpServers = createMcpServers({ configFile: join(deps.dir, 'config.yaml') });
+  deps.hermesAdmin = fakeAdmin();
+  deps.config = { ...deps.config, publicUrl: 'https://bot.example.vn' };
+  const { call } = await startApp(t, deps);
+  const admin = await loginAs(t, deps, call);
+  const start = await call('/api/admin/mcp/notion/oauth', { method: 'POST', cookie: admin });
+  assert.equal(start.json.url, 'https://notion.example/authorize?state=S123');
+  assert.equal(deps.hermesAdmin.calls.find((c) => c.kind === 'stream').args.redirect_uri, 'https://bot.example.vn/api/mcp-oauth/callback');
+  assert.equal((await call(`/api/admin/mcp/oauth/${start.json.flowId}`, { cookie: admin })).json.status, 'pending');
+
+  assert.equal((await call('/api/mcp-oauth/callback?state=SAI&code=c')).status, 404, 'state lạ bị từ chối');
+  assert.equal(deps.hermesAdmin.sent(), null);
+  const ok = await call('/api/mcp-oauth/callback?state=S123&code=abc');
+  assert.equal(ok.status, 200);
+  assert.deepEqual(deps.hermesAdmin.sent(), { code: 'abc', state: 'S123', error: undefined });
+  assert.equal((await call('/api/mcp-oauth/callback?state=S123&code=again')).status, 404, 'chỉ nhận một lần');
+  await new Promise((r) => setImmediate(r));
+  const fin = await call(`/api/admin/mcp/oauth/${start.json.flowId}`, { cookie: admin });
+  assert.deepEqual([fin.json.status, fin.json.tools], ['done', 7]);
+  assert.deepEqual(deps.restartFlags.get().assistant.reasons, ['Kết nối MCP: notion']);
+});

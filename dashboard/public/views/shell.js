@@ -22,6 +22,8 @@ import { SecondBrain } from './second-brain.js';
 import { Agent } from './agent.js';
 import { Tools } from './tools.js';
 import { Mcp } from './mcp.js';
+import { Skills } from './skills.js';
+import { Maintenance } from './maintenance.js';
 import { Settings } from './settings.js';
 
 const STATUS_MS = 3000;
@@ -48,6 +50,8 @@ const ROUTES = {
   '/agent': { view: Agent, admin: true },
   '/ai': { view: Ai, admin: true },
   '/tools': { view: Tools, admin: true },
+  '/skills': { view: Skills, admin: true },
+  '/maintenance': { view: Maintenance, admin: true },
   '/trace': { view: AuditAi, admin: true }, // đường cũ Theo dõi agent → Nhật ký › Hoạt động AI
   '/settings': { view: Settings, admin: true },
 };
@@ -73,9 +77,11 @@ export const GROUPS = [
     { path: '/agent', text: 'Agent', icon: 'bot', admin: true },
     { path: '/ai', text: 'Khoá API & Model', icon: 'key', admin: true },
     { path: '/tools', text: 'Công cụ', icon: 'tool', admin: true },
+    { path: '/skills', text: 'Skill', icon: 'book', admin: true },
     { path: '/audit', text: 'Nhật ký', icon: 'list' },
     { path: '/brand', text: 'Thương hiệu', icon: 'image' },
     { path: '/health', text: 'Sức khoẻ máy chủ', icon: 'activity' },
+    { path: '/maintenance', text: 'Bảo trì', icon: 'refresh', admin: true },
     { path: '/settings', text: 'Cấu hình', icon: 'settings', admin: true },
   ] },
   { label: 'Quản trị', admin: true, items: [

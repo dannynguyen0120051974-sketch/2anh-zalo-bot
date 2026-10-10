@@ -435,7 +435,7 @@ test('thanh điều hướng điện thoại: 4 mục chính + "Thêm" theo vai 
   const admin = navSplit('admin', '/audit', { secondBrain: true });
   assert.deepEqual(admin.primary.map((i) => [i.path, i.short]), [['/', 'Tổng quan'], ['/chats', 'Phiên chat'], ['/zalo', 'Zalo'], ['/permissions', 'Phân quyền']]);
   assert.deepEqual(admin.more.map((i) => i.path), ['/contacts', '/schedules', '/memory', '/kb', '/insight', '/second-brain', '/mcp',
-    '/agent', '/ai', '/tools', '/audit', '/brand', '/health', '/settings', '/users', '/owners', '/alerts', '/profile']);
+    '/agent', '/ai', '/tools', '/skills', '/audit', '/brand', '/health', '/maintenance', '/settings', '/users', '/owners', '/alerts', '/profile']);
   assert.equal(admin.activeMore.text, 'Nhật ký');
   const owner = navSplit('owner', '/', { secondBrain: true });
   assert.equal(owner.primary.length, 4);
@@ -755,7 +755,7 @@ test('thanh bên: 5 nhóm theo mẫu; Second brain chỉ Quản trị và chỉ 
   assert.deepEqual(admin.map((g) => g.label), ['Tổng quan', 'Hội thoại', 'Dữ liệu', 'Hệ thống', 'Quản trị']);
   assert.deepEqual(admin[1].items.map((i) => i.text), ['Phiên chat', 'Liên hệ', 'Phân quyền Bot', 'Lịch hẹn']);
   assert.deepEqual(admin[2].items.map((i) => i.text), ['Trí nhớ', 'Kho tri thức', 'Insight nhóm', 'Second brain', 'Kết nối MCP']);
-  assert.deepEqual(admin[3].items.map((i) => i.text), ['Tài khoản Zalo', 'Agent', 'Khoá API & Model', 'Công cụ', 'Nhật ký', 'Thương hiệu', 'Sức khoẻ máy chủ', 'Cấu hình']);
+  assert.deepEqual(admin[3].items.map((i) => i.text), ['Tài khoản Zalo', 'Agent', 'Khoá API & Model', 'Công cụ', 'Skill', 'Nhật ký', 'Thương hiệu', 'Sức khoẻ máy chủ', 'Bảo trì', 'Cấu hình']);
   const owner = visibleGroups('owner', { secondBrain: true });
   assert.deepEqual(owner.map((g) => g.label), ['Tổng quan', 'Hội thoại', 'Dữ liệu', 'Hệ thống']);
   assert.ok(!owner.flatMap((g) => g.items).some((i) => i.admin), 'Chủ bot không thấy mục admin nào');
@@ -962,4 +962,29 @@ test('Lịch hẹn › Luồng: thêm/bỏ nơi gửi — không trùng, tối �
   assert.equal(flowTargetsChange({ targets: Array.from({ length: 10 }, (_, i) => String(i)) }, 'add', '99'), null);
   assert.deepEqual(flowTargetsChange(job, 'remove', '1'), ['2']);
   assert.equal(flowTargetsChange({ targets: ['1'] }, 'remove', '1'), null, 'không bỏ nơi gửi cuối cùng');
+});
+
+test('Skill: câu kết quả quét an toàn, lọc skill không dấu', async () => {
+  const { scanText, matchSkill } = await import('./views/skills.js');
+  assert.equal(scanText({ policy: 'allow', counts: { low: 0 } }), 'Đạt kiểm tra an toàn.');
+  assert.equal(scanText({ policy: 'allow', counts: { low: 2 } }), 'Đạt kiểm tra an toàn — 2 điểm cần chú ý.');
+  assert.match(scanText({ policy: 'block', verdict: 'dangerous', trust: 'community', counts: { critical: 1 } }), /^Không cài được: .*“Nguy hiểm”.*Cộng đồng — 1 điểm/);
+  assert.equal(matchSkill({ name: 'soan-van-ban', description: 'Soạn công văn hành chính' }, 'cong van'), true);
+  assert.equal(matchSkill({ name: 'pdf', description: 'Đọc PDF' }, 'excel'), false);
+});
+
+test('MCP: câu kết quả kiểm tra kết nối', async () => {
+  const { testText } = await import('./views/mcp.js');
+  assert.equal(testText({ needsLogin: true }), 'Chưa đăng nhập — bấm Đăng nhập.');
+  assert.equal(testText({ connected: false, error: 'timeout' }), 'Không kết nối được: timeout');
+  assert.equal(testText({ connected: true, tools: [{ enabled: true }, { enabled: true }] }), 'Kết nối được — 2 công cụ.');
+  assert.equal(testText({ connected: true, tools: [{ enabled: true }, { enabled: false }] }), 'Kết nối được — dùng 1/2 công cụ.');
+});
+
+test('Bảo trì: định dạng dung lượng và giờ điểm khôi phục', async () => {
+  const { fmtSize, snapshotTime } = await import('./views/maintenance.js');
+  assert.equal(fmtSize(512), '512 B');
+  assert.equal(fmtSize(37275530), '35,5 MB');
+  assert.equal(snapshotTime('20261010-134504-dashboard'), '10/10/2026 13:45');
+  assert.equal(snapshotTime('la'), 'la');
 });
